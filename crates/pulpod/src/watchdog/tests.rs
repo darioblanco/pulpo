@@ -116,65 +116,12 @@ async fn create_running_session(store: &Store, name: &str) -> Session {
     session
 }
 
-/// Poll `condition` until it returns `true`, sleeping briefly between checks,
-/// up to a generous deadline.
-///
-/// Some `run_watchdog_loop` tests need one or more ticks to elapse before
-/// signalling shutdown. A fixed `time::sleep` only works if we assume the
-/// loop's `tokio::select!` gets polled enough times within that wall-clock
-/// window — true in isolation, but not under the full parallel test suite
-/// (~1500+ concurrently scheduled OS threads contending for CPU).
-/// `#[tokio::test]` uses a single-threaded (current-thread) runtime, so a
-/// starved OS thread can resume long after both the interval-tick and the
-/// shutdown-signal branches of `select!` have become ready; `select!` then
-/// picks between them at random, and can pick shutdown before enough ticks
-/// were processed — flaking the test. Waiting for the actual side effect
-/// instead of a fixed sleep removes the race regardless of scheduling (see
-/// fix/watchdog-flaky-tests).
-async fn wait_for<F, Fut>(deadline_secs: u64, condition: F)
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(deadline_secs);
-    loop {
-        if condition().await {
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "condition not met within {deadline_secs}s"
-        );
-        time::sleep(Duration::from_millis(10)).await;
+fn make_config(interval: Duration, idle: IdleConfig) -> WatchdogRuntimeConfig {
+    WatchdogRuntimeConfig {
+        interval,
+        idle,
+        extra_waiting_patterns: Vec::new(),
     }
-}
-
-fn make_config(
-    interval: Duration,
-    idle: IdleConfig,
-) -> tokio::sync::watch::Receiver<WatchdogRuntimeConfig> {
-    let cfg = WatchdogRuntimeConfig {
-        interval,
-        idle,
-        extra_waiting_patterns: Vec::new(),
-    };
-    let (_, rx) = tokio::sync::watch::channel(cfg);
-    rx
-}
-
-fn make_config_with_tx(
-    interval: Duration,
-    idle: IdleConfig,
-) -> (
-    tokio::sync::watch::Sender<WatchdogRuntimeConfig>,
-    tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
-) {
-    let cfg = WatchdogRuntimeConfig {
-        interval,
-        idle,
-        extra_waiting_patterns: Vec::new(),
-    };
-    tokio::sync::watch::channel(cfg)
 }
 
 #[tokio::test]
@@ -1683,87 +1630,6 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
         &test_ready_ctx(),
     )
     .await;
-}
-
-#[tokio::test]
-async fn test_watchdog_live_config_reload_enables_idle() {
-    // Start with idle detection disabled and a slow tick — no transition
-    // should happen. Reloading the config to enable idle detection with a
-    // faster interval must take effect on the very next tick without
-    // restarting the loop (exercises `refresh_watchdog_ticker`'s
-    // interval-change branch alongside the dynamic idle-enable path).
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "reload-test".into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        status: SessionStatus::Active,
-        backend_session_id: Some("reload-test".into()),
-        output_snapshot: Some("test output".into()),
-        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-        ..Default::default()
-    };
-    store.insert_session(&session).await.unwrap();
-
-    let (config_tx, config_rx) = make_config_with_tx(
-        Duration::from_millis(50),
-        IdleConfig {
-            enabled: false,
-            ..IdleConfig::default()
-        },
-    );
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend.clone(),
-        store.clone(),
-        config_rx,
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    // Idle detection disabled — status must stay Active.
-    time::sleep(Duration::from_millis(30)).await;
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Active);
-
-    // Enable idle detection with a faster interval.
-    config_tx
-        .send(WatchdogRuntimeConfig {
-            interval: Duration::from_millis(10),
-            idle: IdleConfig {
-                enabled: true,
-                timeout_secs: 600,
-                action: IdleAction::Alert,
-                threshold_secs: 1,
-            },
-            extra_waiting_patterns: Vec::new(),
-        })
-        .unwrap();
-
-    wait_for(2, || async {
-        store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .is_some_and(|s| s.status == SessionStatus::Idle)
-    })
-    .await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
 }
 
 #[tokio::test]

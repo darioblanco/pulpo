@@ -301,46 +301,44 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!("Scheduler enabled");
     }
 
+    // `WatchdogRuntimeConfig` is read once here at startup — there is no live
+    // config-reload path (the `PUT /api/v1/watchdog` hot-reload endpoint was
+    // removed along with the rest of the config-editing API). Changing
+    // `[watchdog]` takes effect on the next `pulpod` restart.
     #[cfg(not(coverage))]
-    let watchdog_config_tx = {
-        if config.watchdog.enabled {
-            let wd_runtime = watchdog::WatchdogRuntimeConfig {
-                interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
-                idle: watchdog::IdleConfig {
-                    enabled: config.watchdog.idle_timeout_secs > 0,
-                    timeout_secs: config.watchdog.idle_timeout_secs,
-                    action: if config.watchdog.idle_action == "kill" {
-                        watchdog::IdleAction::Kill
-                    } else {
-                        watchdog::IdleAction::Alert
-                    },
-                    threshold_secs: config.watchdog.idle_threshold_secs,
+    if config.watchdog.enabled {
+        let wd_runtime = watchdog::WatchdogRuntimeConfig {
+            interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
+            idle: watchdog::IdleConfig {
+                enabled: config.watchdog.idle_timeout_secs > 0,
+                timeout_secs: config.watchdog.idle_timeout_secs,
+                action: if config.watchdog.idle_action == "kill" {
+                    watchdog::IdleAction::Kill
+                } else {
+                    watchdog::IdleAction::Alert
                 },
-                extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
-            };
-            let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
-            let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
-            info!(
-                interval_secs = wd_runtime.interval.as_secs(),
-                "Starting watchdog"
-            );
-            let ready_ctx = watchdog::ReadyContext {
-                event_tx: Some(event_tx.clone()),
-                node_name,
-            };
-            tokio::spawn(watchdog::run_watchdog_loop(
-                watchdog_backend,
-                watchdog_store,
-                wd_config_rx,
-                wd_shutdown_rx,
-                ready_ctx,
-            ));
-            shutdown_handle.add_sender(wd_shutdown_tx);
-            Some(wd_config_tx)
-        } else {
-            None
-        }
-    };
+                threshold_secs: config.watchdog.idle_threshold_secs,
+            },
+            extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
+        };
+        let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
+        info!(
+            interval_secs = wd_runtime.interval.as_secs(),
+            "Starting watchdog"
+        );
+        let ready_ctx = watchdog::ReadyContext {
+            event_tx: Some(event_tx.clone()),
+            node_name,
+        };
+        tokio::spawn(watchdog::run_watchdog_loop(
+            watchdog_backend,
+            watchdog_store,
+            wd_runtime,
+            wd_shutdown_rx,
+            ready_ctx,
+        ));
+        shutdown_handle.add_sender(wd_shutdown_tx);
+    }
 
     let bind_mode = config.node.bind;
 
@@ -369,17 +367,11 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!("Event dispatcher started");
     }
 
-    #[cfg(not(coverage))]
-    let wd_tx = watchdog_config_tx;
-    #[cfg(coverage)]
-    let wd_tx: Option<tokio::sync::watch::Sender<watchdog::WatchdogRuntimeConfig>> = None;
-
-    let state = api::AppState::with_all(
+    let state = api::AppState::with_event_tx(
         config.clone(),
         config_path,
         manager.clone(),
         event_tx.clone(),
-        wd_tx,
         store.clone(),
     );
 
