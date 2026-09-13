@@ -301,54 +301,20 @@ pub struct ListSessionsQuery {
     pub order: Option<String>,
 }
 
-/// Burn rate, projected spend, and exact-quota passthrough for one session.
-/// Burn rate is the session-lifetime average (cumulative usage ÷ age).
+/// Exact token/cost usage for one pulpo-managed session, read from session metadata
+/// the watchdog keeps fresh via the structured usage readers (Claude/Codex/pi).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionProjection {
+pub struct SessionUsage {
     pub session_id: String,
     pub session_name: String,
     /// Working directory (repo) the session ran in (for per-repo attribution).
     #[serde(default)]
     pub workdir: String,
-    /// `claude-jsonl` / `codex-jsonl`, or `None` when totals came from output scraping.
+    /// `claude-jsonl` / `codex-jsonl` / `pi-jsonl`, or `None` when the session has no
+    /// recorded usage yet (no structured reader matched, or nothing to read).
     pub usage_source: Option<String>,
-    pub auth_provider: Option<String>,
-    pub auth_plan: Option<String>,
-    pub auth_email: Option<String>,
-    /// Billing pool: `subscription` (interactive) or `headless` (`-p`/`--print`).
-    pub pool: String,
     pub total_tokens: u64,
     pub cost_usd: Option<f64>,
-    pub elapsed_secs: i64,
-    pub cost_per_hour: Option<f64>,
-    pub tokens_per_hour: Option<f64>,
-    /// Codex only — exact subscription quota, surfaced as the agent reported it.
-    pub quota_used_percent: Option<f64>,
-    pub quota_resets_at: Option<i64>,
-    /// Claude only, and only when a `[plans]` allowance is configured — estimated.
-    pub allowance_tokens: Option<u64>,
-    pub allowance_used_percent: Option<f64>,
-    pub secs_to_allowance: Option<i64>,
-}
-
-/// Aggregated burn across the sessions of one account (provider + plan + email).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AccountRollup {
-    pub provider: Option<String>,
-    pub plan: Option<String>,
-    pub email: Option<String>,
-    pub pool: String,
-    pub session_count: u32,
-    pub total_tokens: u64,
-    pub total_cost_usd: Option<f64>,
-    pub cost_per_hour: Option<f64>,
-    /// Highest exact quota % seen across the account's Codex sessions.
-    pub max_quota_used_percent: Option<f64>,
-    /// `true` when every cost-bearing session in the account had an exact usage source
-    /// (a structured reader), so `total_cost_usd` is exact rather than output-scraped.
-    /// `#[serde(default)]` keeps older payloads (which omit it) deserializable.
-    #[serde(default)]
-    pub cost_is_exact: bool,
 }
 
 /// Cost/token rollup for one attribution dimension value (a repo).
@@ -362,10 +328,6 @@ pub struct DimensionRollup {
     pub session_count: u32,
     pub total_tokens: u64,
     pub total_cost_usd: Option<f64>,
-    pub cost_per_hour: Option<f64>,
-    /// `true` when every cost-bearing session in the group had an exact usage source.
-    #[serde(default)]
-    pub cost_is_exact: bool,
 }
 
 /// One row of the usage *scan* — total cost/tokens for an agent or a repo, read from
@@ -381,9 +343,10 @@ pub struct ScanRollup {
 
 /// `GET /api/v1/usage/scan` — read-only sweep of *all* local agent history.
 ///
-/// Unlike the projection (pulpo-managed sessions), the scan reads every Claude/Codex
-/// session file on the machine and reports total spend by agent and by repo — the
-/// low-friction "what did my agents cost?" view, across agents, with no behavior change.
+/// Unlike [`UsageSessionsResponse`] (pulpo-managed sessions only), the scan reads every
+/// Claude/Codex/pi session file on the machine and reports total spend by agent and by
+/// repo — the low-friction "what did my agents cost?" view, across agents, with no
+/// behavior change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageScanResponse {
     pub node_name: String,
@@ -402,13 +365,13 @@ pub struct UsageScanResponse {
     pub by_repo: Vec<ScanRollup>,
 }
 
-/// `GET /api/v1/usage/projection` — per-session projections plus account rollups.
+/// `GET /api/v1/usage/sessions` — exact per-session usage plus per-repo rollups, for
+/// pulpo-managed sessions only (see [`UsageScanResponse`] for all local agent history).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UsageProjectionResponse {
+pub struct UsageSessionsResponse {
     pub node_name: String,
     pub generated_at: String,
-    pub sessions: Vec<SessionProjection>,
-    pub accounts: Vec<AccountRollup>,
+    pub sessions: Vec<SessionUsage>,
     /// Per-repo (workdir) cost rollups.
     #[serde(default)]
     pub repos: Vec<DimensionRollup>,

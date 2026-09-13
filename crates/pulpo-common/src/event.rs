@@ -51,7 +51,7 @@ pub struct SessionDeletedEvent {
 
 /// A usage/cost monitoring alert.
 ///
-/// Sources: budget threshold, burn-rate ceiling, quota approaching, rate limit.
+/// Sources: budget threshold, quota approaching, rate limit.
 /// Non-destructive — informs; any auto-action is recorded separately as an intervention.
 /// `alert_kind` distinguishes the source so clients can filter/route.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -59,7 +59,7 @@ pub struct UsageAlertEvent {
     pub session_id: String,
     pub session_name: String,
     pub node_name: String,
-    /// `budget_threshold` | `burn_ceiling` | `quota_threshold` | `rate_limit`.
+    /// `budget_threshold` | `quota_threshold` | `rate_limit`.
     pub alert_kind: String,
     /// Human-readable summary, e.g. "Cost $0.85 reached 80% of $1.00 budget".
     pub message: String,
@@ -79,7 +79,7 @@ pub struct SessionInterventionEvent {
     pub session_id: String,
     pub session_name: String,
     pub node_name: String,
-    /// `memory_pressure` | `idle_timeout` | `budget_exceeded` | `burn_rate` | `user_stop`
+    /// `memory_pressure` | `idle_timeout` | `budget_exceeded` | `user_stop`
     /// (the `InterventionCode` `Display` form).
     pub code: String,
     pub reason: String,
@@ -116,8 +116,6 @@ pub struct EventSessionRef {
     pub cost_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pool: Option<String>,
 }
 
 /// The canonical, forward-facing event envelope.
@@ -167,7 +165,7 @@ fn lifecycle_severity(status: &str) -> &'static str {
 fn intervention_severity(code: &str) -> &'static str {
     match code {
         // Forced stops that cost money or lose work.
-        "budget_exceeded" | "burn_rate" | "memory_pressure" => "critical",
+        "budget_exceeded" | "memory_pressure" => "critical",
         // Routine reclamation / user-initiated.
         _ => "warn",
     }
@@ -207,7 +205,6 @@ impl Event {
                     pr_url: se.pr_url.clone(),
                     cost_usd: se.session_cost_usd,
                     total_tokens: sum_tokens(se.total_input_tokens, se.total_output_tokens),
-                    pool: None,
                 }),
                 payload: serde_json::json!({}),
             }),
@@ -445,9 +442,9 @@ mod tests {
 
     #[test]
     fn test_from_pulpo_event_intervention_severity_split() {
-        // burn_rate + memory_pressure are critical; idle_timeout/user_stop are warn.
+        // budget_exceeded + memory_pressure are critical; idle_timeout/user_stop are warn.
         assert_eq!(
-            Event::from_pulpo_event(&intervention("burn_rate"), "n")
+            Event::from_pulpo_event(&intervention("memory_pressure"), "n")
                 .unwrap()
                 .severity,
             "critical"
@@ -735,7 +732,7 @@ mod tests {
             schema_version: 1,
             event_id: "id".into(),
             event_type: "usage_alert".into(),
-            subtype: "burn_ceiling".into(),
+            subtype: "budget_threshold".into(),
             severity: "warn".into(),
             occurred_at: "t".into(),
             node: "n".into(),

@@ -4,8 +4,8 @@
 //! Pure move from `lib.rs` — no logic changes.
 
 use pulpo_common::api::{
-    DimensionRollup, InterventionEventResponse, ScanRollup, SessionProjection,
-    UsageProjectionResponse, UsageScanResponse,
+    DimensionRollup, InterventionEventResponse, ScanRollup, UsageScanResponse,
+    UsageSessionsResponse,
 };
 use pulpo_common::session::Session;
 
@@ -169,35 +169,11 @@ fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// Format an optional dollar amount, or "-" when absent. Estimated (output-scraped)
-/// costs are prefixed with `~`; exact costs from a structured reader are shown plainly.
-fn fmt_cost(c: Option<f64>, exact: bool) -> String {
-    c.map_or_else(
-        || "-".into(),
-        |v| {
-            if exact {
-                format!("${v:.2}")
-            } else {
-                format!("~${v:.2}")
-            }
-        },
-    )
-}
-
-/// Format a per-hour dollar rate, or "-" when absent.
-fn fmt_rate(c: Option<f64>) -> String {
-    c.map_or_else(|| "-".into(), |v| format!("${v:.2}/h"))
-}
-
-/// Format one session's quota column: exact Codex %, estimated Claude ~%, or "-".
-fn fmt_quota(s: &SessionProjection) -> String {
-    s.quota_used_percent.map_or_else(
-        || {
-            s.allowance_used_percent
-                .map_or_else(|| "-".into(), |pct| format!("~{pct:.0}%"))
-        },
-        |pct| format!("{pct:.0}%"),
-    )
+/// Format an optional dollar amount, or "-" when absent. Every cost in the system comes
+/// from a structured usage reader (there is no output-scraping fallback), so this is
+/// always exact — no "estimated" marker.
+fn fmt_cost(c: Option<f64>) -> String {
+    c.map_or_else(|| "-".into(), |v| format!("${v:.2}"))
 }
 
 /// Append a labeled cost-rollup section (per-repo), most expensive first.
@@ -213,62 +189,38 @@ fn append_dimension_rollups(lines: &mut Vec<String>, heading: &str, rollups: &[D
             truncate(&r.label, 28),
             r.session_count,
             fmt_tokens(r.total_tokens),
-            fmt_cost(r.total_cost_usd, r.cost_is_exact),
+            fmt_cost(r.total_cost_usd),
         ));
     }
 }
 
-/// Format the usage projection as session and account tables.
-pub fn format_usage_projection(p: &UsageProjectionResponse) -> String {
-    if p.sessions.is_empty() {
+/// Format the exact per-session usage report (pulpo-managed sessions on this node) plus
+/// its per-repo rollups.
+pub fn format_usage_sessions(r: &UsageSessionsResponse) -> String {
+    if r.sessions.is_empty() {
         return "No sessions with usage data.".into();
     }
     let mut lines = vec![format!(
-        "{:<20} {:<8} {:>8} {:>8} {:>9} {:>6}",
-        "SESSION", "SOURCE", "TOKENS", "COST", "$/HR", "QUOTA"
+        "{:<20} {:<8} {:>8} {:>8}",
+        "SESSION", "SOURCE", "TOKENS", "COST"
     )];
-    for s in &p.sessions {
+    for s in &r.sessions {
         let source = s
             .usage_source
             .as_deref()
-            .map_or("scraped", |src| src.strip_suffix("-jsonl").unwrap_or(src));
+            .map_or("-", |src| src.strip_suffix("-jsonl").unwrap_or(src));
         lines.push(format!(
-            "{:<20} {:<8} {:>8} {:>8} {:>9} {:>6}",
+            "{:<20} {:<8} {:>8} {:>8}",
             truncate(&s.session_name, 20),
             source,
             fmt_tokens(s.total_tokens),
-            fmt_cost(s.cost_usd, s.usage_source.is_some()),
-            fmt_rate(s.cost_per_hour),
-            fmt_quota(s),
+            fmt_cost(s.cost_usd),
         ));
     }
 
-    if !p.accounts.is_empty() {
-        lines.push(String::new());
-        lines.push("Accounts:".into());
-        for a in &p.accounts {
-            let who = a
-                .email
-                .clone()
-                .or_else(|| a.provider.clone())
-                .unwrap_or_else(|| "unknown".into());
-            lines.push(format!(
-                "  {:<24} {:<12} {} sessions  {} tokens  {}",
-                who,
-                a.pool,
-                a.session_count,
-                fmt_tokens(a.total_tokens),
-                fmt_cost(a.total_cost_usd, a.cost_is_exact),
-            ));
-        }
-    }
+    append_dimension_rollups(&mut lines, "By repo:", &r.repos);
 
-    append_dimension_rollups(&mut lines, "By repo:", &p.repos);
-
-    lines.join(
-        "
-",
-    )
+    lines.join("\n")
 }
 
 /// Append a titled section of scan rollups (label / tokens / cost), truncating labels to
@@ -281,7 +233,7 @@ fn append_scan_rollups(lines: &mut Vec<String>, title: &str, rows: &[ScanRollup]
             "  {:<width$} {:>9} tokens  {}",
             truncate(&row.label, width),
             fmt_tokens(row.total_tokens),
-            fmt_cost(row.total_cost_usd, true),
+            fmt_cost(row.total_cost_usd),
         ));
     }
 }
@@ -293,7 +245,7 @@ pub fn format_usage_scan(r: &UsageScanResponse) -> String {
     }
     let total_cost = r
         .total_cost_usd
-        .map(|c| format!("  ({})", fmt_cost(Some(c), true)))
+        .map(|c| format!("  ({})", fmt_cost(Some(c))))
         .unwrap_or_default();
     let window = r
         .window_days
@@ -778,26 +730,14 @@ mod tests {
         );
     }
 
-    fn sample_projection() -> SessionProjection {
-        SessionProjection {
+    fn sample_usage() -> pulpo_common::api::SessionUsage {
+        pulpo_common::api::SessionUsage {
             session_id: "id".into(),
             session_name: "my-task".into(),
             workdir: "/repo".into(),
             usage_source: Some("claude-jsonl".into()),
-            auth_provider: Some("claude.ai".into()),
-            auth_plan: Some("max".into()),
-            auth_email: Some("a@x.com".into()),
-            pool: "subscription".into(),
             total_tokens: 1_234_000,
             cost_usd: Some(2.5),
-            elapsed_secs: 3600,
-            cost_per_hour: Some(2.5),
-            tokens_per_hour: Some(1_234_000.0),
-            quota_used_percent: None,
-            quota_resets_at: None,
-            allowance_tokens: Some(100_000_000),
-            allowance_used_percent: Some(1.2),
-            secs_to_allowance: None,
         }
     }
 
@@ -809,119 +749,71 @@ mod tests {
     }
 
     #[test]
-    fn test_fmt_cost_and_rate() {
-        assert_eq!(fmt_cost(None, true), "-");
-        assert_eq!(fmt_cost(None, false), "-");
-        assert_eq!(fmt_cost(Some(1.234), true), "$1.23"); // exact → plain
-        assert_eq!(fmt_cost(Some(1.234), false), "~$1.23"); // scraped → estimated marker
-        assert_eq!(fmt_rate(None), "-");
-        assert_eq!(fmt_rate(Some(2.0)), "$2.00/h");
+    fn test_fmt_cost() {
+        assert_eq!(fmt_cost(None), "-");
+        assert_eq!(fmt_cost(Some(1.234)), "$1.23");
     }
 
     #[test]
-    fn test_fmt_quota_codex_exact_claude_estimate_none() {
-        let mut s = sample_projection();
-        assert_eq!(fmt_quota(&s), "~1%"); // claude estimate marked with ~
-        s.allowance_used_percent = None;
-        assert_eq!(fmt_quota(&s), "-");
-        s.quota_used_percent = Some(42.0);
-        assert_eq!(fmt_quota(&s), "42%"); // codex exact, no ~
-    }
-
-    #[test]
-    fn test_format_usage_projection_empty() {
-        let resp = UsageProjectionResponse {
+    fn test_format_usage_sessions_empty() {
+        let resp = UsageSessionsResponse {
             node_name: "n".into(),
             generated_at: "t".into(),
             sessions: vec![],
-            accounts: vec![],
             repos: vec![],
         };
-        assert_eq!(
-            format_usage_projection(&resp),
-            "No sessions with usage data."
-        );
+        assert_eq!(format_usage_sessions(&resp), "No sessions with usage data.");
     }
 
     #[test]
-    fn test_format_usage_projection_with_sessions_and_accounts() {
-        let resp = UsageProjectionResponse {
+    fn test_format_usage_sessions_with_sessions() {
+        let resp = UsageSessionsResponse {
             node_name: "n".into(),
             generated_at: "t".into(),
-            sessions: vec![sample_projection()],
-            accounts: vec![pulpo_common::api::AccountRollup {
-                provider: Some("claude.ai".into()),
-                plan: Some("max".into()),
-                email: Some("a@x.com".into()),
-                pool: "subscription".into(),
-                session_count: 1,
-                total_tokens: 1_234_000,
-                total_cost_usd: Some(2.5),
-                cost_per_hour: Some(2.5),
-                max_quota_used_percent: None,
-                cost_is_exact: true,
-            }],
+            sessions: vec![sample_usage()],
             repos: vec![],
         };
-        let out = format_usage_projection(&resp);
+        let out = format_usage_sessions(&resp);
         assert!(out.contains("SESSION"));
         assert!(out.contains("my-task"));
         assert!(out.contains("claude")); // source suffix stripped
         assert!(out.contains("1.2M"));
         assert!(out.contains("$2.50"));
-        assert!(!out.contains("~$2.50")); // exact source → no estimate marker
-        assert!(out.contains("Accounts:"));
-        assert!(out.contains("a@x.com"));
-        assert!(out.contains("subscription")); // pool shown
     }
 
     #[test]
-    fn test_format_usage_projection_marks_scraped_cost_estimated() {
-        let mut s = sample_projection();
-        s.usage_source = None; // scraped → estimated
-        let resp = UsageProjectionResponse {
+    fn test_format_usage_sessions_no_usage_source_shown_as_dash() {
+        let mut s = sample_usage();
+        s.usage_source = None;
+        s.total_tokens = 0;
+        s.cost_usd = None;
+        let resp = UsageSessionsResponse {
             node_name: "n".into(),
             generated_at: "t".into(),
             sessions: vec![s],
-            accounts: vec![pulpo_common::api::AccountRollup {
-                provider: Some("gemini".into()),
-                plan: None,
-                email: None,
-                pool: "subscription".into(),
-                session_count: 1,
-                total_tokens: 1_234_000,
-                total_cost_usd: Some(2.5),
-                cost_per_hour: Some(2.5),
-                max_quota_used_percent: None,
-                cost_is_exact: false,
-            }],
             repos: vec![],
         };
-        let out = format_usage_projection(&resp);
-        assert!(out.contains("scraped")); // source column
-        assert!(out.contains("~$2.50")); // both session and account cost marked estimated
+        let out = format_usage_sessions(&resp);
+        assert!(out.contains(" - "));
     }
 
     #[test]
-    fn test_format_usage_projection_shows_repo_rollups() {
-        let resp = UsageProjectionResponse {
+    fn test_format_usage_sessions_shows_repo_rollups() {
+        let resp = UsageSessionsResponse {
             node_name: "n".into(),
             generated_at: "t".into(),
-            sessions: vec![sample_projection()],
-            accounts: vec![],
+            sessions: vec![sample_usage()],
             repos: vec![DimensionRollup {
                 label: "/repos/api".into(),
                 session_count: 3,
                 total_tokens: 2_000_000,
                 total_cost_usd: Some(40.0),
-                cost_per_hour: None,
-                cost_is_exact: false,
             }],
         };
-        let out = format_usage_projection(&resp);
+        let out = format_usage_sessions(&resp);
         assert!(out.contains("By repo:"));
         assert!(out.contains("/repos/api"));
-        assert!(out.contains("~$40.00")); // scraped repo cost → estimated marker
+        assert!(out.contains("$40.00"));
     }
 
     #[test]

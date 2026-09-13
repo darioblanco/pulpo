@@ -62,9 +62,9 @@ pulpo spawn pi-fix --workdir ~/repos/my-api -- pi "Fix the failing auth tests"
 
 `pulpo usage --scan` picks up pi's own session files and reports the exact tokens *and* the
 exact dollar cost pi itself computed from its model catalog — no `[rates.<model>]` entry
-needed for pi. That's scan-only: there is no live per-session cost projection reader for pi
+needed for pi. That's scan-only: there is no live per-session exact-usage reader for pi
 yet, so a pi session spawned through Pulpo won't appear in `pulpo usage` (the live
-per-session gauge, with budgets and burn alerts) or get budget/burn enforcement — only in
+per-session gauge, with budget alerts) or get budget enforcement — only in
 `--scan`, which reads whatever pi has already written to its own session files, including a
 still-running session.
 

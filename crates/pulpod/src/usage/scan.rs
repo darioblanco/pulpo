@@ -1,11 +1,11 @@
 //! Read-only usage scan: total agent spend across *all* local history.
 //!
-//! Unlike [`super::projection`] (which covers pulpo-managed sessions), the scan reads every
-//! Claude/Codex/pi session file on the machine and reports spend by agent and by repo — the
-//! low-friction "what did my agents cost?" view. It needs no behavior change: it meters
-//! sessions you ran however you ran them (raw terminal, another tool, cron), and unifies
-//! Claude + Codex + pi into one report — the cross-agent view a single-vendor `/usage`
-//! can't give.
+//! Unlike [`super::rollup`] (which covers pulpo-managed sessions only), the scan reads
+//! every Claude/Codex/pi session file on the machine and reports spend by agent and by
+//! repo — the low-friction "what did my agents cost?" view. It needs no behavior change:
+//! it meters sessions you ran however you ran them (raw terminal, another tool, cron), and
+//! unifies Claude + Codex + pi into one report — the cross-agent view a single-vendor
+//! `/usage` can't give.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,7 +15,7 @@ use pulpo_common::api::{ScanRollup, UsageScanResponse};
 
 use super::{ExactUsage, RateOverrides, ScanEntry, claude, codex, pi};
 
-/// Total tokens across every dimension we track (matches the projection convention).
+/// Total tokens across every dimension we track (matches the `usage::rollup` convention).
 const fn exact_total_tokens(u: &ExactUsage) -> u64 {
     u.input_tokens + u.output_tokens + u.cache_write_tokens + u.cache_read_tokens
 }

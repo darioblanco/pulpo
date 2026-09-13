@@ -92,13 +92,13 @@ Best docs to read next:
 An agent gets stuck in a retry loop, or a job with no budget set starts burning tokens fast, and
 nobody is watching.
 
-A flat cost cap (case 4) still catches sessions that have one. For the ones that don't, or where
-the danger is the *rate* rather than the total, the burn-velocity governor watches that instead:
+A `--budget-cost` (case 4) is what catches this — the watchdog alerts at 80% of the cap and
+stops the session at 100%, whatever the pattern that got it there. A stuck retry loop and a
+slow overnight ooze trip the same check; set the cap tight enough that a loop can't do much
+damage before it fires:
 
-```toml
-[watchdog]
-burn_ceiling_usd_per_hour = 20.0
-burn_action = "alert"   # "stop" to opt into auto-kill
+```bash
+pulpo spawn nightly --budget-cost 5 -- claude -p "..."
 ```
 
 Point a webhook at the alert so it reaches you, not just the dashboard:
@@ -111,8 +111,11 @@ events = ["usage_alert.*", "intervention.*"]
 min_severity = "warn"
 ```
 
-Alerting is on by default; auto-stop is opt-in. Combined with `--budget-cost` on the spawn
-itself, this is the closest thing to a breaker an unattended agent gets.
+The 80% alert is always on; the 100% stop isn't opt-in — once a session or schedule has a
+`budget_cost_usd`, crossing it stops the session. There's no separate cost-*rate* ceiling on
+top of this: a burn-velocity governor was built and then removed (owner's call — a second
+knob doing the same job as a tight budget cap wasn't worth the config surface). Exact
+metering plus a cap you actually set is the whole of Pulpo's runaway protection, deliberately.
 
 Best docs to read next:
 

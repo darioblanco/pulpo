@@ -73,7 +73,6 @@ pub async fn update_watchdog(
                 threshold_secs: config.watchdog.idle_threshold_secs,
             },
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
-            burn: crate::watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
         };
         // Ignore send error — watchdog may have shut down
         let _ = tx.send(runtime_cfg);
@@ -207,7 +206,6 @@ mod tests {
             interval: std::time::Duration::from_secs(10),
             idle: crate::watchdog::IdleConfig::default(),
             extra_waiting_patterns: Vec::new(),
-            burn: crate::watchdog::BurnConfig::default(),
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);

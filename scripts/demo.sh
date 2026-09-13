@@ -56,7 +56,7 @@ run "pulpo ls"
 pause
 
 bold $'\n2) Meter — exactly, across agents and accounts'
-dim "tokens + cost read from the agent's own session files, not scraped; live burn rate"
+dim "tokens + cost read from the agent's own session files, not scraped — exact, per session"
 run "pulpo usage"
 pause
 

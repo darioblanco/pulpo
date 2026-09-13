@@ -19,9 +19,9 @@ actions:
     type: default
 features:
   - title: 1. Meter — exactly, everywhere
-    details: "Reads exact token counts from each agent's own session files (Claude Code, Codex) and costs them from your rate table, attributed per session and rolled up per account, billing pool, and repo — across every machine and agent. Codex reports exact quota rather than a per-token cost. `[rates.<model>]` prices new models with no code change."
+    details: "Reads exact token counts from each agent's own session files (Claude Code, Codex, pi) and costs them from your rate table, attributed per session and rolled up per repo — across every machine and agent. Codex reports exact quota rather than a per-token cost. `[rates.<model>]` prices new models with no code change. No output-scraping fallback: an unsupported agent shows no usage."
   - title: 2. Control — before the wall
-    details: "Per-session and per-schedule cost caps that alert at 80% and stop at 100%, plus a burn-velocity ($/hr) governor that catches the 2 a.m. runaway a flat budget misses. Alert-first; opt in to auto-stop."
+    details: "Per-session and per-schedule cost caps that alert at 80% and stop at 100%, recorded as an intervention you can audit."
   - title: 3. Monitor — to your own stack
     details: "Canonical events (lifecycle changes, interventions, usage/cost alerts) delivered as a plain POST to any number of webhooks, in-memory queue with a fixed retry schedule. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
   - title: 4. Run — durable & unattended

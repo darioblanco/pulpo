@@ -174,39 +174,16 @@ export interface CreateScheduleRequest {
   budget_cost_usd?: number;
 }
 
-export interface SessionProjection {
+/** Exact token/cost usage for one pulpo-managed session (see `pulpo_common::api::SessionUsage`). */
+export interface SessionUsage {
   session_id: string;
   session_name: string;
   workdir: string;
+  /** `claude-jsonl` / `codex-jsonl` / `pi-jsonl`, or `null` when the session has no
+   * recorded usage yet (no structured reader matched, or nothing to read). */
   usage_source: string | null;
-  auth_provider: string | null;
-  auth_plan: string | null;
-  auth_email: string | null;
-  pool: string;
   total_tokens: number;
   cost_usd: number | null;
-  elapsed_secs: number;
-  cost_per_hour: number | null;
-  tokens_per_hour: number | null;
-  quota_used_percent: number | null;
-  quota_resets_at: number | null;
-  allowance_tokens: number | null;
-  allowance_used_percent: number | null;
-  secs_to_allowance: number | null;
-}
-
-export interface AccountRollup {
-  provider: string | null;
-  plan: string | null;
-  email: string | null;
-  pool: string;
-  session_count: number;
-  total_tokens: number;
-  total_cost_usd: number | null;
-  cost_per_hour: number | null;
-  max_quota_used_percent: number | null;
-  /** True when every cost-bearing session had an exact (structured-reader) source. */
-  cost_is_exact: boolean;
 }
 
 /** Cost/token rollup for one attribution dimension value (a repo). */
@@ -215,14 +192,11 @@ export interface DimensionRollup {
   session_count: number;
   total_tokens: number;
   total_cost_usd: number | null;
-  cost_per_hour: number | null;
-  cost_is_exact: boolean;
 }
 
-export interface UsageProjectionResponse {
+export interface UsageSessionsResponse {
   node_name: string;
   generated_at: string;
-  sessions: SessionProjection[];
-  accounts: AccountRollup[];
+  sessions: SessionUsage[];
   repos: DimensionRollup[];
 }

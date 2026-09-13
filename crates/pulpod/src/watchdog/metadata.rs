@@ -11,10 +11,10 @@ use crate::usage::ExactUsage;
 /// PR and branch are only written if not already present. Transient signals (rate limits,
 /// errors) are always updated and cleared when no longer detected.
 ///
-/// When `exact_usage` is provided (read from the agent's own session files), it is
-/// authoritative: it overwrites token/cost metadata and disables the output scraper
-/// for usage fields. Once a session has ever had an exact source, scraped values are
-/// never written again (mixing the two would corrupt the totals).
+/// `exact_usage`, when present (read from the agent's own session files by a structured
+/// reader — Claude, Codex, or pi), is the only source of token/cost metadata. A session
+/// run with an agent that has no structured reader records no usage at all — there is no
+/// output-scraping fallback.
 ///
 /// `signals` (see `harness::HarnessSignals`, resolved by `watchdog::owned_signals`)
 /// says which of rate-limit and error-status scraping stay skipped: each is skipped
@@ -160,10 +160,6 @@ pub(super) async fn detect_and_store_output_metadata(
 
     if let Some(exact) = exact_usage {
         store_exact_usage(store, session, &exact).await;
-    } else if session.meta_str(meta::USAGE_SOURCE).is_none()
-        && let Some(usage) = output_patterns::extract_agent_usage(output)
-    {
-        store_agent_usage(store, session, &usage).await;
     }
 }
 
@@ -311,80 +307,6 @@ pub(super) fn build_session_event(
     }
 }
 
-/// Resolve a token field value with accumulation for agent restarts.
-/// If new value < stored, the agent was restarted — accumulate.
-/// Returns `None` if the value is unchanged.
-pub(super) fn accumulate_token_value(new_val: u64, stored: Option<&str>) -> Option<u64> {
-    let previous = stored.and_then(|value| value.parse::<u64>().ok());
-    match previous {
-        Some(stored_value) if new_val == stored_value => None,
-        Some(stored_value) if new_val < stored_value => Some(stored_value + new_val),
-        _ => Some(new_val),
-    }
-}
-
-/// Store agent usage data as metadata fields in a single DB round-trip.
-///
-/// When new token counts are lower than stored values, the agent was restarted —
-/// previous totals are added to new values instead of overwriting.
-async fn store_agent_usage(store: &Store, session: &Session, usage: &output_patterns::AgentUsage) {
-    let session_id = session.id.to_string();
-    let mut updates: Vec<(&str, String)> = Vec::new();
-
-    let input = usage
-        .input_tokens
-        .or_else(|| usage.total_tokens.filter(|_| usage.output_tokens.is_none()));
-    if let Some(value) = input
-        && let Some(final_value) =
-            accumulate_token_value(value, session.meta_str(meta::TOTAL_INPUT_TOKENS))
-    {
-        updates.push((meta::TOTAL_INPUT_TOKENS, final_value.to_string()));
-    }
-    if let Some(value) = usage.output_tokens
-        && let Some(final_value) =
-            accumulate_token_value(value, session.meta_str(meta::TOTAL_OUTPUT_TOKENS))
-    {
-        updates.push((meta::TOTAL_OUTPUT_TOKENS, final_value.to_string()));
-    }
-    if let Some(value) = usage.cache_write_tokens
-        && let Some(final_value) =
-            accumulate_token_value(value, session.meta_str(meta::CACHE_WRITE_TOKENS))
-    {
-        updates.push((meta::CACHE_WRITE_TOKENS, final_value.to_string()));
-    }
-    if let Some(value) = usage.cache_read_tokens
-        && let Some(final_value) =
-            accumulate_token_value(value, session.meta_str(meta::CACHE_READ_TOKENS))
-    {
-        updates.push((meta::CACHE_READ_TOKENS, final_value.to_string()));
-    }
-    if let Some(cost) = usage.session_cost_usd {
-        let stored_cost = session
-            .meta_str(meta::SESSION_COST_USD)
-            .and_then(|value| value.parse::<f64>().ok());
-        let final_cost = match stored_cost {
-            Some(previous) if (cost - previous).abs() < 1e-7 => None,
-            Some(previous) if cost < previous => Some(previous + cost),
-            _ => Some(cost),
-        };
-        if let Some(final_cost) = final_cost {
-            updates.push((meta::SESSION_COST_USD, format!("{final_cost:.6}")));
-        }
-    }
-
-    if updates.is_empty() {
-        return;
-    }
-
-    let refs: Vec<(&str, &str)> = updates
-        .iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect();
-    let _ = store
-        .batch_update_session_metadata(&session_id, &refs, &[])
-        .await;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,26 +328,6 @@ mod tests {
         };
         store.insert_session(&session).await.unwrap();
         session
-    }
-
-    #[test]
-    fn test_accumulate_token_value_initial_set() {
-        assert_eq!(accumulate_token_value(42, None), Some(42));
-    }
-
-    #[test]
-    fn test_accumulate_token_value_unchanged_returns_none() {
-        assert_eq!(accumulate_token_value(42, Some("42")), None);
-    }
-
-    #[test]
-    fn test_accumulate_token_value_restart_accumulates() {
-        assert_eq!(accumulate_token_value(10, Some("100")), Some(110));
-    }
-
-    #[test]
-    fn test_accumulate_token_value_invalid_previous_replaces() {
-        assert_eq!(accumulate_token_value(7, Some("invalid")), Some(7));
     }
 
     #[test]
@@ -458,80 +360,6 @@ mod tests {
         assert_eq!(event.total_input_tokens, Some(123));
         assert_eq!(event.total_output_tokens, Some(456));
         assert_eq!(event.session_cost_usd, Some(1.25));
-    }
-
-    #[tokio::test]
-    async fn test_store_agent_usage_writes_usage_fields() {
-        let store = test_store().await;
-        let session = insert_session(&store, "usage-write").await;
-        let usage = output_patterns::AgentUsage {
-            input_tokens: Some(100),
-            output_tokens: Some(50),
-            cache_write_tokens: Some(10),
-            cache_read_tokens: Some(20),
-            total_tokens: None,
-            session_cost_usd: Some(0.75),
-        };
-
-        store_agent_usage(&store, &session, &usage).await;
-
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.meta_str(meta::TOTAL_INPUT_TOKENS), Some("100"));
-        assert_eq!(fetched.meta_str(meta::TOTAL_OUTPUT_TOKENS), Some("50"));
-        assert_eq!(fetched.meta_str(meta::CACHE_WRITE_TOKENS), Some("10"));
-        assert_eq!(fetched.meta_str(meta::CACHE_READ_TOKENS), Some("20"));
-        assert_eq!(fetched.meta_str(meta::SESSION_COST_USD), Some("0.750000"));
-    }
-
-    #[tokio::test]
-    async fn test_store_agent_usage_accumulates_restart_values() {
-        let store = test_store().await;
-        let session = insert_session(&store, "usage-restart").await;
-        store
-            .batch_update_session_metadata(
-                &session.id.to_string(),
-                &[
-                    (meta::TOTAL_INPUT_TOKENS, "100"),
-                    (meta::TOTAL_OUTPUT_TOKENS, "80"),
-                    (meta::CACHE_WRITE_TOKENS, "30"),
-                    (meta::CACHE_READ_TOKENS, "20"),
-                    (meta::SESSION_COST_USD, "2.500000"),
-                ],
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        let usage = output_patterns::AgentUsage {
-            input_tokens: Some(10),
-            output_tokens: Some(5),
-            cache_write_tokens: Some(3),
-            cache_read_tokens: Some(2),
-            total_tokens: None,
-            session_cost_usd: Some(0.5),
-        };
-
-        store_agent_usage(&store, &fetched, &usage).await;
-
-        let updated = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("110"));
-        assert_eq!(updated.meta_str(meta::TOTAL_OUTPUT_TOKENS), Some("85"));
-        assert_eq!(updated.meta_str(meta::CACHE_WRITE_TOKENS), Some("33"));
-        assert_eq!(updated.meta_str(meta::CACHE_READ_TOKENS), Some("22"));
-        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), Some("3.000000"));
     }
 
     #[tokio::test]
@@ -743,41 +571,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_scraper_disabled_once_exact_source_recorded() {
+    async fn test_no_usage_metadata_written_without_exact_source() {
+        // No structured reader matched this tick (unsupported harness, or nothing to
+        // read yet) — there is no output-scraping fallback, so usage stays unset.
         let store = test_store().await;
-        let session = insert_session(&store, "scraper-gate").await;
-        detect_and_store_output_metadata(
-            &store,
-            &session,
-            "",
-            Some(exact_usage_fixture()),
-            HarnessSignals::none(),
-        )
-        .await;
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Exact reader unavailable this tick, but scrapeable text is on screen.
-        let output = "Tokens: 999,999 sent, 888 received. Cost: $42.00 session.\n";
-        detect_and_store_output_metadata(&store, &fetched, output, None, HarnessSignals::none())
-            .await;
-
-        let updated = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1000"));
-        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), Some("0.123456"));
-    }
-
-    #[tokio::test]
-    async fn test_scraper_still_used_without_exact_source() {
-        let store = test_store().await;
-        let session = insert_session(&store, "scraper-fallback").await;
+        let session = insert_session(&store, "no-exact-usage").await;
 
         let output = "Tokens: 1,234 sent, 567 received. Cost: $0.03 message, $0.06 session.\n";
         detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none())
@@ -788,7 +586,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1234"));
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), None);
         assert_eq!(updated.meta_str(meta::USAGE_SOURCE), None);
     }
 }

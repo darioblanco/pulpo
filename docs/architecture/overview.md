@@ -148,7 +148,7 @@ pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
 pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves the worktree on disk; it's reclaimed on the next purge — `pulpo stop --purge`, `pulpo cleanup`, or a watchdog intervention (budget/burn/idle) that stops the session. See [Worktrees](/guides/worktrees) for the full cleanup model.
+Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves the worktree on disk; it's reclaimed on the next purge — `pulpo stop --purge`, `pulpo cleanup`, or a watchdog intervention (budget/idle) that stops the session. See [Worktrees](/guides/worktrees) for the full cleanup model.
 
 ### Built-in Scheduler
 

@@ -14,7 +14,7 @@ pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, k
 pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost, ready, or stopped session (alias: r; auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions (alias: iv)
-pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
+pulpo usage                               Show exact per-session token/cost usage + repo rollups
 pulpo usage --scan                        Scan ALL local agent history (Claude + Codex + pi):
                                           total spend by agent, model, and repo, no daemon-managed
                                           sessions required

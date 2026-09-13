@@ -29,7 +29,7 @@ POST <your endpoint>
   "session": {                  // present for session-scoped events
     "id": "...", "name": "fix-auth", "status": "idle",
     "git_branch": "...", "pr_url": null,
-    "cost_usd": 2.5, "total_tokens": 1234000, "pool": "subscription"
+    "cost_usd": 2.5, "total_tokens": 1234000
   },
   "payload": { }                // type-specific extras (budget_usd, quota_used_percent, ...)
 }

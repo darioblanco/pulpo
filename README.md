@@ -65,9 +65,9 @@ pulpo ui
 ```
 
 ```
-SESSION          SOURCE   TOKENS     COST      $/HR   QUOTA
-my-api           claude     1.2M    $2.41   $2.41/h     ~3%
-nightly-review   claude     310K    $0.74   $0.74/h     ~1%
+SESSION          SOURCE     TOKENS     COST
+my-api           claude       1.2M    $2.41
+nightly-review   claude       310K    $0.74
 ```
 
 ## Why This Exists
@@ -92,19 +92,18 @@ table), enforces budgets, and forwards alerts and events to whatever observabili
 
 ## What Pulpo Does
 
-**Meter — exactly, everywhere.** Pulpo parses the session files Claude Code and Codex write
-themselves, so **token counts are exact** (not scraped) and costed from your rate table —
-attributed per session and rolled up per account, billing pool, **and repo** ("work in
-~/repos/api cost €11"), across every machine and agent you run. (Codex reports exact
-subscription quota rather than a per-token cost.) Unknown
-models still report tokens; `[rates.<model>]` config prices a new or repriced model with no
-code change.
+**Meter — exactly, everywhere.** Pulpo parses the session files Claude Code, Codex, and pi
+write themselves, so **token counts are exact** (not scraped) and costed from your rate
+table — attributed per session and rolled up **per repo** ("work in ~/repos/api cost €11"),
+across every machine and agent you run. (Codex reports exact subscription quota rather than
+a per-token cost.) There is no output-scraping fallback: a harness without a structured
+reader simply shows no usage. Unknown models still report tokens; `[rates.<model>]` config
+prices a new or repriced model with no code change.
 
 ```bash
 pulpo usage --scan              # zero-setup: scan ALL local Claude + Codex + pi history →
                                 # total spend by agent and repo (no sessions routed through pulpo)
-pulpo usage                     # live per-session burn: tokens, cost, $/hr, quota
-                                # (tokens/hr and time-to-cap in --json)
+pulpo usage                     # exact per-session usage for pulpo-managed sessions: tokens, cost
 ```
 
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
@@ -116,9 +115,7 @@ and not *this checkout* (add `--by-worktree` to keep each checkout separate). Na
 window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
 
 **Control — pull the plug before the wall.** Per-session and per-schedule cost caps that
-alert at 80% and hard-stop at 100%, plus a burn-velocity governor that catches the
-catastrophic 2 a.m. runaway a flat budget misses — the governor alerts by default, with
-opt-in auto-stop.
+alert at 80% and hard-stop at 100%, recorded as an intervention you can audit.
 
 ```bash
 pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
@@ -148,7 +145,7 @@ terminal command — Pulpo is not tied to one vendor or one model.
 
 ```bash
 # your machines      — runs where you put it, no vendor cloud
-# your accounts      — usage + identity read from local files, never relayed
+# your usage         — read from local session files, never relayed
 # your budgets       — enforcement runs in the session, not after the invoice
 # your observability — events forwarded to your collector, not a SaaS
 # your choice of agent
@@ -181,8 +178,8 @@ single point of failure and integrates with your existing observability.
 
 ## Core Capabilities
 
-- **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
-- **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
+- **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, Codex quota; pi in `--scan` only for now), per-repo/worktree and cross-agent rollups, `[rates.<model>]` config — no output-scraping fallback; an unsupported agent simply shows no usage.
+- **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%), recorded as an intervention.
 - **Monitoring backbone**: canonical events delivered as a plain POST to multiple webhooks (in-memory queue, fixed retry schedule); SSE stream.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
@@ -211,7 +208,7 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 |---|---|---|---|
 | Cross-account, cross-machine cost | Yes | One account / machine | Single machine |
 | Cross-agent (Claude + Codex + …) | Yes | One vendor | Yes (many CLIs) |
-| Live burn rate + projection | Yes | No | Post-hoc |
+| Live exact per-session & per-repo cost | Yes | No | Post-hoc |
 | Budget enforcement (auto-stop) | Yes | No | No |
 | Alerts before the wall | Yes | No | No |
 | Forward events to your stack | Webhooks | No | No |

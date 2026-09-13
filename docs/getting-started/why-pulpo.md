@@ -26,8 +26,8 @@ pulpo spawn fix --workdir ~/repos/api -- claude -p "Fix the failing auth tests"
 pulpo attach fix   # from the same box, or over SSH/Tailscale from a laptop
 ```
 
-Budgets and a burn-rate governor sit on top of that same durable session, alerting at 80% of
-a cap and — if you opt in — stopping it before it runs past 100%. See
+A cost budget sits on top of that same durable session, alerting at 80% of
+a cap and stopping it before it runs past 100%. See
 [Quickstart](/getting-started/quickstart) and
 [Control Your Agents From Anywhere](/guides/remote-control) for the hands-on version of this
 loop.
@@ -87,9 +87,8 @@ surprise you in the morning.
 
 Pulpo gives you:
 
-- schedules and budgets tied to real session objects
+- schedules and budgets tied to real session objects, with a hard stop at 100% of cap
 - events forwarded to your own webhooks, so you can feed Grafana/Datadog/a SIEM
-- a burn-velocity governor that catches a runaway before a flat budget would trip
 - repeatable operational workflows without writing a platform from scratch
 
 ## When Pulpo Is The Right Tool
@@ -152,7 +151,7 @@ Pulpo overlaps with them, but aims one level deeper:
 
 - a session is a durable, metered object, not just a visible process
 - failure and recovery behavior are explicit
-- cost, budgets, and burn-rate alerts are built in, not bolted on
+- cost and budget-cap alerts are built in, not bolted on
 - control surfaces include web, API, notifications, and scheduling
 
 If your main problem is "I need a nicer terminal dashboard," use the best local

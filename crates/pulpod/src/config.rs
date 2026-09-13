@@ -21,8 +21,12 @@ pub struct Config {
     pub peers: Option<toml::Value>,
     #[serde(default)]
     pub watchdog: WatchdogConfig,
-    #[serde(default)]
-    pub plans: HashMap<String, PlanConfig>,
+    /// Retired `[plans]` table (Claude weekly-token-allowance config for the removed
+    /// burn-rate/time-to-cap projection). This field only exists so configs written
+    /// before the removal still load (`deny_unknown_fields` would otherwise reject
+    /// them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub plans: Option<toml::Value>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
     /// Canonical top-level `[[webhooks]]` endpoints.
@@ -116,20 +120,6 @@ pub struct RateConfig {
     pub cache_write_5m: f64,
     #[serde(default)]
     pub cache_write_1h: f64,
-}
-
-/// Per-plan quota configuration.
-///
-/// Anthropic does not publish subscription token allowances, so Claude "% of weekly
-/// cap" / time-to-cap projections are computed only when the operator supplies an
-/// estimate here. Keyed by the plan name reported in session `auth_plan` metadata
-/// (e.g. `max`, `pro`).
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlanConfig {
-    /// Estimated weekly token allowance for this plan. `None` disables %-of-cap.
-    #[serde(default)]
-    pub weekly_token_allowance: Option<u64>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -320,20 +310,19 @@ pub struct WatchdogConfig {
     /// Appended to the built-in defaults.
     #[serde(default)]
     pub waiting_patterns: Vec<String>,
-    /// Burn-velocity governor: alert when a session's lifetime-average cost rate
-    /// (USD/hour) exceeds this ceiling. `None` disables the cost-rate check.
-    #[serde(default)]
-    pub burn_ceiling_usd_per_hour: Option<f64>,
-    /// Burn-velocity governor: alert when a session's lifetime-average token rate
-    /// (tokens/hour) exceeds this ceiling. `None` disables the token-rate check.
-    /// Covers agents with no cost signal (e.g. Codex).
-    #[serde(default)]
-    pub burn_ceiling_tokens_per_hour: Option<u64>,
-    /// What to do when a session crosses a burn ceiling: `"alert"` (default,
-    /// emit a `usage_alert.burn_ceiling` event only) or `"stop"` (also stop the
-    /// session via the intervention path).
-    #[serde(default = "default_burn_action")]
-    pub burn_action: String,
+    /// Retired `watchdog.burn_ceiling_usd_per_hour` key (the burn-velocity governor
+    /// was removed — flat budget caps are the only spend control). This field only
+    /// exists so configs written before the removal still load (`deny_unknown_fields`
+    /// would otherwise reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub burn_ceiling_usd_per_hour: Option<toml::Value>,
+    /// Retired `watchdog.burn_ceiling_tokens_per_hour` key. See
+    /// `burn_ceiling_usd_per_hour`.
+    #[serde(default, skip_serializing)]
+    pub burn_ceiling_tokens_per_hour: Option<toml::Value>,
+    /// Retired `watchdog.burn_action` key. See `burn_ceiling_usd_per_hour`.
+    #[serde(default, skip_serializing)]
+    pub burn_action: Option<toml::Value>,
 }
 
 impl WatchdogConfig {
@@ -348,12 +337,6 @@ impl WatchdogConfig {
             anyhow::bail!(
                 "watchdog.idle_action must be \"alert\" or \"kill\", got \"{}\"",
                 self.idle_action
-            );
-        }
-        if self.burn_action != "alert" && self.burn_action != "stop" {
-            anyhow::bail!(
-                "watchdog.burn_action must be \"alert\" or \"stop\", got \"{}\"",
-                self.burn_action
             );
         }
         Ok(())
@@ -375,13 +358,9 @@ impl Default for WatchdogConfig {
             waiting_patterns: Vec::new(),
             burn_ceiling_usd_per_hour: None,
             burn_ceiling_tokens_per_hour: None,
-            burn_action: default_burn_action(),
+            burn_action: None,
         }
     }
-}
-
-fn default_burn_action() -> String {
-    String::from("alert")
 }
 
 const fn default_watchdog_enabled() -> bool {
@@ -599,6 +578,24 @@ pub fn load(path: &str) -> Result<Config> {
                 "config: webhook `secret` is retired (HMAC request signing was removed along \
                  with the durable outbox) — ignoring it; it will be dropped from the config \
                  file the next time it is saved"
+            );
+        }
+        if config.plans.is_some() {
+            warn!(
+                "config: [plans] is retired (the burn-rate/time-to-cap projection it fed was \
+                 removed — Pulpo now ships exact metering and a flat budget cap only) — \
+                 ignoring it; it will be dropped from the config file the next time it is saved"
+            );
+        }
+        if config.watchdog.burn_ceiling_usd_per_hour.is_some()
+            || config.watchdog.burn_ceiling_tokens_per_hour.is_some()
+            || config.watchdog.burn_action.is_some()
+        {
+            warn!(
+                "config: watchdog.burn_ceiling_usd_per_hour / burn_ceiling_tokens_per_hour / \
+                 burn_action are retired (the burn-velocity governor was removed — use \
+                 --budget-cost for a flat spend cap instead) — ignoring them; they will be \
+                 dropped from the config file the next time it is saved"
             );
         }
         Ok(config)
@@ -1297,7 +1294,7 @@ check_interval_secs = 5
                 waiting_patterns: Vec::new(),
                 burn_ceiling_usd_per_hour: None,
                 burn_ceiling_tokens_per_hour: None,
-                burn_action: "alert".into(),
+                burn_action: None,
             },
             ..Default::default()
         };
@@ -1532,43 +1529,17 @@ ready_ttl_secs = 3600
     }
 
     #[test]
-    fn test_watchdog_burn_defaults() {
+    fn test_watchdog_burn_keys_retired_and_none_by_default() {
         let wd = WatchdogConfig::default();
-        assert_eq!(wd.burn_ceiling_usd_per_hour, None);
-        assert_eq!(wd.burn_ceiling_tokens_per_hour, None);
-        assert_eq!(wd.burn_action, "alert");
+        assert!(wd.burn_ceiling_usd_per_hour.is_none());
+        assert!(wd.burn_ceiling_tokens_per_hour.is_none());
+        assert!(wd.burn_action.is_none());
     }
 
     #[test]
-    fn test_watchdog_validate_burn_action_alert() {
-        let wd = WatchdogConfig {
-            burn_action: "alert".into(),
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_burn_action_stop() {
-        let wd = WatchdogConfig {
-            burn_action: "stop".into(),
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_burn_action_invalid() {
-        let wd = WatchdogConfig {
-            burn_action: "pause".into(),
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("burn_action"));
-    }
-
-    #[test]
-    fn test_load_config_with_burn_ceilings() {
+    fn test_load_tolerates_legacy_watchdog_burn_keys() {
+        // Configs written before the burn-velocity governor was removed still load;
+        // the keys are retired but not rejected.
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -1585,58 +1556,90 @@ burn_action = "stop"
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.burn_ceiling_usd_per_hour, Some(5.0));
-        assert_eq!(
-            config.watchdog.burn_ceiling_tokens_per_hour,
-            Some(1_000_000)
-        );
-        assert_eq!(config.watchdog.burn_action, "stop");
+        assert!(config.watchdog.burn_ceiling_usd_per_hour.is_some());
+        assert!(config.watchdog.burn_ceiling_tokens_per_hour.is_some());
+        assert!(config.watchdog.burn_action.is_some());
     }
 
     #[test]
-    fn test_load_config_rejects_invalid_burn_action() {
+    fn test_save_drops_legacy_watchdog_burn_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[watchdog]
+burn_ceiling_usd_per_hour = 5.0
+burn_ceiling_tokens_per_hour = 1000000
+burn_action = "stop"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.watchdog.burn_ceiling_usd_per_hour.is_some());
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("burn_ceiling") && !content.contains("burn_action"),
+            "retired watchdog burn keys are dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.watchdog.burn_ceiling_usd_per_hour.is_none());
+        assert!(reloaded.watchdog.burn_ceiling_tokens_per_hour.is_none());
+        assert!(reloaded.watchdog.burn_action.is_none());
+    }
+
+    #[test]
+    fn test_load_tolerates_legacy_plans_section() {
+        // Configs written before the burn-rate/time-to-cap projection (and its
+        // `[plans]` allowance config) was removed still load.
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "bad-burn"
+name = "test"
 
-[watchdog]
-burn_action = "explode"
+[plans.max]
+weekly_token_allowance = 1000000
 "#
         )
         .unwrap();
 
-        let result = load(tmpfile.path().to_str().unwrap());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("burn_action"));
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert!(config.plans.is_some(), "legacy [plans] section is parsed");
     }
 
     #[test]
-    fn test_save_and_load_roundtrip_with_burn_ceilings() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("burn-rt.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "burn-rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            watchdog: WatchdogConfig {
-                burn_ceiling_usd_per_hour: Some(2.5),
-                burn_ceiling_tokens_per_hour: Some(500_000),
-                burn_action: "stop".into(),
-                ..WatchdogConfig::default()
-            },
-            ..Default::default()
-        };
+    fn test_save_drops_legacy_plans_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[plans.max]
+weekly_token_allowance = 1000000
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.plans.is_some());
         save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.watchdog.burn_ceiling_usd_per_hour, Some(2.5));
-        assert_eq!(loaded.watchdog.burn_ceiling_tokens_per_hour, Some(500_000));
-        assert_eq!(loaded.watchdog.burn_action, "stop");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("[plans"),
+            "retired [plans] section is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.plans.is_none());
     }
 
     #[test]

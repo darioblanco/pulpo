@@ -1,17 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getUsageProjection } from '@/api/client';
+import { getUsageSessions } from '@/api/client';
 import { toast } from 'sonner';
 import { Wallet } from 'lucide-react';
-import type {
-  UsageProjectionResponse,
-  SessionProjection,
-  AccountRollup,
-  DimensionRollup,
-} from '@/api/types';
+import type { UsageSessionsResponse, DimensionRollup } from '@/api/types';
 
 /** Compact a token count: 1234 → "1.2K", 4_500_000 → "4.5M". */
 function fmtTokens(n: number): string {
@@ -20,25 +14,11 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-/** Estimated (output-scraped) costs get a `~`; exact reader-derived costs are plain. */
-function fmtCost(c: number | null, exact = true): string {
+/** Every cost comes from a structured usage reader (no output-scraping fallback), so
+ * this is always exact. */
+function fmtCost(c: number | null): string {
   if (c == null) return '—';
-  return `${exact ? '' : '~'}$${c.toFixed(2)}`;
-}
-
-function fmtRate(c: number | null): string {
-  return c == null ? '—' : `$${c.toFixed(2)}/h`;
-}
-
-/** Quota column: exact Codex %, estimated Claude ~%, or "—". */
-function fmtQuota(s: SessionProjection): string {
-  if (s.quota_used_percent != null) return `${s.quota_used_percent.toFixed(0)}%`;
-  if (s.allowance_used_percent != null) return `~${s.allowance_used_percent.toFixed(0)}%`;
-  return '—';
-}
-
-function accountLabel(a: AccountRollup): string {
-  return a.email ?? a.provider ?? 'unknown';
+  return `$${c.toFixed(2)}`;
 }
 
 /** A cost-attribution breakdown by repo (most expensive first). */
@@ -61,7 +41,7 @@ function DimensionTable({ title, rows }: { title: string; rows: DimensionRollup[
                 {fmtTokens(r.total_tokens)}
               </td>
               <td className="px-4 py-2 text-right font-mono text-xs font-medium">
-                {fmtCost(r.total_cost_usd, r.cost_is_exact)}
+                {fmtCost(r.total_cost_usd)}
               </td>
             </tr>
           ))}
@@ -72,12 +52,12 @@ function DimensionTable({ title, rows }: { title: string; rows: DimensionRollup[
 }
 
 export function UsagePage() {
-  const [data, setData] = useState<UsageProjectionResponse | null>(null);
+  const [data, setData] = useState<UsageSessionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchUsage = useCallback(async () => {
     try {
-      setData(await getUsageProjection());
+      setData(await getUsageSessions());
     } catch {
       toast.error('Failed to load usage');
     } finally {
@@ -88,6 +68,12 @@ export function UsagePage() {
   useEffect(() => {
     void fetchUsage();
   }, [fetchUsage]);
+
+  const totalCost = data?.sessions.reduce<number | null>((sum, s) => {
+    if (s.cost_usd == null) return sum;
+    return (sum ?? 0) + s.cost_usd;
+  }, null);
+  const totalTokens = data?.sessions.reduce((sum, s) => sum + s.total_tokens, 0) ?? 0;
 
   return (
     <div data-testid="usage-page">
@@ -105,37 +91,20 @@ export function UsagePage() {
           </div>
         ) : (
           <>
-            {data.accounts.length > 0 && (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="account-cards">
-                {data.accounts.map((a) => (
-                  <Card key={`${accountLabel(a)}-${a.pool}`} data-testid="account-card">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center justify-between text-sm font-medium">
-                        <span className="truncate">{accountLabel(a)}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {a.pool}
-                        </Badge>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                      <div className="text-2xl font-semibold">
-                        {fmtCost(a.total_cost_usd, a.cost_is_exact)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {fmtTokens(a.total_tokens)} tokens · {a.session_count} session
-                        {a.session_count === 1 ? '' : 's'}
-                        {a.cost_per_hour != null && ` · ${fmtRate(a.cost_per_hour)}`}
-                      </div>
-                      {a.max_quota_used_percent != null && (
-                        <div className="text-xs text-muted-foreground">
-                          quota {a.max_quota_used_percent.toFixed(0)}%
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
+            <Card data-testid="usage-total-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Total spend on {data.node_name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-semibold">{fmtCost(totalCost ?? null)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {fmtTokens(totalTokens)} tokens · {data.sessions.length} session
+                  {data.sessions.length === 1 ? '' : 's'}
+                </div>
+              </CardContent>
+            </Card>
 
             {data.repos.length > 0 && (
               <div className="grid gap-3 sm:grid-cols-2">
@@ -148,13 +117,9 @@ export function UsagePage() {
                 <thead>
                   <tr className="border-b border-border bg-muted/50 text-left text-xs text-muted-foreground">
                     <th className="px-4 py-2.5 font-medium">Session</th>
-                    <th className="px-4 py-2.5 font-medium">Pool</th>
+                    <th className="px-4 py-2.5 font-medium">Source</th>
                     <th className="px-4 py-2.5 text-right font-medium">Tokens</th>
                     <th className="px-4 py-2.5 text-right font-medium">Cost</th>
-                    <th className="hidden px-4 py-2.5 text-right font-medium sm:table-cell">
-                      $/hr
-                    </th>
-                    <th className="px-4 py-2.5 text-right font-medium">Quota</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -165,21 +130,15 @@ export function UsagePage() {
                       className="border-b border-border last:border-0"
                     >
                       <td className="px-4 py-3 font-medium">{s.session_name}</td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className="text-xs">
-                          {s.pool}
-                        </Badge>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {s.usage_source?.replace(/-jsonl$/, '') ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
                         {fmtTokens(s.total_tokens)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
-                        {fmtCost(s.cost_usd, s.usage_source != null)}
+                        {fmtCost(s.cost_usd)}
                       </td>
-                      <td className="hidden px-4 py-3 text-right font-mono text-xs sm:table-cell">
-                        {fmtRate(s.cost_per_hour)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs">{fmtQuota(s)}</td>
                     </tr>
                   ))}
                 </tbody>

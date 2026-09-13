@@ -8,9 +8,10 @@ Breaking cleanup note:
 
 - truly unknown config keys now fail at startup instead of being silently ignored; a
   short list of **retired** keys (superseded features — `watchdog.adopt_tmux`,
-  `node.tag`, `[controller]`, `[peers]`, `[inks]`, `[docker]`, ...) is the exception —
-  those still load with a startup warning and are dropped the next time the config is
-  saved (see [Config Reference](/reference/config) "Retired keys")
+  `node.tag`, `[controller]`, `[peers]`, `[inks]`, `[docker]`, `[plans]`, the three
+  `watchdog.burn_*` keys, ...) is the exception — those still load with a startup warning
+  and are dropped the next time the config is saved (see
+  [Config Reference](/reference/config) "Retired keys")
 - pre-`sqlx` legacy databases are no longer upgraded in place; if Pulpo reports an unsupported legacy schema, delete `~/.pulpo/state.db` and restart
 
 ## Minimal Example
@@ -48,8 +49,6 @@ idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
 idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
-burn_ceiling_usd_per_hour = 20.0       # Alert (or stop) if lifetime-average $/hr exceeds this (default: unset)
-burn_action = "alert"                  # "alert" (default) or "stop" when a burn ceiling is crossed
 ```
 
 Per-session idle threshold: `pulpo spawn my-task --idle-threshold 0` (never idle) or `--idle-threshold 120` (2 minutes).
@@ -59,12 +58,11 @@ detection stops applying once a session's events start flowing — see
 [Harness Adapters](/architecture/harness-adapters). See
 [Session Lifecycle](/operations/session-lifecycle) for the full state-transition picture.
 
-## Cost Rates and Quotas
+## Cost Rates
 
-`[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`); `[plans.<name>]`
-supplies the weekly token allowance Anthropic doesn't publish, enabling Claude's "% of
-weekly cap" projection. Both are covered field-by-field in the
-[Config Reference](/reference/config).
+`[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`). A cap on what a
+session or schedule can spend is set directly on it (`--budget-cost`), not in this file —
+see [Config Reference](/reference/config) for `[rates.<model>]` field-by-field.
 
 ## Notifications
 

@@ -30,7 +30,7 @@ delivery model (plain POST, fixed retry schedule, best-effort).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/usage/projection` | Live per-session burn rate ($/hr, tokens/hr) and time-to-cap for pulpo-managed sessions |
+| GET | `/api/v1/usage/sessions` | Exact per-session usage (tokens, cost) + per-repo rollups for pulpo-managed sessions |
 | GET | `/api/v1/usage/scan` | Scan-only: total spend across *all* local agent history (Claude Code, Codex, pi), no sessions routed through pulpo required (`?since_days=`, `?by_worktree=true`) |
 
 ## Auth
@@ -163,7 +163,7 @@ Each SSE frame's `event:` field is one of:
   adapter reports the session is blocked on the user; see
   [Harness Adapters](/architecture/harness-adapters))
 - **`session_deleted`**: a session was purged (`stop --purge` or `pulpo cleanup`)
-- **`usage_alert`**: a budget or burn-ceiling threshold fired
+- **`usage_alert`**: a budget threshold fired
 - **`intervention`**: the watchdog forcibly stopped a session
 
 ```bash
