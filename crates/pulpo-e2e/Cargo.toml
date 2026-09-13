@@ -22,7 +22,9 @@ name = "fake-claude"
 path = "src/bin/fake-claude.rs"
 
 [dependencies]
-pulpo-common = { path = "../pulpo-common", version = "0.2.0" }
+# Path-only: this crate is never published, so no version pin (a pin here is not
+# bumped by release-please and broke the 0.3.0 release PR).
+pulpo-common = { path = "../pulpo-common" }
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
