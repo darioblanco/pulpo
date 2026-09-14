@@ -22,7 +22,7 @@ pub async fn stream(
         .map_err(|e| internal_error(&e.to_string()))?
         .ok_or_else(|| not_found(&format!("session not found: {id}")))?;
 
-    if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
+    if session.status != SessionStatus::Working && session.status != SessionStatus::Waiting {
         return Err(bad_request(&format!(
             "session is not running (status: {})",
             session.status
@@ -225,7 +225,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_ne!(fetched.status, SessionStatus::Active);
+        assert_ne!(fetched.status, SessionStatus::Working);
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
             name: "my-session".into(),
             workdir: "/tmp".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("custom-backend-id".into()),
             ..Default::default()
         };
@@ -267,7 +267,7 @@ mod tests {
             name: "my-session".into(),
             workdir: "/tmp".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         };
         // StubBackend.session_id returns just the name

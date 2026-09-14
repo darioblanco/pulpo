@@ -2,11 +2,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pulpo_common::event::PulpoEvent;
-use pulpo_common::session::{InterventionCode, Session, SessionStatus};
+use pulpo_common::session::{InterventionCode, Session, SessionStatus, status_reason};
 use tracing::{debug, info};
 
 use super::{
-    HarnessSignals, IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
+    HarnessSignals, IdleAction, IdleConfig, ReadyContext, build_session_event,
     detect_and_store_output_metadata, detect_waiting_for_input, owned_signals, resolve_backend_id,
 };
 use crate::backend::Backend;
@@ -24,7 +24,7 @@ pub(super) async fn check_idle_sessions(
     let live: Vec<_> = sessions
         .iter()
         .filter(|session| {
-            session.status == SessionStatus::Active || session.status == SessionStatus::Idle
+            session.status == SessionStatus::Working || session.status == SessionStatus::Waiting
         })
         .collect();
 
@@ -46,42 +46,17 @@ pub(super) async fn check_idle_sessions(
         .await;
     }
 
-    // A hook-driven `SessionEnded` event (see `session::manager::apply_harness_event`)
-    // moves a session straight to `Ready` without going through `check_session_idle`
-    // above, so it never gets the `.code` marker read that records `exit_code` — the
-    // loop above only ever visits `Active`/`Idle` sessions. Sweep `Ready` sessions
-    // with no `exit_code` yet so the marker (once `wrap_command` writes it) still
-    // gets picked up, same as `docs/operations/session-lifecycle.md` documents.
-    for session in sessions
-        .iter()
-        .filter(|session| session.status == SessionStatus::Ready && session.exit_code.is_none())
-    {
-        sweep_ready_exit_code(store, session).await;
-    }
-}
-
-/// Marker-only counterpart to `check_session_idle`'s exit-code handling, for
-/// sessions already `Ready` with no recorded `exit_code`: read the `.code` marker
-/// and persist it if present, otherwise do nothing (try again next tick). Never
-/// touches the backend — a `Ready` session's terminal state doesn't need a fresh
-/// `capture_output` call, only the marker file `wrap_command` writes once the
-/// wrapped agent process exits.
-pub(super) async fn sweep_ready_exit_code(store: &Store, session: &Session) {
-    let Some(code) =
-        crate::session::utils::read_exit_code_marker(store.data_dir(), &session.id.to_string())
-    else {
-        return;
-    };
-    #[allow(unused_variables)]
-    if let Err(error) = store
-        .update_session_exit_code(&session.id.to_string(), code)
-        .await
-    {
-        coverage_warn!(
-            session_name = %session.name,
-            "Idle check: failed to record exit code for ready session: {error}"
-        );
-    }
+    // ADR 0009 removed the `Ready` sweep that used to live here: `wrap_command` no
+    // longer keeps a fallback shell alive after the agent exits, so there is no more
+    // persistent "done but still alive" backend state to sweep for a lagging exit
+    // marker. A `Working`/`Waiting` session's dead backend (and its exit marker) is
+    // resolved to `Done`/`Lost` by the shared `session::manager::resolve_dead_backend_session`
+    // — called eagerly, right here, by `check_session_idle`'s own `is_alive()`
+    // pre-check on every tick (so the `lifecycle` event/webhook fires within one
+    // tick even with no API traffic at all), and also lazily by the next
+    // `get_session`/`list_sessions` call or by `resume_lost_sessions` on startup,
+    // for whichever of those happens to notice first. `Done` is a true terminal
+    // status: nothing here revisits it. See `docs/operations/session-lifecycle.md`.
 }
 
 /// Resolve the effective Active→Idle threshold (seconds) for a session: the
@@ -112,6 +87,33 @@ pub(super) async fn check_session_idle(
     extra_waiting_patterns: &[String],
 ) {
     let backend_id = resolve_backend_id(session, backend.as_ref());
+
+    // Eager dead-backend resolution (ADR 0009 follow-up): a session's backend can
+    // die between ticks — the agent exits, and `wrap_command` no longer keeps a
+    // fallback shell open, so tmux tears the pane down in the same instant. Without
+    // this pre-check, a `capture_output` failure below was the only signal, and
+    // nothing on this path ever turned that into a `Done`/`Lost` transition — the
+    // session sat in `Working`/`Waiting` until something else happened to call
+    // `GET /sessions/{id}` (see `session::manager::resolve_dead_backend_session`'s
+    // doc comment for the full story). Checking liveness explicitly, before trying
+    // to capture output at all, means this tick itself resolves it and fires the
+    // `lifecycle` event/webhook — not some future, possibly-never-arriving poll.
+    match backend.is_alive(&backend_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            resolve_and_report_dead_session(store, backend, &backend_id, session, ready_ctx).await;
+            return;
+        }
+        #[allow(unused_variables)]
+        Err(error) => {
+            debug!(
+                "Idle check: failed to check liveness for {}: {error}",
+                session.name
+            );
+            return;
+        }
+    }
+
     let current_output = match backend.capture_output(&backend_id, 500) {
         Ok(output) => output,
         #[allow(unused_variables)]
@@ -123,19 +125,6 @@ pub(super) async fn check_session_idle(
             return;
         }
     };
-
-    // The `.code` exit marker (written by `wrap_command` immediately after the
-    // wrapped agent command exits) is a deterministic, race-free alternative to the
-    // historical text-scrape below. The text scrape stays in place for compatibility
-    // with any session that predates the marker-file mechanism (PR #94) or otherwise
-    // reaches Ready with no `wrap_command` wrapper of its own, which never gets a
-    // marker and must keep relying on it.
-    let marker_exit_code =
-        crate::session::utils::read_exit_code_marker(store.data_dir(), &session.id.to_string());
-    if marker_exit_code.is_some() || detect_agent_exited(&current_output) {
-        handle_session_ready(store, session, ready_ctx, marker_exit_code).await;
-        return;
-    }
 
     #[allow(unused_variables)]
     if let Err(error) = store
@@ -160,7 +149,7 @@ pub(super) async fn check_session_idle(
         return;
     }
 
-    if !signals.lifecycle && session.status == SessionStatus::Active {
+    if !signals.lifecycle && session.status == SessionStatus::Working {
         let immediate = detect_waiting_for_input(&current_output, extra_waiting_patterns);
         let effective_threshold_secs = effective_idle_threshold_secs(session, idle_config);
         let last_change = session.last_output_at.unwrap_or(session.created_at);
@@ -168,8 +157,20 @@ pub(super) async fn check_session_idle(
             (now - last_change).num_seconds() >= i64::try_from(threshold_secs).unwrap_or(i64::MAX)
         });
         if immediate || sustained {
+            // A matched waiting-for-input pattern (a `(y/n)` prompt, `sudo
+            // password:`, "I trust this folder", ...) really is "blocked on the
+            // user" — reason `needs_input:permission` (these built-in patterns are
+            // overwhelmingly approval/confirmation prompts). Sustained silence with
+            // no such pattern is just a plain idle prompt, reason `idle`. See ADR
+            // 0009: this is the scrollback-heuristic counterpart to a harness's own
+            // `NeedsInput`/`TurnFinished` events.
+            let reason = if immediate {
+                status_reason::needs_input("permission")
+            } else {
+                status_reason::IDLE.to_owned()
+            };
             info!(
-                "Session {} idle ({}), transitioning to idle",
+                "Session {} idle ({}), transitioning to waiting",
                 session.name,
                 if immediate {
                     "waiting pattern"
@@ -179,18 +180,23 @@ pub(super) async fn check_session_idle(
             );
             #[allow(unused_variables)]
             if let Err(error) = store
-                .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+                .update_session_status(
+                    &session.id.to_string(),
+                    SessionStatus::Waiting,
+                    Some(&reason),
+                )
                 .await
             {
                 coverage_warn!(
-                    "Idle check: failed to transition {} to idle: {error}",
+                    "Idle check: failed to transition {} to waiting: {error}",
                     session.name
                 );
             } else if let Some(tx) = &ready_ctx.event_tx {
                 let event = build_session_event(
                     session,
-                    SessionStatus::Idle,
-                    Some(SessionStatus::Active),
+                    SessionStatus::Waiting,
+                    Some(&reason),
+                    Some(SessionStatus::Working),
                     &ready_ctx.node_name,
                     Some(current_output.clone()),
                 );
@@ -198,6 +204,25 @@ pub(super) async fn check_session_idle(
             }
             return;
         }
+    }
+
+    // A session parked on `waiting:needs_input:<reason>` is blocked on a real
+    // decision from the operator (a permission/approval prompt) — that's not
+    // "idle" in the sense `idle_timeout_secs` means, it's waiting on a person who
+    // might come back in five minutes or five hours. Only a session genuinely
+    // stuck with no activity (`waiting:idle`, or a harness-owned `working`
+    // producing no output at all) is subject to the idle-timeout alert/kill
+    // action — exempt `needs_input` from it entirely rather than have the
+    // breaker forcibly stop a session that's correctly doing exactly what it
+    // should: waiting for you.
+    let blocked_on_operator = session.status == SessionStatus::Waiting
+        && session
+            .status_reason
+            .as_deref()
+            .and_then(status_reason::needs_input_reason)
+            .is_some();
+    if blocked_on_operator {
+        return;
     }
 
     handle_idle_session(
@@ -212,61 +237,48 @@ pub(super) async fn check_session_idle(
     .await;
 }
 
-/// Transition a session to `Ready`: the agent process has exited but the wrapper's
-/// fallback shell is still lingering in tmux (still resumable, still alive). `exit_code`
-/// is `Some` when the `.code` exit marker was found and parsed (see `check_session_idle`);
-/// it is persisted alongside the status update so the exit code is visible even before
-/// the session eventually resolves to `Stopped`/`Lost`.
-pub(super) async fn handle_session_ready(
+/// A session's backend just failed `is_alive()` — resolve it to `Done`/`Lost` via
+/// the shared `session::manager::resolve_dead_backend_session` and, on success,
+/// emit the `lifecycle` event/webhook with the session's *real* previous status
+/// (never a hardcoded guess). Best-effort: a failure here is logged and simply
+/// leaves the session for the next tick (or the lazy `get_session`/`list_sessions`
+/// path) to retry — never a hard error that would abort the whole watchdog tick.
+#[cfg_attr(coverage, allow(unused_variables))]
+async fn resolve_and_report_dead_session(
     store: &Store,
+    backend: &Arc<dyn Backend>,
+    backend_id: &str,
     session: &Session,
-    ctx: &ReadyContext,
-    exit_code: Option<i32>,
+    ready_ctx: &ReadyContext,
 ) {
     let previous = session.status;
-    info!(
-        session_name = %session.name,
-        "Agent exited, transitioning to ready"
-    );
-    if let Some(code) = exit_code {
-        #[allow(unused_variables)]
-        if let Err(error) = store
-            .update_session_exit_code(&session.id.to_string(), code)
-            .await
-        {
-            coverage_warn!(
-                session_name = %session.name,
-                "Failed to record exit code: {error}"
-            );
-        }
-    }
-
-    // The idle-sweep loop (`check_idle_sessions`) only visits `Active`/`Idle`
-    // sessions, so this exit-marker transition into `Ready` is the last chance for
-    // this tick to read the agent's own transcript — without this, a session that
-    // exits cleanly never gets its final `session_cost_usd` recorded (see
-    // `metadata::refresh_exact_usage`).
-    super::refresh_exact_usage(store, session).await;
-
-    #[allow(unused_variables)]
-    if let Err(error) = store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
-        .await
+    let mut updated = session.clone();
+    if let Err(error) = crate::session::manager::resolve_dead_backend_session(
+        store,
+        backend.as_ref(),
+        backend_id,
+        &mut updated,
+    )
+    .await
     {
         coverage_warn!(
-            session_name = %session.name,
-            "Failed to transition to ready: {error}"
+            "Idle check: failed to resolve dead backend for {}: {error}",
+            session.name
         );
         return;
     }
-
-    if let Some(tx) = &ctx.event_tx {
+    info!(
+        "Session {} backend is gone, resolved {previous} -> {}",
+        session.name, updated.status
+    );
+    if let Some(tx) = &ready_ctx.event_tx {
         let event = build_session_event(
-            session,
-            SessionStatus::Ready,
+            &updated,
+            updated.status,
+            updated.status_reason.as_deref(),
             Some(previous),
-            &ctx.node_name,
-            session.output_snapshot.clone(),
+            &ready_ctx.node_name,
+            updated.output_snapshot.clone(),
         );
         let _ = tx.send(PulpoEvent::Session(event));
     }
@@ -291,14 +303,14 @@ pub(super) async fn handle_active_session(
         return;
     }
 
-    if session.status == SessionStatus::Idle {
+    if session.status == SessionStatus::Waiting {
         info!(
             "Session {} has new output, transitioning back to active",
             session.name
         );
         #[allow(unused_variables)]
         if let Err(error) = store
-            .update_session_status(&session.id.to_string(), SessionStatus::Active)
+            .update_session_status(&session.id.to_string(), SessionStatus::Working, None)
             .await
         {
             coverage_warn!(
@@ -308,8 +320,9 @@ pub(super) async fn handle_active_session(
         } else if let Some(tx) = &ready_ctx.event_tx {
             let event = build_session_event(
                 session,
-                SessionStatus::Active,
-                Some(SessionStatus::Idle),
+                SessionStatus::Working,
+                None,
+                Some(SessionStatus::Waiting),
                 &ready_ctx.node_name,
                 session.output_snapshot.clone(),
             );

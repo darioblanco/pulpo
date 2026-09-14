@@ -21,19 +21,20 @@ impl Store {
         let idle_since_str = session.idle_since.map(|dt| dt.to_rfc3339());
         let harness_last_event_at_str = session.harness_last_event_at.map(|dt| dt.to_rfc3339());
         sqlx::query(
-            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, status_reason, mode,
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
                 last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch,
                 git_branch, git_commit, git_files_changed, git_insertions, git_deletions, git_ahead,
                 runtime, harness, harness_session_id, harness_last_event_at, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, '', '', ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
         .bind(&session.workdir)
         .bind(session.status.to_string())
+        .bind(&session.status_reason)
         .bind(session.exit_code)
         .bind(&session.backend_session_id)
         .bind(&session.output_snapshot)
@@ -74,10 +75,10 @@ impl Store {
         let row = sqlx::query(
             "SELECT * FROM sessions WHERE id = ? OR name = ? \
              ORDER BY CASE status \
-               WHEN 'active' THEN 0 WHEN 'idle' THEN 1 \
-               WHEN 'creating' THEN 2 WHEN 'ready' THEN 3 \
-               WHEN 'lost' THEN 4 WHEN 'stopped' THEN 5 \
-               ELSE 6 END \
+               WHEN 'working' THEN 0 WHEN 'waiting' THEN 1 \
+               WHEN 'starting' THEN 2 WHEN 'lost' THEN 3 \
+               WHEN 'done' THEN 4 \
+               ELSE 5 END \
              LIMIT 1",
         )
         .bind(id_or_name)
@@ -99,7 +100,7 @@ impl Store {
         let row = match exclude_id {
             Some(id) => {
                 sqlx::query(
-                    "SELECT 1 FROM sessions WHERE name = ? AND id != ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
+                    "SELECT 1 FROM sessions WHERE name = ? AND id != ? AND status IN ('starting', 'working', 'waiting') LIMIT 1",
                 )
                 .bind(name)
                 .bind(id)
@@ -108,7 +109,7 @@ impl Store {
             }
             None => {
                 sqlx::query(
-                    "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
+                    "SELECT 1 FROM sessions WHERE name = ? AND status IN ('starting', 'working', 'waiting') LIMIT 1",
                 )
                 .bind(name)
                 .fetch_optional(&self.pool)
@@ -212,18 +213,68 @@ impl Store {
         Ok(())
     }
 
-    pub async fn update_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
-        sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(status.to_string())
-            .bind(Utc::now().to_rfc3339())
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+    /// Update a session's status, and — always in the same write — its
+    /// `status_reason` (see `pulpo_common::session::status_reason`). `reason` is
+    /// `None` for `starting`/`working`/`lost`, and `Some(...)` for `waiting`/`done`.
+    /// Always setting both together (never leaving `status_reason` untouched) means a
+    /// stale reason from a previous status can never linger after a transition.
+    pub async fn update_session_status(
+        &self,
+        id: &str,
+        status: SessionStatus,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET status = ?, status_reason = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(status.to_string())
+        .bind(reason)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
+    /// Transition a session from a *live* status (`starting`/`working`/`waiting`)
+    /// into a terminal one (`done`/`lost`), atomically via a compare-and-set
+    /// `UPDATE ... WHERE status IN (...)`. `exit_code` is written via
+    /// `COALESCE(?, exit_code)` so passing `None` leaves any existing value
+    /// untouched rather than clobbering it with `NULL`.
+    ///
+    /// Returns `true` only when this call is the one that actually performed the
+    /// transition (a row was affected); `false` means the session was no longer
+    /// live by the time this ran — a concurrent caller already resolved it first
+    /// (the watchdog's own eager `is_alive()` check racing a `GET`/`list_sessions`
+    /// call, or an intervention kill racing either — see
+    /// `session::manager::resolve_dead_backend_session`, `mark_session_stopped`,
+    /// and `update_session_intervention`, the three callers of this). Every
+    /// caller must treat `false` as "skip emitting a lifecycle event for this
+    /// call — it would be a duplicate," not as an error.
+    pub async fn transition_to_terminal_if_live(
+        &self,
+        id: &str,
+        status: SessionStatus,
+        reason: Option<&str>,
+        exit_code: Option<i32>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE sessions \
+             SET status = ?, status_reason = ?, exit_code = COALESCE(?, exit_code), updated_at = ? \
+             WHERE id = ? AND status IN ('starting', 'working', 'waiting')",
+        )
+        .bind(status.to_string())
+        .bind(reason)
+        .bind(exit_code)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Record a session's exit code (from its `.code` exit marker) once its backend
-    /// has been found dead and the session resolved to `Stopped` (clean end) rather
+    /// has been found dead and the session resolved to `Done` (clean end) rather
     /// than `Lost`. See `SessionManager::check_and_mark_stale`.
     pub async fn update_session_exit_code(&self, id: &str, exit_code: i32) -> Result<()> {
         sqlx::query("UPDATE sessions SET exit_code = ?, updated_at = ? WHERE id = ?")
@@ -244,7 +295,7 @@ impl Store {
     }
 
     pub async fn fetch_dead_sessions(&self) -> Result<Vec<Session>> {
-        let rows = sqlx::query("SELECT * FROM sessions WHERE status IN ('stopped', 'lost')")
+        let rows = sqlx::query("SELECT * FROM sessions WHERE status IN ('done', 'lost')")
             .fetch_all(&self.pool)
             .await?;
         rows.iter().map(row_to_session).collect()
@@ -275,7 +326,7 @@ impl Store {
     ) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             "SELECT * FROM sessions WHERE worktree_path = ? AND id != ? \
-             AND status IN ('creating', 'active', 'idle', 'ready')",
+             AND status IN ('starting', 'working', 'waiting')",
         )
         .bind(worktree_path)
         .bind(exclude_id)

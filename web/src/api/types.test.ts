@@ -1,12 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import type { Session, CreateSessionRequest, ConfigResponse } from './types';
+import type { Session, SessionStatus, CreateSessionRequest, ConfigResponse } from './types';
 
 describe('types', () => {
+  it('SessionStatus covers the five-state model (ADR 0009)', () => {
+    const statuses: SessionStatus[] = ['starting', 'working', 'waiting', 'done', 'lost'];
+    expect(statuses).toHaveLength(5);
+  });
+
+  it('Session type carries status_reason and optional exit_code', () => {
+    const session: Session = {
+      id: 'sess-1',
+      name: 'test',
+      status: 'done',
+      status_reason: 'exited',
+      exit_code: 0,
+      command: 'claude code',
+      description: null,
+      workdir: '/repo',
+      metadata: null,
+      ink: null,
+      intervention_reason: null,
+      intervention_at: null,
+      last_output_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+    };
+    expect(session.status_reason).toBe('exited');
+    expect(session.exit_code).toBe(0);
+  });
+
   it('Session type has command and description fields', () => {
     const session: Session = {
       id: 'sess-1',
       name: 'test',
-      status: 'active',
+      status: 'working',
+      status_reason: null,
       command: 'claude code',
       description: 'Fix the bug',
       workdir: '/repo',
@@ -25,11 +52,12 @@ describe('types', () => {
     const session: Session = {
       id: 'sess-1',
       name: 'test',
-      status: 'idle',
+      status: 'waiting',
+      status_reason: 'needs_input:permission',
       command: 'claude -p fix',
       description: null,
       workdir: '/repo',
-      metadata: { needs_input: 'permission' },
+      metadata: null,
       ink: null,
       intervention_reason: null,
       intervention_at: null,

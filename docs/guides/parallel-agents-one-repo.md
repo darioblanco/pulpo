@@ -74,9 +74,9 @@ Or open the web UI and watch the sessions side by side.
 
 Pulpo keeps each session separate, so you can see:
 
-- which task is still `active`
-- which one is `idle` and may need input
-- which one is `ready`
+- which task is still `working`
+- which one is `waiting` and may need input
+- which one is `done`
 - which one created a branch or PR
 
 ## Reviewing The Result
@@ -101,7 +101,7 @@ From there you can:
 - inspect each branch manually
 - open PRs from each branch
 - merge selected work
-- resume a session if it is `ready`, `stopped`, or `lost`
+- resume a session if it is `done` or `lost`
 
 ## Choosing Good Task Boundaries
 

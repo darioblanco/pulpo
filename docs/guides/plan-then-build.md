@@ -18,7 +18,7 @@ pulpo spawn plan-auth -w --workdir ~/repos/my-api --budget-cost 5 \
   -- claude --model opus -p "Plan the auth refactor. Write PLAN.md."
 ```
 
-Wait for the ready/idle alert (webhook or `pulpo list`), then hand off to a
+Wait for the done/waiting alert (webhook or `pulpo list`), then hand off to a
 second agent — a different model, a subscription plan, even a different vendor entirely:
 
 ```bash
@@ -66,7 +66,7 @@ See [Worktrees](worktrees.md) for the full isolation model.
 pulpo spawn plan-auth -w --workdir ~/repos/my-api --budget-cost 5 \
   -- claude --model opus -p "Plan the auth refactor. Write PLAN.md."
 
-# ...plan-auth goes idle/ready...
+# ...plan-auth goes waiting/done...
 
 pulpo handoff plan-auth -- codex "implement PLAN.md"
 

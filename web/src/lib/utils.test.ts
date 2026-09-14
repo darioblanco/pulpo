@@ -5,7 +5,9 @@ import {
   formatMemory,
   formatRelativeTime,
   formatSessionStatus,
-  statusColors,
+  isTerminal,
+  needsInputReason,
+  sessionStatusColor,
 } from './utils';
 
 describe('cn', () => {
@@ -123,39 +125,136 @@ describe('formatMemory', () => {
   });
 });
 
-describe('formatSessionStatus', () => {
-  it('renders needs input with reason when idle and blocked', () => {
-    expect(formatSessionStatus({ status: 'idle', metadata: { needs_input: 'permission' } })).toBe(
-      'needs input (permission)',
-    );
+describe('needsInputReason', () => {
+  it('extracts the reason from a needs_input: prefix', () => {
+    expect(needsInputReason('needs_input:permission')).toBe('permission');
   });
 
-  it('renders plain idle when not blocked', () => {
-    expect(formatSessionStatus({ status: 'idle', metadata: null })).toBe('idle');
+  it('returns undefined for plain idle', () => {
+    expect(needsInputReason('idle')).toBeUndefined();
   });
 
-  it('renders plain idle when metadata has no needs_input key', () => {
-    expect(formatSessionStatus({ status: 'idle', metadata: { other: 'x' } })).toBe('idle');
+  it('returns undefined for null/undefined', () => {
+    expect(needsInputReason(null)).toBeUndefined();
+    expect(needsInputReason(undefined)).toBeUndefined();
   });
 
-  it('does not apply needs_input to non-idle statuses', () => {
-    expect(formatSessionStatus({ status: 'active', metadata: { needs_input: 'permission' } })).toBe(
-      'active',
-    );
-  });
-
-  it('passes through other statuses unchanged', () => {
-    expect(formatSessionStatus({ status: 'stopped', metadata: null })).toBe('stopped');
+  it('treats the suffix as opaque text, unmangled', () => {
+    expect(needsInputReason('needs_input:Some-Weird_Reason')).toBe('Some-Weird_Reason');
   });
 });
 
-describe('statusColors', () => {
-  it('has entries for all statuses', () => {
-    expect(statusColors.active).toBe('bg-status-active');
-    expect(statusColors.ready).toBe('bg-status-ready');
-    expect(statusColors.stopped).toBe('bg-status-stopped');
-    expect(statusColors.lost).toBe('bg-status-lost');
-    expect(statusColors.creating).toBe('bg-status-creating');
-    expect(statusColors.idle).toBe('bg-status-idle');
+describe('formatSessionStatus', () => {
+  it('renders bare starting/working/lost with no parenthetical', () => {
+    expect(formatSessionStatus({ status: 'starting', status_reason: null })).toBe('starting');
+    expect(formatSessionStatus({ status: 'working', status_reason: null })).toBe('working');
+    expect(formatSessionStatus({ status: 'lost', status_reason: null })).toBe('lost');
+  });
+
+  it('renders waiting (idle) for plain idle', () => {
+    expect(formatSessionStatus({ status: 'waiting', status_reason: 'idle' })).toBe(
+      'waiting (idle)',
+    );
+  });
+
+  it('renders waiting (needs input: <reason>) verbatim', () => {
+    expect(
+      formatSessionStatus({ status: 'waiting', status_reason: 'needs_input:permission' }),
+    ).toBe('waiting (needs input: permission)');
+    expect(
+      formatSessionStatus({ status: 'waiting', status_reason: 'needs_input:Some-Weird_Reason' }),
+    ).toBe('waiting (needs input: Some-Weird_Reason)');
+  });
+
+  it('renders bare waiting when status_reason is absent', () => {
+    expect(formatSessionStatus({ status: 'waiting', status_reason: null })).toBe('waiting');
+  });
+
+  it('renders done (exit N) when exited with a numeric exit_code', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'exited', exit_code: 0 })).toBe(
+      'done (exit 0)',
+    );
+    expect(formatSessionStatus({ status: 'done', status_reason: 'exited', exit_code: 1 })).toBe(
+      'done (exit 1)',
+    );
+  });
+
+  it('renders done (exited) when exited with no exit_code', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'exited' })).toBe('done (exited)');
+    expect(formatSessionStatus({ status: 'done', status_reason: 'exited', exit_code: null })).toBe(
+      'done (exited)',
+    );
+  });
+
+  it('renders done (stopped) for an explicit stop', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'stopped' })).toBe(
+      'done (stopped)',
+    );
+  });
+
+  it('renders done (idle timeout) for a watchdog idle-timeout kill', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'idle_timeout' })).toBe(
+      'done (idle timeout)',
+    );
+  });
+
+  it('renders done (budget exceeded) for a budget breaker stop', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'budget_exceeded' })).toBe(
+      'done (budget exceeded)',
+    );
+  });
+
+  it('renders done (memory pressure) for a memory-pressure breaker stop', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'memory_pressure' })).toBe(
+      'done (memory pressure)',
+    );
+  });
+
+  it('renders bare done when status_reason is absent (defensive fallback)', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: null })).toBe('done');
+  });
+
+  it('falls back to done (stopped) for an unrecognized reason (forward-compat)', () => {
+    expect(formatSessionStatus({ status: 'done', status_reason: 'something_new' })).toBe(
+      'done (stopped)',
+    );
+  });
+});
+
+describe('isTerminal', () => {
+  it('treats done and lost as terminal', () => {
+    expect(isTerminal('done')).toBe(true);
+    expect(isTerminal('lost')).toBe(true);
+  });
+
+  it('treats starting/working/waiting as non-terminal', () => {
+    expect(isTerminal('starting')).toBe(false);
+    expect(isTerminal('working')).toBe(false);
+    expect(isTerminal('waiting')).toBe(false);
+  });
+});
+
+describe('sessionStatusColor', () => {
+  it('maps starting/working/waiting/lost to their dedicated colors', () => {
+    expect(sessionStatusColor({ status: 'starting', status_reason: null })).toBe(
+      'bg-status-creating',
+    );
+    expect(sessionStatusColor({ status: 'working', status_reason: null })).toBe('bg-status-active');
+    expect(sessionStatusColor({ status: 'waiting', status_reason: null })).toBe('bg-status-idle');
+    expect(sessionStatusColor({ status: 'lost', status_reason: null })).toBe('bg-status-lost');
+  });
+
+  it('renders done+exited as informational (green)', () => {
+    expect(sessionStatusColor({ status: 'done', status_reason: 'exited' })).toBe('bg-status-ready');
+  });
+
+  it('renders done with any other reason (or absent) as warn (red)', () => {
+    expect(sessionStatusColor({ status: 'done', status_reason: 'stopped' })).toBe(
+      'bg-status-stopped',
+    );
+    expect(sessionStatusColor({ status: 'done', status_reason: 'idle_timeout' })).toBe(
+      'bg-status-stopped',
+    );
+    expect(sessionStatusColor({ status: 'done', status_reason: null })).toBe('bg-status-stopped');
   });
 });

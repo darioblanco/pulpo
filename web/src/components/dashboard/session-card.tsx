@@ -58,8 +58,12 @@ export function SessionCard({
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
   const canStop =
-    session.status === 'active' || session.status === 'idle' || session.status === 'lost';
-  const canResume = session.status === 'ready' || session.status === 'lost';
+    session.status === 'working' || session.status === 'waiting' || session.status === 'lost';
+  const canResume = session.status === 'done' || session.status === 'lost';
+  // `done` merges the old `ready` (clean exit) and `stopped` (forced/explicit)
+  // statuses — an intervention badge should only appear for the latter, mirroring
+  // the backend's `exited` = informational vs. anything else = warn severity split.
+  const isForcedDone = session.status === 'done' && session.status_reason !== 'exited';
 
   async function handleStop() {
     try {
@@ -307,7 +311,7 @@ export function SessionCard({
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}
           </span>
-          {session.status === 'stopped' && session.intervention_reason && (
+          {isForcedDone && session.intervention_reason && (
             <Badge
               data-testid="intervention-badge"
               variant="destructive"
@@ -347,7 +351,7 @@ export function SessionCard({
         }}
         className="cursor-pointer border-t border-[#1e2d3d] bg-[#0d1f33]/60 px-3 py-1"
       >
-        {session.status === 'idle' && session.output_snippet ? (
+        {session.status === 'waiting' && session.output_snippet ? (
           <div>
             <p data-testid="idle-snippet" className="truncate font-mono text-xs text-[#febc2e]">
               {session.output_snippet.split('\n').filter(Boolean).slice(-2).join(' | ')}
@@ -378,7 +382,7 @@ export function SessionCard({
       </div>
 
       {/* Fullscreen terminal overlay (mobile only) */}
-      {fullscreen && expanded && (session.status === 'active' || session.status === 'idle') && (
+      {fullscreen && expanded && (session.status === 'working' || session.status === 'waiting') && (
         <div
           data-testid="fullscreen-terminal"
           className="fixed inset-0 z-50 flex flex-col bg-[#0a1628]"
@@ -406,7 +410,7 @@ export function SessionCard({
       {/* Expanded body */}
       {expanded && (
         <div className="bg-[#0a1628]">
-          {(session.status === 'active' || session.status === 'idle') && (
+          {(session.status === 'working' || session.status === 'waiting') && (
             <div className="relative">
               <div className="flex justify-end px-2 pt-1">
                 <button
@@ -436,13 +440,11 @@ export function SessionCard({
             </div>
           )}
 
-          {(session.status === 'lost' ||
-            session.status === 'ready' ||
-            session.status === 'stopped') && (
+          {(session.status === 'lost' || session.status === 'done') && (
             <OutputView sessionId={session.id} sessionStatus={session.status} />
           )}
 
-          {(session.status === 'stopped' || session.status === 'lost') && session.worktree_path && (
+          {(isForcedDone || session.status === 'lost') && session.worktree_path && (
             <p
               data-testid="worktree-cleaned"
               className="mx-3 mb-2 font-mono text-xs text-muted-foreground"
@@ -451,7 +453,7 @@ export function SessionCard({
             </p>
           )}
 
-          {session.status === 'stopped' && session.intervention_reason && (
+          {isForcedDone && session.intervention_reason && (
             <div className="mx-3 mb-2 rounded-md border border-destructive/30 p-3">
               <p className="mb-1 text-sm font-medium text-destructive">
                 Intervention: {session.intervention_reason}

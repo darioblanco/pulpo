@@ -119,7 +119,7 @@ produces `claude --resume <id> <remaining args>`. That command is run through
 `clear` (`/clear`) or `resume` (`/resume`) — those are in-process session replacement,
 not the harness process actually exiting (verified against the v2.1.266 binary's reason
 enum: `clear, resume, logout, prompt_input_exit, other`), so they're ignored (`Ok(None)`)
-rather than flipping a still-running session to `Ready`/`Stopped` out from under itself.
+rather than flipping a still-running session to `Done` out from under itself.
 `Notification` → `NeedsInput` (`permission_prompt` → Permission, `idle_prompt` → Idle,
 `agent_needs_input`/`elicitation_*` → Question). Anything else is `Ok(None)` — pulpo
 doesn't care about it.
@@ -316,8 +316,8 @@ maps its `type` field, `agent-turn-complete`, to a single `TurnFinished` event. 
 earlier version also posted a synthetic `SessionStart`-shaped event first whenever the
 payload carried a thread id, hoping to learn `harness_session_id` even if the real
 `SessionStart` hook never fired — but that fired on *every* `agent-turn-complete`
-notification, not just the first, which flapped the session Active (via the synthetic
-event) then Idle (via the real `TurnFinished` right after it) on every turn, and
+notification, not just the first, which flapped the session `working` (via the synthetic
+event) then `waiting` (via the real `TurnFinished` right after it) on every turn, and
 duplicated the `Stop` hook's own `TurnFinished` for the same turn boundary. Removed
 rather than fixed to fire once: `session::manager::apply_harness_event` only stores
 `harness_session_id` from a `SessionStarted`-shaped event
@@ -504,18 +504,22 @@ webhook path; no new channel was added.
 
 | Event | Status | Other fields |
 |---|---|---|
-| `SessionStarted` | Active | sets `harness_session_id`; clears `needs_input` metadata |
-| `Working` | Active | clears `needs_input`, `error_status` metadata |
-| `TurnFinished` | Idle | `idle_since = now`; `last_summary` metadata (truncated to 200 chars) |
-| `NeedsInput` | Idle | `needs_input` metadata = the reason; triggers a notification |
-| `Failed` | Idle | `error_status`/`error_status_at` metadata (+ `rate_limit`/`rate_limit_at` when rate-limited); triggers a notification |
-| `SessionEnded` | Ready if the backend is still alive, else Stopped | follows the same semantics as a command that exits on its own |
+| `SessionStarted` | Working | sets `harness_session_id`; clears any `needs_input:<reason>` `status_reason` |
+| `Working` | Working | clears `status_reason`, `error_status` metadata |
+| `TurnFinished` | Waiting | `status_reason = idle`; `idle_since = now`; `last_summary` metadata (truncated to 200 chars) |
+| `NeedsInput` | Waiting | `status_reason = needs_input:<reason>`; triggers a notification |
+| `Failed` | Waiting | `status_reason = idle`; `error_status`/`error_status_at` metadata (+ `rate_limit`/`rate_limit_at` when rate-limited); triggers a notification |
+| `SessionEnded` | Unchanged, unless the `.code` exit marker has already landed (then Done, reason `exited`) | follows the same semantics as a command that exits on its own |
 
-`Idle` therefore means "the agent is waiting at its prompt" in general; the
-`needs_input` metadata field is what distinguishes "done with the turn" from "blocked
-on me." `pulpo ls` and the web session list/detail render `needs input (<reason>)`
-distinctly from plain `idle`. The `SessionStatus` enum itself is unchanged — this is
-additive, not a state-machine rename. See
+`Waiting` therefore means "the agent is at its prompt" in general; `status_reason` is
+what distinguishes "done with the turn" (`idle`) from "blocked on me"
+(`needs_input:<reason>`). `pulpo ls` and the web session list/detail render `waiting
+(needs input: <reason>)` distinctly from `waiting (idle)`. `status_reason` is a new,
+plain-string field on the session (and the SSE `SessionEvent` payload) — not a nested
+type — added by the five-state `SessionStatus` model (ADR
+[0009](../adr/0009-five-state-session-model.md)) to carry what used to be either a
+distinguishable top-level status (`ready` vs. `stopped`) or this same ad hoc
+`needs_input` metadata key. See
 [Session Lifecycle](../operations/session-lifecycle.md) for the full state machine
 (unaffected states/transitions aren't repeated here).
 
@@ -526,7 +530,7 @@ stops applying scrollback heuristics **that the session's own harness adapter ow
 `HarnessAdapter::owned_signals()` returns a [`HarnessSignals`] value (`lifecycle`,
 `rate_limit`, `error`) saying which of the following the adapter's own events replace:
 
-- `lifecycle` — waiting-for-input pattern matching and the time-based Active→Idle
+- `lifecycle` — waiting-for-input pattern matching and the time-based Working→Waiting
   transition.
 - `rate_limit` — `detect_rate_limit` scrollback scraping.
 - `error` — `detect_error` scrollback scraping.
@@ -572,10 +576,12 @@ The Claude Code adapter's hook mechanics were verified against a real binary
 (v2.1.266); the Codex and pi adapters are built from their docs and shipped code but
 are unverified in the field (see their caveats). A Gemini CLI adapter is follow-up work
 — the trait and registry make that a matter of writing one more adapter, not touching
-core daemon code. A `working / needs_input / done / exited / lost` rename of
-`SessionStatus` itself (cleaner than overloading `Idle` + a `needs_input` metadata
-flag) is a deliberate follow-up once hook-driven events are proven in the field, not
-part of this change.
+core daemon code. The five-state `SessionStatus` rename (`starting` / `working` /
+`waiting` / `done` / `lost`, replacing the six-state `creating` / `active` / `idle` /
+`ready` / `stopped` / `lost` model and the overloaded `Idle` + `needs_input` metadata
+flag with a plain `status_reason` field) is no longer future work — it shipped per ADR
+[0009](../adr/0009-five-state-session-model.md), implemented in
+[#129](https://github.com/darioblanco/pulpo/pull/129).
 
 Exact rate-limit/error detection for Codex sessions is still heuristic (scrollback
 scraping) rather than hook-driven, since Codex has no such hook today — see the

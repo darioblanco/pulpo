@@ -101,8 +101,8 @@ you need, these primitives will let you build it.
 
 This is what Pulpo formalizes, using the same primitives underneath:
 
-- explicit session states (`active`, `idle`, `ready`, `lost`, `stopped`) instead of a tmux pane
-  you have to remember the name of
+- explicit session states (`starting`, `working`, `waiting`, `done`, `lost`) instead of a
+  tmux pane you have to remember the name of
 - `cron`-driven scheduling wired to the same session objects, not a standalone script
 - exact usage metering and budgets on every run, not something you'd script yourself against
   each agent's log format

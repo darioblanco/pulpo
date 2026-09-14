@@ -13,7 +13,7 @@ Pre-`sqlx` legacy databases are unsupported, but `pulpod` never crash-loops on o
 unusable `state.db` (corrupt, an unsupported legacy schema, or a downgrade) is quarantined
 as `state.db.unusable-<UTC timestamp>` and a fresh database is created in its place
 automatically — no manual deletion needed. Every startup against an existing database also
-backs it up to `state.db.pre-<version>` before migrating. See
+backs it up to `state.db.pre-m<migration>` before migrating. See
 [Release and Distribution](../operations/release-and-distribution.md) "Upgrading `pulpod`"
 for the full recovery/backup behavior.
 
@@ -33,7 +33,7 @@ until you edit it out.
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"` |
 | `default_command` | string | — | Default command when spawn has no explicit command |
 | `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
-| `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
+| `capture_session_output` | bool | `true` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. On by default since ADR 0009 — `wrap_command` no longer keeps a fallback shell open after the agent exits, so tmux tears a session's pane down the instant it ends, and this log is the only place a `done` session's final lines survive that. Set to `false` if the unbounded per-byte capture becomes a disk-usage concern on long/chatty sessions. |
 
 Every pulpo-managed session gets `PULPO_URL=http://127.0.0.1:<port>` exported alongside
 `PULPO_SESSION_ID`/`PULPO_SESSION_NAME` — `pulpo hook` reads it to reach the daemon, so
@@ -55,13 +55,13 @@ Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on f
 | `check_interval_secs` | u64 | `10` | Check interval in seconds |
 | `idle_timeout_secs` | u64 | `600` | Seconds idle before action triggers |
 | `idle_action` | string | `"alert"` | `"alert"` (mark idle) or `"kill"` |
-| `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
+| `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Working→Waiting |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to the built-in patterns) |
 
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), once a session's
 events start flowing, the watchdog stops applying its own scrollback-based *detection*
 heuristics for that session: waiting-for-input pattern matching, the time-based
-Active→Idle transition (`idle_threshold_secs`), and — for a harness whose adapter doesn't
+Working→Waiting transition (`idle_threshold_secs`), and — for a harness whose adapter doesn't
 own it (Codex has no error/rate-limit hook) — error/rate-limit scraping. The harness's own
 events drive those transitions instead. Everything else still applies unconditionally,
 including to harness-managed sessions: `idle_timeout_secs`/`idle_action` (alert/kill after
@@ -132,7 +132,7 @@ the full envelope shape and these bounds.
 
 `events` patterns are matched against the event's `"<type>.<subtype>"` key:
 
-- exact — `lifecycle.idle`
+- exact — `lifecycle.waiting`
 - prefix glob — `lifecycle.*` (any subtype of `lifecycle`)
 - bare type — `lifecycle` (also any subtype of `lifecycle`)
 - `*` — everything

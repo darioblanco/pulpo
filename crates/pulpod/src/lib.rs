@@ -201,9 +201,9 @@ async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
     for session in sessions {
         let is_live = matches!(
             session.status,
-            pulpo_common::session::SessionStatus::Active
-                | pulpo_common::session::SessionStatus::Idle
-                | pulpo_common::session::SessionStatus::Ready
+            pulpo_common::session::SessionStatus::Starting
+                | pulpo_common::session::SessionStatus::Working
+                | pulpo_common::session::SessionStatus::Waiting
         );
         if !is_live {
             continue;

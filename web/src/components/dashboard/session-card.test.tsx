@@ -51,7 +51,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    status: 'active',
+    status: 'working',
+    status_reason: null,
     command: 'Fix the bug',
     description: null,
     workdir: '/home/user/repo',
@@ -82,7 +83,7 @@ describe('SessionCard', () => {
   it('renders session name, command, status', () => {
     renderCard(makeSession());
     expect(screen.getByText('my-api')).toBeInTheDocument();
-    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('working')).toBeInTheDocument();
     expect(screen.getAllByText('Fix the bug').length).toBeGreaterThan(0);
   });
 
@@ -104,13 +105,13 @@ describe('SessionCard', () => {
 
   // Traffic light buttons
 
-  it('enables stop dot for active sessions', () => {
+  it('enables stop dot for working sessions', () => {
     renderCard(makeSession());
     expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
-  it('enables stop dot for idle sessions', () => {
-    renderCard(makeSession({ status: 'idle' }));
+  it('enables stop dot for waiting sessions', () => {
+    renderCard(makeSession({ status: 'waiting', status_reason: 'idle' }));
     expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
@@ -119,8 +120,8 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
-  it('disables stop dot for ready sessions', () => {
-    renderCard(makeSession({ status: 'ready' }));
+  it('disables stop dot for done sessions', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'exited' }));
     expect(screen.getByTestId('btn-stop')).toBeDisabled();
   });
 
@@ -129,12 +130,12 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
   });
 
-  it('enables resume dot for ready sessions', () => {
-    renderCard(makeSession({ status: 'ready' }));
+  it('enables resume dot for done sessions', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'exited' }));
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
   });
 
-  it('disables resume dot for active sessions', () => {
+  it('disables resume dot for working sessions', () => {
     renderCard(makeSession());
     expect(screen.getByTestId('btn-resume')).toBeDisabled();
   });
@@ -171,14 +172,14 @@ describe('SessionCard', () => {
 
   // View switching
 
-  it('shows OutputView by default for active session', () => {
+  it('shows OutputView by default for working session', () => {
     renderCard(makeSession());
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows view toggle button for active sessions', () => {
+  it('shows view toggle button for working sessions', () => {
     renderCard(makeSession());
     clickExpand();
     expect(screen.getByTestId('btn-view-toggle')).toBeInTheDocument();
@@ -194,22 +195,22 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-view-toggle')).toHaveTextContent('Output');
   });
 
-  it('shows OutputView for idle session when expanded', () => {
-    renderCard(makeSession({ status: 'idle' }));
+  it('shows OutputView for waiting session when expanded', () => {
+    renderCard(makeSession({ status: 'waiting', status_reason: 'idle' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.getByTestId('btn-view-toggle')).toBeInTheDocument();
   });
 
-  it('shows OutputView for ready session', () => {
-    renderCard(makeSession({ status: 'ready' }));
+  it('shows OutputView for done session (clean exit)', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'exited' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for stopped session', () => {
-    renderCard(makeSession({ status: 'stopped' }));
+  it('shows OutputView for done session (forced stop)', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'stopped' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
@@ -266,7 +267,7 @@ describe('SessionCard', () => {
   // Resume action
 
   it('calls resumeSession on yellow dot click', async () => {
-    mockResumeSession.mockResolvedValue({ id: 'sess-1', status: 'active' });
+    mockResumeSession.mockResolvedValue({ id: 'sess-1', status: 'working' });
     const onRefresh = vi.fn();
     renderCard(makeSession({ status: 'lost' }), onRefresh);
     fireEvent.click(screen.getByTestId('btn-resume'));
@@ -299,8 +300,8 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-fullscreen')).toBeInTheDocument();
   });
 
-  it('does not show fullscreen button for non-active sessions', () => {
-    renderCard(makeSession({ status: 'ready' }));
+  it('does not show fullscreen button for non-working sessions', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'exited' }));
     clickExpand();
     expect(screen.queryByTestId('btn-fullscreen')).not.toBeInTheDocument();
   });
@@ -357,10 +358,28 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('worktree-badge')).not.toBeInTheDocument();
   });
 
-  it('shows worktree cleanup note for stopped session with worktree', () => {
-    renderCard(makeSession({ status: 'stopped', worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+  it('shows worktree cleanup note for done (forced-stop) session with worktree', () => {
+    renderCard(
+      makeSession({
+        status: 'done',
+        status_reason: 'stopped',
+        worktree_path: '/repo/.pulpo/worktrees/my-task',
+      }),
+    );
     clickExpand();
     expect(screen.getByTestId('worktree-cleaned')).toHaveTextContent('Worktree cleaned up');
+  });
+
+  it('does not show worktree cleanup note for done (clean exit) session with worktree', () => {
+    renderCard(
+      makeSession({
+        status: 'done',
+        status_reason: 'exited',
+        worktree_path: '/repo/.pulpo/worktrees/my-task',
+      }),
+    );
+    clickExpand();
+    expect(screen.queryByTestId('worktree-cleaned')).not.toBeInTheDocument();
   });
 
   it('shows worktree cleanup note for lost session with worktree', () => {
@@ -369,7 +388,7 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('worktree-cleaned')).toHaveTextContent('Worktree cleaned up');
   });
 
-  it('does not show worktree cleanup note for active session', () => {
+  it('does not show worktree cleanup note for working session', () => {
     renderCard(makeSession({ worktree_path: '/repo/.pulpo/worktrees/my-task' }));
     clickExpand();
     expect(screen.queryByTestId('worktree-cleaned')).not.toBeInTheDocument();
@@ -377,10 +396,11 @@ describe('SessionCard', () => {
 
   // Intervention
 
-  it('shows intervention badge for stopped sessions', () => {
+  it('shows intervention badge for forced-stop done sessions', () => {
     renderCard(
       makeSession({
-        status: 'stopped',
+        status: 'done',
+        status_reason: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -390,19 +410,22 @@ describe('SessionCard', () => {
   });
 
   it('does not show intervention badge without reason', () => {
-    renderCard(makeSession({ status: 'stopped' }));
+    renderCard(makeSession({ status: 'done', status_reason: 'stopped' }));
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
-  it('shows intervention badge for stopped sessions only', () => {
-    renderCard(makeSession({ status: 'ready', intervention_reason: 'test' }));
+  it('shows intervention badge for forced-stop done sessions only, not clean exits', () => {
+    renderCard(
+      makeSession({ status: 'done', status_reason: 'exited', intervention_reason: 'test' }),
+    );
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
   it('shows intervention details when expanded', () => {
     renderCard(
       makeSession({
-        status: 'stopped',
+        status: 'done',
+        status_reason: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -522,13 +545,15 @@ describe('SessionCard', () => {
   // Needs-input status label
 
   it('renders needs-input status distinctly from plain idle', () => {
-    renderCard(makeSession({ status: 'idle', metadata: { needs_input: 'permission' } }));
-    expect(screen.getByTestId('session-status')).toHaveTextContent('needs input (permission)');
+    renderCard(makeSession({ status: 'waiting', status_reason: 'needs_input:permission' }));
+    expect(screen.getByTestId('session-status')).toHaveTextContent(
+      'waiting (needs input: permission)',
+    );
   });
 
-  it('renders plain idle when not blocked on input', () => {
-    renderCard(makeSession({ status: 'idle', metadata: null }));
-    expect(screen.getByTestId('session-status')).toHaveTextContent('idle');
+  it('renders plain waiting (idle) when not blocked on input', () => {
+    renderCard(makeSession({ status: 'waiting', status_reason: 'idle' }));
+    expect(screen.getByTestId('session-status')).toHaveTextContent('waiting (idle)');
     expect(screen.getByTestId('session-status')).not.toHaveTextContent('needs input');
   });
 
@@ -660,7 +685,8 @@ describe('SessionCard', () => {
     ]);
     renderCard(
       makeSession({
-        status: 'stopped',
+        status: 'done',
+        status_reason: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -692,12 +718,13 @@ describe('SessionCard', () => {
 
   // Quick-reply bar
 
-  it('shows quick-reply bar for idle session with output_snippet', () => {
+  it('shows quick-reply bar for waiting session with output_snippet', () => {
     renderCard(
       makeSession({
-        status: 'idle',
+        status: 'waiting',
+        status_reason: 'needs_input:question',
         output_snippet: 'Do you trust this file? (Y/N)',
-      } as Partial<Session>),
+      }),
     );
     expect(screen.getByTestId('quick-reply-bar')).toBeInTheDocument();
     expect(screen.getByTestId('quick-reply-yes')).toBeInTheDocument();
@@ -705,12 +732,13 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('quick-reply-1')).toBeInTheDocument();
   });
 
-  it('shows output_snippet in subtitle for idle sessions', () => {
+  it('shows output_snippet in subtitle for waiting sessions', () => {
     renderCard(
       makeSession({
-        status: 'idle',
+        status: 'waiting',
+        status_reason: 'needs_input:question',
         output_snippet: 'Building...\nDo you trust this file?',
-      } as Partial<Session>),
+      }),
     );
     expect(screen.getByTestId('idle-snippet')).toBeInTheDocument();
     expect(screen.getByTestId('idle-snippet')).toHaveTextContent('Do you trust this file?');
@@ -721,9 +749,10 @@ describe('SessionCard', () => {
     const onRefresh = vi.fn();
     renderCard(
       makeSession({
-        status: 'idle',
+        status: 'waiting',
+        status_reason: 'needs_input:question',
         output_snippet: 'Continue? [Y/n]',
-      } as Partial<Session>),
+      }),
       onRefresh,
     );
     fireEvent.click(screen.getByTestId('quick-reply-yes'));
@@ -731,20 +760,20 @@ describe('SessionCard', () => {
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it('does not show quick-reply bar for active sessions', () => {
-    renderCard(makeSession({ status: 'active' }));
+  it('does not show quick-reply bar for working sessions', () => {
+    renderCard(makeSession({ status: 'working' }));
     expect(screen.queryByTestId('quick-reply-bar')).not.toBeInTheDocument();
   });
 
-  it('does not show quick-reply bar for idle sessions without output_snippet', () => {
-    renderCard(makeSession({ status: 'idle' }));
+  it('does not show quick-reply bar for waiting sessions without output_snippet', () => {
+    renderCard(makeSession({ status: 'waiting', status_reason: 'idle' }));
     expect(screen.queryByTestId('quick-reply-bar')).not.toBeInTheDocument();
   });
 
-  // View toggle for non-active
+  // View toggle for non-working
 
-  it('does not show view toggle for ready sessions', () => {
-    renderCard(makeSession({ status: 'ready' }));
+  it('does not show view toggle for done sessions', () => {
+    renderCard(makeSession({ status: 'done', status_reason: 'exited' }));
     clickExpand();
     expect(screen.queryByTestId('btn-view-toggle')).not.toBeInTheDocument();
   });
@@ -755,7 +784,8 @@ describe('SessionCard', () => {
     ]);
     renderCard(
       makeSession({
-        status: 'stopped',
+        status: 'done',
+        status_reason: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),

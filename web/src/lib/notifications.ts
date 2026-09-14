@@ -5,6 +5,11 @@ export interface StatusChange {
   sessionName: string;
   from: string;
   to: string;
+  /** `curr.status_reason` at the time of the transition — lets a consumer tell an
+   * informational `done` (`exited`) apart from a forced one (`stopped`, an
+   * intervention code, ...) since `working→done` now covers both of the old
+   * `active→ready`/`active→stopped` transitions. */
+  toReason?: string | null;
   gitBranch?: string | null;
   gitInsertions?: number | null;
   gitDeletions?: number | null;
@@ -13,8 +18,13 @@ export interface StatusChange {
   errorStatus?: string | null;
 }
 
-/** Interesting transitions that warrant notification */
-const INTERESTING_TRANSITIONS = new Set(['active→ready', 'active→stopped', 'lost→active']);
+/**
+ * Interesting transitions that warrant notification. Five-state model (ADR 0009):
+ * `working→done` covers the old `active→ready` (clean exit) and `active→stopped`
+ * (forced/explicit stop) transitions — merged since `ready`/`stopped` both became
+ * `done`; distinguish them via `StatusChange.toReason` if needed.
+ */
+const INTERESTING_TRANSITIONS = new Set(['working→done', 'lost→working']);
 
 /**
  * Compare previous and current session lists to detect interesting status changes.
@@ -35,6 +45,7 @@ export function detectStatusChanges(previous: Session[], current: Session[]): St
         sessionName: curr.name,
         from: prev.status,
         to: curr.status,
+        toReason: curr.status_reason,
         gitBranch: curr.git_branch,
         gitInsertions: curr.git_insertions,
         gitDeletions: curr.git_deletions,

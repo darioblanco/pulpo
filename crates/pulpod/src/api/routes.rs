@@ -196,7 +196,7 @@ mod tests {
         resp.assert_status(StatusCode::CREATED);
         let body = resp.text();
         assert!(body.contains("tmp"));
-        assert!(body.contains("active"));
+        assert!(body.contains("working"));
     }
 
     #[tokio::test]
@@ -773,7 +773,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
 
         // WebSocket should fail (session not running)
         let result = tokio_tungstenite::connect_async(format!(

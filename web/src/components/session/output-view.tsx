@@ -30,7 +30,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
 
   useEffect(() => {
     fetchOutput();
-    if (sessionStatus === 'active' || sessionStatus === 'lost' || sessionStatus === 'idle') {
+    if (sessionStatus === 'working' || sessionStatus === 'lost' || sessionStatus === 'waiting') {
       const interval = setInterval(fetchOutput, 2000);
       return () => clearInterval(interval);
     }
@@ -50,7 +50,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
   }
 
   const canSendInput =
-    sessionStatus === 'active' || sessionStatus === 'lost' || sessionStatus === 'idle';
+    sessionStatus === 'working' || sessionStatus === 'lost' || sessionStatus === 'waiting';
 
   return (
     <div data-testid="output-view">

@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::{CleanupResponse, CreateSessionRequest, HandoffSessionRequest};
 use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
-use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
+use pulpo_common::session::{Runtime, Session, SessionStatus, meta, status_reason};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -41,8 +41,10 @@ pub struct SessionManager {
     /// Prevents race where `is_alive()` returns false before tmux is fully ready.
     stale_grace_secs: i64,
     /// When true, mirror each session's full terminal output to a per-session log
-    /// file via `tmux pipe-pane`. Off by default — the capture is unbounded and
-    /// fills the disk; enable only for debugging.
+    /// file via `tmux pipe-pane`. Defaults to `false` on a bare `SessionManager::new`
+    /// (mainly for tests); the daemon always overrides this via
+    /// `with_capture_session_output(config.node.capture_session_output)`, which
+    /// defaults to `true` since ADR 0009 — see that config field's own doc comment.
     capture_session_output: bool,
     /// Resolves a session's command line (or explicit harness id) to a
     /// [`crate::harness::HarnessAdapter`]. See `spawn`/resume integration below.
@@ -117,8 +119,8 @@ impl SessionManager {
     }
 
     /// Enable per-session full-output capture (`tmux pipe-pane` → `{id}.log`).
-    /// Off by default; the daemon turns it on only when `capture_session_output`
-    /// is set in config.
+    /// The daemon always calls this with `config.node.capture_session_output`
+    /// (`true` by default since ADR 0009).
     #[must_use]
     pub const fn with_capture_session_output(mut self, enabled: bool) -> Self {
         self.capture_session_output = enabled;
@@ -140,11 +142,19 @@ impl SessionManager {
         if let Some(tx) = &self.event_tx {
             let pr_url = session.meta_str(meta::PR_URL).map(str::to_owned);
             let error_status = session.meta_str(meta::ERROR_STATUS).map(str::to_owned);
-            let needs_input = session.meta_str(meta::NEEDS_INPUT).map(str::to_owned);
+            // Deprecated-for-one-release compatibility field (ADR 0009): derived from
+            // `status_reason` rather than a separately-written `needs_input` metadata
+            // key, which new code no longer writes.
+            let needs_input = session
+                .status_reason
+                .as_deref()
+                .and_then(status_reason::needs_input_reason)
+                .map(str::to_owned);
             let event = SessionEvent {
                 session_id: session.id.to_string(),
                 session_name: session.name.clone(),
                 status: session.status.to_string(),
+                status_reason: session.status_reason.clone(),
                 previous_status: previous_status.map(|s| s.to_string()),
                 node_name: self.node_name.clone(),
                 output_snippet: session.output_snapshot.clone(),
@@ -160,6 +170,7 @@ impl SessionManager {
                 total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
                 total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
                 session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+                exit_code: session.exit_code,
             };
             // Ignore send errors — no subscribers is OK
             let _ = tx.send(PulpoEvent::Session(event));
@@ -418,9 +429,17 @@ impl SessionManager {
         })
     }
 
+    /// The backend never actually started for this session (`backend.create_session`
+    /// failed) — mark it `done`/`stopped` rather than leaving it stuck `starting`
+    /// forever. There's no real agent process to have "exited", so `stopped` (not
+    /// `exited`) is the honest reason: pulpo aborted the spawn.
     async fn cleanup_failed_create(&self, session_id: &Uuid) -> Result<()> {
         self.store
-            .update_session_status(&session_id.to_string(), SessionStatus::Stopped)
+            .update_session_status(
+                &session_id.to_string(),
+                SessionStatus::Done,
+                Some(status_reason::STOPPED),
+            )
             .await?;
         Ok(())
     }
@@ -442,14 +461,17 @@ impl SessionManager {
         }
 
         self.store
-            .update_session_status(&id.to_string(), SessionStatus::Active)
+            .update_session_status(&id.to_string(), SessionStatus::Working, None)
             .await?;
 
-        // Set up full per-session output capture only when explicitly enabled.
-        // It is off by default: `tmux pipe-pane` mirrors every byte the agent
-        // prints to disk unboundedly. The watchdog reads the live tail from tmux
-        // scrollback, and the last output snapshot is persisted in the database,
-        // so the daemon does not depend on this file for normal operation.
+        // Set up full per-session output capture only when enabled (on by default
+        // since ADR 0009 — see `capture_session_output`'s doc comment). `tmux
+        // pipe-pane` mirrors every byte the agent prints to disk unboundedly; the
+        // watchdog reads the live tail from tmux scrollback for the common case,
+        // but `resolve_dead_backend_session` falls back to reading this file's
+        // tail for a `done` session's very last lines, which the live tmux capture
+        // almost never catches (the pane is already gone by the time anything
+        // checks).
         if self.capture_session_output {
             let log_path = session_log_path(self.store.data_dir(), &id.to_string());
             if let Some(parent) = log_path.parent() {
@@ -461,9 +483,9 @@ impl SessionManager {
         }
 
         // Return the session with updated status (avoids unnecessary re-fetch)
-        session.status = SessionStatus::Active;
+        session.status = SessionStatus::Working;
         session.updated_at = Utc::now();
-        self.emit_event(session, Some(SessionStatus::Creating));
+        self.emit_event(session, Some(SessionStatus::Starting));
         Ok(())
     }
 
@@ -585,6 +607,10 @@ impl SessionManager {
         }
     }
 
+    /// Transition to a status that never carries a `status_reason` (only ever called
+    /// with `Working`, from `resume_session`) — clears any stale reason left over
+    /// from the `Done`/`Lost` status being resumed from, in both the DB and the
+    /// in-memory `session` (so the event emitted right after reflects it too).
     async fn mark_session_status(
         &self,
         session: &mut Session,
@@ -592,17 +618,35 @@ impl SessionManager {
         next_status: SessionStatus,
     ) -> Result<()> {
         self.store
-            .update_session_status(&session.id.to_string(), next_status)
+            .update_session_status(&session.id.to_string(), next_status, None)
             .await?;
         session.status = next_status;
+        session.status_reason = None;
         session.updated_at = Utc::now();
         self.emit_event(session, Some(previous_status));
         Ok(())
     }
 
+    /// `list_sessions`/`list_sessions_filtered`'s lazy dead-backend sweep: resolve
+    /// each live-looking session whose backend has actually died, emitting the same
+    /// `lifecycle` event `get_session` does for a single session — a `pulpo ls`
+    /// (or any other list call) is exactly as valid a discovery point for "this
+    /// session just ended" as a single-session GET, and skipping the event here
+    /// would silently drop it for a session nobody ever fetches individually.
     async fn mark_stale_in_sessions(&self, sessions: &mut [Session]) {
         for session in sessions {
-            let _ = self.check_and_mark_stale(session).await;
+            match self.check_and_mark_stale(session).await {
+                Ok(Some(previous)) => self.emit_event(session, Some(previous)),
+                Ok(None) => {}
+                #[allow(unused_variables)]
+                Err(error) => {
+                    coverage_warn!(
+                        session = %session.name,
+                        %error,
+                        "failed to check/mark session stale during list"
+                    );
+                }
+            }
         }
     }
 
@@ -704,10 +748,7 @@ impl SessionManager {
                 return Ok(());
             }
 
-            if matches!(
-                session.status,
-                SessionStatus::Lost | SessionStatus::Stopped | SessionStatus::Ready
-            ) {
+            if matches!(session.status, SessionStatus::Lost | SessionStatus::Done) {
                 tracing::debug!(
                     session = %session.name,
                     error = %error,
@@ -723,12 +764,34 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Transition a session to `done` with reason `stopped` — an explicit `pulpo
+    /// stop` (as opposed to a clean agent exit, reason `exited`, or a watchdog
+    /// intervention, reason = the intervention code).
+    /// Atomic (compare-and-set) counterpart to the plain `mark_session_stopped`
+    /// name: only transitions — and only emits the `lifecycle` event — if the
+    /// session was still live at the moment of the write. Without this, the
+    /// caller's earlier `already_terminal` check (in `stop_session`) leaves a
+    /// window between that read and this write where a concurrent
+    /// `resolve_dead_backend_session`/intervention could have already resolved
+    /// the session, and an unconditional `UPDATE` here would both emit a
+    /// duplicate event and overwrite whatever more specific `status_reason`
+    /// that concurrent caller had just set with the generic `stopped`.
     async fn mark_session_stopped(&self, session: &mut Session) -> Result<()> {
         let previous = session.status;
-        self.store
-            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
+        let transitioned = self
+            .store
+            .transition_to_terminal_if_live(
+                &session.id.to_string(),
+                SessionStatus::Done,
+                Some(status_reason::STOPPED),
+                None,
+            )
             .await?;
-        session.status = SessionStatus::Stopped;
+        if !transitioned {
+            return Ok(());
+        }
+        session.status = SessionStatus::Done;
+        session.status_reason = Some(status_reason::STOPPED.to_owned());
         self.emit_event(session, Some(previous));
         Ok(())
     }
@@ -763,9 +826,9 @@ impl SessionManager {
     /// Remove a session outright (`DELETE /api/v1/sessions/{id}`, `pulpo rm`):
     /// purge its row, intervention events, exit markers, session log, and harness
     /// dir via [`Self::purge_session`] — the same helper `stop_session(..., purge:
-    /// true)` uses. Only sessions not currently `Active`/`Idle` may be removed —
-    /// stop it first, same rule `pulpo cleanup`'s dead-session sweep already
-    /// follows implicitly (it only ever considers `Stopped`/`Lost` sessions).
+    /// true)` uses. Only a session not currently `Starting`/`Working`/`Waiting` may
+    /// be removed — stop it first, same rule `pulpo cleanup`'s dead-session sweep
+    /// already follows implicitly (it only ever considers `Done`/`Lost` sessions).
     pub async fn remove_session(&self, id: &str) -> Result<()> {
         let session = self
             .store
@@ -773,7 +836,10 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
-        if matches!(session.status, SessionStatus::Active | SessionStatus::Idle) {
+        if matches!(
+            session.status,
+            SessionStatus::Starting | SessionStatus::Working | SessionStatus::Waiting
+        ) {
             bail!(
                 "session cannot be removed while status is {} — stop it first",
                 session.status
@@ -842,8 +908,8 @@ impl SessionManager {
         let session = self.store.get_session(id).await?;
         match session {
             Some(mut s) => {
-                if self.check_and_mark_stale(&mut s).await? {
-                    self.emit_event(&s, Some(SessionStatus::Active));
+                if let Some(previous) = self.check_and_mark_stale(&mut s).await? {
+                    self.emit_event(&s, Some(previous));
                 }
                 Ok(Some(s))
             }
@@ -867,94 +933,90 @@ impl SessionManager {
     }
 
     /// Check if a running session is still alive; if not, mark it stale.
-    /// Returns `Ok(true)` if the session was transitioned to stale.
+    /// Returns the session's status *before* the transition when it was marked
+    /// stale (so the caller can emit an accurate `previous_status`), `None` when
+    /// nothing changed.
     ///
-    /// Checks `Active`, `Idle`, and `Ready` sessions — after a reboot, tmux
-    /// sessions are gone but DB status may still say Idle. `Ready` is included too:
-    /// a session whose agent already exited (marker written, fallback shell
-    /// lingering) is still watched here, otherwise a `Ready` session whose tmux
-    /// backend later dies would never be reclassified and would stay `Ready`
-    /// forever (there is no TTL-based auto-purge — Ready sessions stay listed
-    /// until `pulpo cleanup`/purge).
+    /// Checks `Working` and `Waiting` sessions — after a reboot, tmux sessions are
+    /// gone but DB status may still say `Waiting`. There is no `Ready`-equivalent
+    /// case to also watch here anymore (ADR 0009): `wrap_command` no longer keeps a
+    /// fallback shell alive after the agent exits, so the backend dies at essentially
+    /// the same moment the agent does — a session either resolves straight to `Done`
+    /// the next time anything checks it here, or (for a harness-driven session) the
+    /// harness's own `SessionEnded` hook gets there first (see `apply_harness_event`).
+    /// `Done` is a true terminal status now: nothing re-checks its backend's liveness.
     ///
-    /// When the backend is dead, the exit markers written by `wrap_command`
-    /// (`{data_dir}/exit/{id}.code` and `{id}.clean`) decide the terminal state:
-    /// their presence means the wrapped shell ran to completion on its own — an
-    /// intentional end — so the session resolves to `Stopped` (with `exit_code`
-    /// recorded when the `.code` marker parsed). Their absence means tmux
-    /// disappeared out from under a still-running session (crash, `kill-session`,
-    /// `kill-server`, reboot) with no evidence of a clean end, so it resolves to
-    /// `Lost`, unchanged from before. Markers are read fresh from disk on every
-    /// call, so this is race-free even across a daemon restart.
-    async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
+    /// This is the *lazy* path — driven by the next `get_session`/`list_sessions`
+    /// call, which could be arbitrarily far in the future for a session nobody is
+    /// polling. The watchdog's idle-check tick (`watchdog::idle::check_session_idle`)
+    /// calls the same [`resolve_dead_backend_session`] eagerly, every tick, so a
+    /// dead backend is resolved — and its `lifecycle` event/webhook fired — within
+    /// one tick even with no API traffic at all.
+    async fn check_and_mark_stale(&self, session: &mut Session) -> Result<Option<SessionStatus>> {
         if !matches!(
             session.status,
-            SessionStatus::Active | SessionStatus::Idle | SessionStatus::Ready
+            SessionStatus::Working | SessionStatus::Waiting
         ) {
-            return Ok(false);
+            return Ok(None);
         }
         // Grace period: skip staleness check for recently created sessions to avoid a
         // race where `is_alive()` returns false before tmux is fully ready.
         let age = Utc::now() - session.created_at;
         if age.num_seconds() < self.stale_grace_secs {
-            return Ok(false);
+            return Ok(None);
         }
         let backend_id = self.resolve_backend_id(session);
         let alive = self.backend.is_alive(&backend_id)?;
         if alive {
-            return Ok(false);
+            return Ok(None);
         }
-        self.resolve_dead_backend_session(session).await?;
-        Ok(true)
+        let previous = session.status;
+        let transitioned =
+            resolve_dead_backend_session(&self.store, self.backend.as_ref(), &backend_id, session)
+                .await?;
+        Ok(transitioned.then_some(previous))
     }
 
-    /// Shared tail of `check_and_mark_stale` and `resume_lost_sessions`: a session's
-    /// backend has been found dead — resolve it to `Stopped` (clean end, per an exit
-    /// marker) or `Lost` (no evidence of a clean end), persisting `exit_code` when the
-    /// `.code` marker parsed to a number.
-    async fn resolve_dead_backend_session(&self, session: &mut Session) -> Result<()> {
-        let id = session.id.to_string();
-        let data_dir = self.store.data_dir();
-        if has_exit_marker(data_dir, &id) {
-            if let Some(code) = read_exit_code_marker(data_dir, &id) {
-                self.store.update_session_exit_code(&id, code).await?;
-                session.exit_code = Some(code);
-            }
-            self.store
-                .update_session_status(&id, SessionStatus::Stopped)
-                .await?;
-            session.status = SessionStatus::Stopped;
-        } else {
-            self.store
-                .update_session_status(&id, SessionStatus::Lost)
-                .await?;
-            session.status = SessionStatus::Lost;
-        }
-        Ok(())
-    }
-
-    pub async fn stop_session(&self, id: &str, purge: bool) -> Result<()> {
+    /// Stop a session (`POST /api/v1/sessions/{id}/stop`, `pulpo stop`). Returns
+    /// `Ok(true)` when the session was already `Done`/`Lost` (a no-op on status —
+    /// see below — the API maps this to `200 OK` so the CLI can print "already
+    /// done" instead of "stopped"), `Ok(false)` when it was actually live and this
+    /// call is what stopped it (mapped to `204 No Content`, unchanged from before).
+    ///
+    /// A session already `Done`/`Lost` skips the backend-kill attempt and
+    /// `mark_session_stopped` entirely: `mark_session_stopped` unconditionally
+    /// overwrites `status_reason` with the generic `stopped`, which would destroy
+    /// a more specific reason already recorded (`exited`, `budget_exceeded`, an
+    /// idle-timeout code, ...) — a `pulpo stop` on a session that finished on its
+    /// own a moment ago must not erase *why* it finished. `--purge` still runs
+    /// regardless — it's independent cleanup (the same helper `pulpo rm`/`pulpo
+    /// cleanup` use), not a status transition.
+    pub async fn stop_session(&self, id: &str, purge: bool) -> Result<bool> {
         let mut session = self
             .store
             .get_session(id)
             .await?
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
-        let backend_id = self.resolve_backend_id(&session);
-        self.stop_session_backend(&session, &backend_id)?;
-        self.mark_session_stopped(&mut session).await?;
+        let already_terminal = matches!(session.status, SessionStatus::Done | SessionStatus::Lost);
 
-        // Same reasoning as the `SessionEnded` hook path above: an explicit `pulpo
-        // stop` is another transition into a terminal status the idle-sweep loop
-        // never revisits, so it's another place a session could otherwise keep
-        // reporting no final cost.
-        crate::watchdog::refresh_exact_usage(&self.store, &session).await;
+        if !already_terminal {
+            let backend_id = self.resolve_backend_id(&session);
+            self.stop_session_backend(&session, &backend_id)?;
+            self.mark_session_stopped(&mut session).await?;
+
+            // Same reasoning as the `SessionEnded` hook path above: an explicit
+            // `pulpo stop` is another transition into a terminal status the
+            // idle-sweep loop never revisits, so it's another place a session
+            // could otherwise keep reporting no final cost.
+            crate::watchdog::refresh_exact_usage(&self.store, &session).await;
+        }
 
         if purge {
             self.purge_session(&session).await?;
         }
 
-        Ok(())
+        Ok(already_terminal)
     }
 
     pub async fn cleanup_dead_sessions(&self) -> Result<CleanupResponse> {
@@ -1044,11 +1106,7 @@ impl SessionManager {
     }
 
     fn read_log_tail(&self, id: &str, lines: usize) -> String {
-        let log_path = session_log_path(self.store.data_dir(), id);
-        let content = std::fs::read_to_string(&log_path).unwrap_or_default();
-        let mut tail: Vec<&str> = content.lines().rev().take(lines).collect();
-        tail.reverse();
-        tail.join("\n")
+        crate::session::utils::read_log_tail(self.store.data_dir(), id, lines)
     }
 
     pub fn send_input(&self, backend_id: &str, text: &str) -> Result<()> {
@@ -1063,12 +1121,9 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         let previous_status = session.status;
-        if previous_status != SessionStatus::Lost
-            && previous_status != SessionStatus::Ready
-            && previous_status != SessionStatus::Stopped
-        {
+        if previous_status != SessionStatus::Lost && previous_status != SessionStatus::Done {
             bail!(
-                "session cannot be resumed (status: {previous_status}) — only stopped, lost, or ready sessions can be resumed"
+                "session cannot be resumed (status: {previous_status}) — only done or lost sessions can be resumed"
             );
         }
 
@@ -1093,65 +1148,65 @@ impl SessionManager {
         let effective_workdir = Self::effective_resume_workdir(&session);
         validate_workdir(&effective_workdir)?;
 
-        // If the backend session is still alive, just re-mark it as running — unless
-        // the agent already exited into the wrapper's fallback shell (an exit marker
-        // is present, see `wrap_command`/AGENTS.md's exit-marker rules). In that case
-        // the shell is alive but there's no live agent to just "un-pause": treat it
-        // the same as a dead backend — kill the leftover shell and recreate the
-        // backend with the resume command (`restore_session_backend` purges the
-        // stale markers itself, and the harness resume path re-launches the agent).
-        // Without this, marking the session Active while the marker still exists
-        // gets flipped straight back to `Ready` by the very next watchdog idle-check
-        // tick (`watchdog::idle::check_session_idle`'s own marker check).
+        // A `Done`/`Lost` session's backend should already be dead — that's precisely
+        // how it got here (see `check_and_mark_stale`/`resolve_dead_backend_session`,
+        // and `Lost` by definition). ADR 0009 removes the old `Ready`-with-alive-shell
+        // special case (`wrap_command` no longer keeps a fallback shell running after
+        // the agent exits, so that multi-second window is gone) — but two distinct
+        // cases remain if the backend somehow answers alive anyway:
+        //   - `Done`: a millisecond-scale race where a harness's own `SessionEnded`
+        //     event flipped the status before its wrapper shell actually finished
+        //     exiting. There's no live agent left to just "un-pause" — best-effort
+        //     kill the dying backend, then always recreate fresh.
+        //   - `Lost`: no exit marker ever suggested this backend should be dead, so
+        //     if it answers alive, it's safe (and cheaper) to just resume it in
+        //     place rather than tear down and restart a session that never actually
+        //     stopped running.
         let backend_id = self.resolve_backend_id(&session);
         let alive = self.backend.is_alive(&backend_id)?;
-        let agent_already_exited =
-            alive && has_exit_marker(self.store.data_dir(), &session.id.to_string());
-        if !alive || agent_already_exited {
-            if agent_already_exited {
-                self.stop_session_backend(&session, &backend_id)?;
+        if previous_status == SessionStatus::Done || !alive {
+            if alive {
+                let _ = self.backend.kill_session(&backend_id);
             }
-            // Use session name for the new tmux session, not the stale $N backend ID.
-            // The old backend_session_id may point to a dead tmux session that no longer exists.
+            // Use session name for the new tmux session, not the stale $N backend
+            // ID. The old backend_session_id may point to a dead tmux session that
+            // no longer exists.
             let create_id = self.resume_create_id(&session);
             self.restore_session_backend(&session, &effective_workdir, &create_id)
                 .await?;
         }
 
         let mut session = session;
-        self.mark_session_status(&mut session, previous_status, SessionStatus::Active)
+        self.mark_session_status(&mut session, previous_status, SessionStatus::Working)
             .await?;
         Ok(session)
     }
 
-    /// Resume all sessions that were Active or Idle but have dead backends, and
-    /// eagerly reclassify dead `Ready` sessions (see [`Self::check_and_mark_stale`]
-    /// for why `Ready` needs the same dead-backend sweep as Active/Idle). Called on
-    /// startup to recover sessions lost during a reboot.
-    /// Returns the number of sessions successfully resumed (`Ready` sessions are
-    /// never counted — see below).
+    /// Resume all sessions that were `Working`/`Waiting` but have dead backends.
+    /// Called on startup to recover sessions lost during a reboot.
+    ///
+    /// There is no `Ready`-equivalent case to eagerly reclassify anymore (ADR 0009):
+    /// `Done` is a true terminal status now (nothing re-checks a `Done` session's
+    /// backend — see [`Self::check_and_mark_stale`]), so this loop only ever
+    /// considers the two genuinely-live statuses.
+    /// Returns the number of sessions successfully resumed.
     pub async fn resume_lost_sessions(&self) -> Result<usize> {
         let sessions = self.store.list_sessions().await?;
         let mut resumed = 0;
         for mut session in sessions {
-            let is_ready = session.status == SessionStatus::Ready;
-            if !is_ready
-                && session.status != SessionStatus::Active
-                && session.status != SessionStatus::Idle
+            if session.status != SessionStatus::Working && session.status != SessionStatus::Waiting
             {
                 continue;
             }
             // The docker runtime was removed — historical docker sessions cannot be
             // auto-resumed in tmux. Mark them Lost so they surface in the dashboard.
-            // A `Ready` session can never be docker-runtime (the runtime was removed
-            // before this fix), so this only ever applies to Active/Idle.
-            if !is_ready && session.runtime == Runtime::Docker {
+            if session.runtime == Runtime::Docker {
                 tracing::warn!(
                     session = %session.name,
                     "Cannot auto-resume docker-runtime session — {DOCKER_RUNTIME_REMOVED}"
                 );
                 self.store
-                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
                     .await?;
                 continue;
             }
@@ -1160,22 +1215,19 @@ impl SessionManager {
             if alive {
                 continue;
             }
-            if is_ready {
-                // `Ready` sessions are never auto-resumed (recreating the backend and
-                // re-launching the original command makes no sense once the agent has
-                // already finished) — only ever reclassified via the exit markers,
-                // eagerly here rather than waiting for the next `get_session`/
-                // `list_sessions` call to lazily run the same check.
-                self.resolve_dead_backend_session(&mut session).await?;
-                continue;
-            }
             // The session ended cleanly while the daemon wasn't polling it (either it
             // exited before pulpod stopped, or after — the marker is written by the
             // wrapper shell itself, independent of daemon uptime). Resolve it to
-            // Stopped instead of blindly auto-resuming (re-launching the original
+            // `Done` instead of blindly auto-resuming (re-launching the original
             // command) — this must be checked *before* the resume attempt below.
             if has_exit_marker(self.store.data_dir(), &session.id.to_string()) {
-                self.resolve_dead_backend_session(&mut session).await?;
+                resolve_dead_backend_session(
+                    &self.store,
+                    self.backend.as_ref(),
+                    &backend_id,
+                    &mut session,
+                )
+                .await?;
                 continue;
             }
             // Backend is dead — resume the session. Use the session name for the new
@@ -1195,7 +1247,7 @@ impl SessionManager {
                     "Cannot auto-resume session: invalid workdir"
                 );
                 self.store
-                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
                     .await?;
                 continue;
             }
@@ -1210,14 +1262,14 @@ impl SessionManager {
                     "Failed to auto-resume session on startup"
                 );
                 self.store
-                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
                     .await?;
                 continue;
             }
 
-            // Re-mark as Active
+            // Re-mark as Working
             self.store
-                .update_session_status(&session.id.to_string(), SessionStatus::Active)
+                .update_session_status(&session.id.to_string(), SessionStatus::Working, None)
                 .await?;
             tracing::info!(session = %session.name, "Auto-resumed session after restart");
             resumed += 1;
@@ -1254,7 +1306,7 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
 
-        if matches!(session.status, SessionStatus::Stopped | SessionStatus::Lost) {
+        if matches!(session.status, SessionStatus::Done | SessionStatus::Lost) {
             return Ok(());
         }
 
@@ -1280,14 +1332,7 @@ impl SessionManager {
             return Ok(());
         };
 
-        let backend_alive = if matches!(event, harness::HarnessEvent::SessionEnded { .. }) {
-            let backend_id = self.resolve_backend_id(&session);
-            self.backend.is_alive(&backend_id).unwrap_or(false)
-        } else {
-            false
-        };
-
-        let update = harness::transition_for_event(&event, backend_alive);
+        let update = harness::transition_for_event(&event);
         let previous_status = session.status;
 
         if update.harness_session_id.is_some() {
@@ -1326,9 +1371,10 @@ impl SessionManager {
 
         if let Some(status) = update.status {
             self.store
-                .update_session_status(&session_id_str, status)
+                .update_session_status(&session_id_str, status, update.status_reason.as_deref())
                 .await?;
             session.status = status;
+            session.status_reason.clone_from(&update.status_reason);
         }
 
         if update.notify {
@@ -1340,32 +1386,46 @@ impl SessionManager {
             );
         }
 
-        // Best-effort: a `SessionEnded` hook fires the moment the harness reports
-        // its own conversation as done, which can race `wrap_command` writing the
-        // `.code` exit marker once the wrapped process actually terminates. When
-        // the marker is already there, record `exit_code` now instead of waiting
-        // for the watchdog's own marker sweep
-        // (`watchdog::idle::check_idle_sessions`/`sweep_ready_exit_code`) to catch
-        // it on a later tick — that sweep remains the durable path for the common
-        // case where the marker isn't written yet.
-        if matches!(event, harness::HarnessEvent::SessionEnded { .. })
-            && session.exit_code.is_none()
-            && let Some(code) = read_exit_code_marker(self.store.data_dir(), &session_id_str)
-        {
-            self.store
-                .update_session_exit_code(&session_id_str, code)
-                .await?;
-            session.exit_code = Some(code);
-        }
-
-        // A `SessionEnded` hook lands the session in `Ready` or `Stopped` (see
-        // `harness::transition_for_event`) — a terminal-ish status the watchdog's
-        // idle-sweep loop no longer visits for cost refreshes (it only ever checks
-        // `Active`/`Idle` sessions). Without this, a session whose harness reports
-        // it's done before the next watchdog tick would see its final
-        // `session_cost_usd` never recorded at all.
+        // `SessionEnded` itself never sets `update.status` (see
+        // `harness::transition_for_event`'s doc comment) — the harness process is
+        // only just starting to exit. Best-effort: read the `.code` exit marker
+        // (which can race `wrap_command` writing it, since the marker only appears
+        // once the wrapped process actually terminates); when it's already there,
+        // record `exit_code` now and transition straight to `Done` (reason `exited`)
+        // instead of waiting for the ordinary dead-backend classification
+        // (`check_and_mark_stale`/`resolve_dead_backend_session`, driven by the next
+        // `get_session`/`list_sessions` call) to catch it once the backend actually
+        // dies. When the marker isn't there yet, leave the status alone — that later
+        // dead-backend check remains the durable path.
         if matches!(event, harness::HarnessEvent::SessionEnded { .. }) {
+            let data_dir = self.store.data_dir();
+            if session.exit_code.is_none()
+                && let Some(code) = read_exit_code_marker(data_dir, &session_id_str)
+            {
+                self.store
+                    .update_session_exit_code(&session_id_str, code)
+                    .await?;
+                session.exit_code = Some(code);
+            }
+
+            // The final exact-usage reconciliation (#127): a `SessionEnded` hook is a
+            // terminal-ish moment the watchdog's idle-sweep loop no longer visits for
+            // cost refreshes (it only ever checks `Working`/`Waiting` sessions).
+            // Without this, a session whose harness reports it's done before the next
+            // watchdog tick would see its final `session_cost_usd` never recorded.
             crate::watchdog::refresh_exact_usage(&self.store, &session).await;
+
+            if has_exit_marker(data_dir, &session_id_str) {
+                self.store
+                    .update_session_status(
+                        &session_id_str,
+                        SessionStatus::Done,
+                        Some(status_reason::EXITED),
+                    )
+                    .await?;
+                session.status = SessionStatus::Done;
+                session.status_reason = Some(status_reason::EXITED.to_owned());
+            }
         }
 
         session.updated_at = Utc::now();
@@ -1377,6 +1437,95 @@ impl SessionManager {
     pub const fn store(&self) -> &Store {
         &self.store
     }
+}
+
+/// Resolve a session whose backend has been found dead — shared by
+/// `SessionManager::check_and_mark_stale` (the lazy path: driven by the next
+/// `get_session`/`list_sessions` call), `SessionManager::resume_lost_sessions`
+/// (driven at startup), and `watchdog::idle::check_session_idle` (the eager
+/// path: every watchdog tick, so a dead backend is resolved — and its
+/// `lifecycle` event/webhook fired — without depending on anyone polling the
+/// API at all; see ADR 0009's HIGH follow-up fixing the watchdog no longer
+/// doing this itself after the `Ready`-sweep removal).
+///
+/// Resolves to `Done` (reason `exited`, clean end per an exit marker) or `Lost`
+/// (no evidence of a clean end), persisting `exit_code` when the `.code` marker
+/// parsed to a number, and running the final exact-usage reconciliation (#127)
+/// so a session's last `session_cost_usd` is never left unrecorded just because
+/// it finished between watchdog ticks.
+///
+/// Also best-effort-preserves the session's final output, which would otherwise
+/// be lost the instant the pane closes (`wrap_command` no longer keeps a
+/// fallback shell open — ADR 0009): first a live tmux capture attempt (the
+/// backend *server* may still be up even though this one session's pane just
+/// died, and a capture racing the teardown occasionally still succeeds), then,
+/// for the `Done`/clean-exit case specifically, the per-session pipe-pane log
+/// (`{id}.log`, written continuously while the pane was alive whenever
+/// `capture_session_output` is enabled) — the reliable source once the live
+/// capture above has (as it almost always does for a session that closed
+/// cleanly) come back empty.
+/// Returns `Ok(true)` only when this call is the one that actually transitioned
+/// the session (a concurrent caller — the watchdog's own eager `is_alive()`
+/// check racing a `GET`/`list_sessions` call, or vice versa — may have already
+/// resolved it first). Callers must treat `Ok(false)` as "skip emitting a
+/// lifecycle event for this call, it would be a duplicate," not as a no-op to
+/// retry. `session` is mutated to reflect the new state only when this
+/// returns `Ok(true)`; on `Ok(false)` it's left as passed in (the DB is the
+/// source of truth for what the concurrent winner actually set).
+pub(crate) async fn resolve_dead_backend_session(
+    store: &Store,
+    backend: &dyn Backend,
+    backend_id: &str,
+    session: &mut Session,
+) -> Result<bool> {
+    let id = session.id.to_string();
+    let data_dir = store.data_dir();
+
+    if let Ok(output) = backend.capture_output(backend_id, 500)
+        && !output.is_empty()
+    {
+        let _ = store.update_session_output_snapshot(&id, &output).await;
+        session.output_snapshot = Some(output);
+    }
+
+    if has_exit_marker(data_dir, &id) {
+        let exit_code = read_exit_code_marker(data_dir, &id);
+        // The live capture above almost never has anything for a session that
+        // ended cleanly — tmux tears the pane down the instant the wrapped
+        // command exits. The pipe-pane log is the reliable fallback here.
+        let tail = crate::session::utils::read_log_tail(data_dir, &id, 500);
+        if !tail.is_empty() {
+            let _ = store.update_session_output_snapshot(&id, &tail).await;
+            session.output_snapshot = Some(tail);
+        }
+        let transitioned = store
+            .transition_to_terminal_if_live(
+                &id,
+                SessionStatus::Done,
+                Some(status_reason::EXITED),
+                exit_code,
+            )
+            .await?;
+        if !transitioned {
+            return Ok(false);
+        }
+        if let Some(code) = exit_code {
+            session.exit_code = Some(code);
+        }
+        session.status = SessionStatus::Done;
+        session.status_reason = Some(status_reason::EXITED.to_owned());
+        crate::watchdog::refresh_exact_usage(store, session).await;
+    } else {
+        let transitioned = store
+            .transition_to_terminal_if_live(&id, SessionStatus::Lost, None, None)
+            .await?;
+        if !transitioned {
+            return Ok(false);
+        }
+        session.status = SessionStatus::Lost;
+        session.status_reason = None;
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -1542,7 +1691,7 @@ mod tests {
 
         assert_eq!(session.name, "fix-the-bug");
         assert_eq!(session.command, "echo hello");
-        assert_eq!(session.status, SessionStatus::Active);
+        assert_eq!(session.status, SessionStatus::Working);
         assert_eq!(session.workdir, "/tmp");
         // MockBackend.query_backend_id() returns $N where N is the name length
         assert_eq!(session.backend_session_id, Some("$11".into()));
@@ -1752,7 +1901,7 @@ mod tests {
         // Session should be marked Dead in store
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Stopped);
+        assert_eq!(sessions[0].status, SessionStatus::Done);
     }
 
     #[tokio::test]
@@ -1785,7 +1934,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -1808,7 +1957,7 @@ mod tests {
 
         // Manually set session to Idle (simulates watchdog marking it idle before reboot)
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
             .await
             .unwrap();
 
@@ -1822,12 +1971,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_session_idle_with_alive_backend_stays_idle() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+    async fn test_get_session_dead_backend_emits_event_with_real_previous_status() {
+        // Regression test: `get_session` used to hard-code `previous_status =
+        // Working` on every dead-backend transition regardless of what the
+        // session's actual prior status was — wrong here, where it was `Waiting`.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let session = mgr.create_session(make_req("stale-waiting")).await.unwrap();
+        // Drain the create event.
+        let _ = event_rx.recv().await;
 
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
             .await
             .unwrap();
 
@@ -1836,179 +1992,133 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Idle);
-    }
-
-    // -- Ready-death classification (the #94 known limitation, fixed here) --
-    //
-    // Before this fix, `check_and_mark_stale` only swept Active/Idle sessions, so a
-    // Ready session (agent exited, fallback shell lingering) whose tmux backend later
-    // died was never reclassified — it stayed `Ready` forever (nothing else would
-    // ever touch it, since Ready sessions have no TTL-based auto-purge). The fix
-    // runs Ready sessions through the exact same marker-based resolution as
-    // Active/Idle.
-
-    #[tokio::test]
-    async fn test_get_session_ready_with_dead_backend_and_marker_transitions_to_stopped() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("ready-marker")).await.unwrap();
-        let id = session.id.to_string();
-
-        mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
-            .await
-            .unwrap();
-        let data_dir = mgr.store().data_dir().to_owned();
-        let code_path = exit_code_marker_path(&data_dir, &id);
-        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
-        std::fs::write(&code_path, "9").unwrap();
-
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
-        assert_eq!(fetched.exit_code, Some(9));
-    }
-
-    #[tokio::test]
-    async fn test_get_session_ready_with_dead_backend_no_marker_transitions_to_lost() {
-        // No wrapper ever ran for this session id (e.g. it reached Ready via the
-        // text-scrape fallback rather than the `.code` marker), so no exit marker
-        // exists. A dead backend with no marker resolves to Lost, same as the
-        // Active/Idle case.
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr
-            .create_session(make_req("ready-no-marker"))
-            .await
-            .unwrap();
-        let id = session.id.to_string();
-
-        mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
-            .await
-            .unwrap();
-
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
         assert_eq!(fetched.status, SessionStatus::Lost);
-        assert_eq!(fetched.exit_code, None);
+
+        let event = event_rx.recv().await.unwrap();
+        let se = unwrap_session_event(event);
+        assert_eq!(se.status, "lost");
+        assert_eq!(
+            se.previous_status.as_deref(),
+            Some("waiting"),
+            "must report the session's real previous status, not a hard-coded one"
+        );
     }
 
     #[tokio::test]
-    async fn test_get_session_ready_with_alive_backend_stays_ready() {
+    async fn test_list_sessions_dead_backend_emits_event() {
+        // Regression test: `mark_stale_in_sessions` (the lazy sweep behind
+        // `list_sessions`/`list_sessions_filtered`) used to resolve a dead backend
+        // silently — no `lifecycle` event/webhook fired at all for a session that
+        // was only ever discovered via a `pulpo ls`/`GET /sessions` call rather
+        // than a single-session GET.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let session = mgr.create_session(make_req("stale-list")).await.unwrap();
+        let _ = event_rx.recv().await; // drain the create event
+
+        let sessions = mgr.list_sessions().await.unwrap();
+        let listed = sessions
+            .iter()
+            .find(|s| s.id == session.id)
+            .expect("session should still be listed");
+        assert_eq!(listed.status, SessionStatus::Lost);
+
+        let event = event_rx.recv().await.unwrap();
+        let se = unwrap_session_event(event);
+        assert_eq!(se.session_name, "stale-list");
+        assert_eq!(se.status, "lost");
+        assert_eq!(se.previous_status.as_deref(), Some("working"));
+    }
+
+    #[tokio::test]
+    async fn test_get_session_idle_with_alive_backend_stays_idle() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
-        let session = mgr.create_session(make_req("ready-alive")).await.unwrap();
-        let id = session.id.to_string();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
+            .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
             .await
             .unwrap();
 
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Ready);
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Waiting);
     }
 
+    // -- `Done` is a true terminal status (ADR 0009) --
+    //
+    // Before ADR 0009's five-state model, `check_and_mark_stale` also swept `Ready`
+    // sessions (agent exited, fallback shell lingering) so a `Ready` session whose
+    // tmux backend later died could still be reclassified. `wrap_command` no longer
+    // keeps a fallback shell alive after the agent exits, so that persistent
+    // "done but still alive" backend state doesn't exist anymore — `Done` is reached
+    // only once a backend is already confirmed dead (or a harness's `SessionEnded`
+    // event finds the exit marker already on disk), and nothing ever re-checks a
+    // `Done` session's backend liveness again. These tests lock in that a `Done`
+    // session is never revisited, unlike a genuinely live `Working`/`Waiting` one.
+
     #[tokio::test]
-    async fn test_list_sessions_ready_with_dead_backend_transitions_to_lost() {
+    async fn test_get_session_done_status_is_never_rechecked() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("ready-list")).await.unwrap();
+        let session = mgr.create_session(make_req("done-alive")).await.unwrap();
         let id = session.id.to_string();
 
         mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
+            .update_session_status(&id, SessionStatus::Done, Some("exited"))
+            .await
+            .unwrap();
+
+        // The mock backend reports dead, but `get_session` must not re-run the
+        // dead-backend check against an already-`Done` session.
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.status_reason.as_deref(), Some("exited"));
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_done_status_is_never_rechecked() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("done-list")).await.unwrap();
+        let id = session.id.to_string();
+
+        mgr.store()
+            .update_session_status(&id, SessionStatus::Done, Some("exited"))
             .await
             .unwrap();
 
         let sessions = mgr.list_sessions().await.unwrap();
         let listed = sessions.iter().find(|s| s.id.to_string() == id).unwrap();
-        assert_eq!(listed.status, SessionStatus::Lost);
+        assert_eq!(listed.status, SessionStatus::Done);
     }
 
     #[tokio::test]
-    async fn test_resume_lost_sessions_resolves_dead_ready_with_marker_to_stopped_not_resumed() {
-        // A Ready session must never be auto-"resumed" at startup (that would recreate
-        // the backend and re-launch the original command, which makes no sense for a
-        // session whose agent already finished) — it must resolve through the same
-        // marker-based logic `resolve_dead_backend_session` applies elsewhere.
+    async fn test_resume_lost_sessions_skips_done_sessions() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr
-            .create_session(make_req("ready-resume-marker"))
+            .create_session(make_req("done-resume-skip"))
             .await
             .unwrap();
         let id = session.id.to_string();
         mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
-            .await
-            .unwrap();
-        let data_dir = mgr.store().data_dir().to_owned();
-        let code_path = exit_code_marker_path(&data_dir, &id);
-        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
-        std::fs::write(&code_path, "3").unwrap();
-
-        *backend.alive.lock().unwrap() = false;
-        backend.calls.lock().unwrap().clear();
-        let resumed = mgr.resume_lost_sessions().await.unwrap();
-        assert_eq!(resumed, 0, "a Ready session must never be auto-resumed");
-
-        // Assert against the raw store, not `mgr.get_session` — the latter would
-        // mask a `resume_lost_sessions` gap by re-running its own lazy staleness
-        // check. This proves `resume_lost_sessions` itself resolved the session
-        // eagerly at startup, instead of leaving it stale as `Ready` in the DB
-        // until the next `get_session`/`list_sessions` call happens to touch it.
-        let fetched = mgr.store().get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
-        assert_eq!(fetched.exit_code, Some(3));
-
-        let calls = backend.calls.lock().unwrap();
-        assert!(!calls.iter().any(|c| c.starts_with("create:")));
-        drop(calls);
-    }
-
-    #[tokio::test]
-    async fn test_resume_lost_sessions_resolves_dead_ready_without_marker_to_lost() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr
-            .create_session(make_req("ready-resume-no-marker"))
-            .await
-            .unwrap();
-        let id = session.id.to_string();
-        mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
+            .update_session_status(&id, SessionStatus::Done, Some("exited"))
             .await
             .unwrap();
 
         *backend.alive.lock().unwrap() = false;
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_lost_sessions().await.unwrap();
-        assert_eq!(resumed, 0);
+        assert_eq!(resumed, 0, "a done session must never be auto-resumed");
 
-        // Raw store fetch — see comment above on why `get_session` isn't used here.
         let fetched = mgr.store().get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Lost);
+        assert_eq!(fetched.status, SessionStatus::Done);
 
         let calls = backend.calls.lock().unwrap();
         assert!(!calls.iter().any(|c| c.starts_with("create:")));
         drop(calls);
-    }
-
-    #[tokio::test]
-    async fn test_resume_lost_sessions_skips_alive_ready_sessions() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr
-            .create_session(make_req("ready-resume-alive"))
-            .await
-            .unwrap();
-        let id = session.id.to_string();
-        mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
-            .await
-            .unwrap();
-
-        // Backend still alive — resume_lost_sessions must leave it untouched.
-        let resumed = mgr.resume_lost_sessions().await.unwrap();
-        assert_eq!(resumed, 0);
-
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Ready);
-        drop(backend);
     }
 
     #[tokio::test]
@@ -2018,7 +2128,7 @@ mod tests {
 
         // Manually set session to Idle
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
             .await
             .unwrap();
 
@@ -2059,7 +2169,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
     }
 
     #[tokio::test]
@@ -2072,6 +2182,57 @@ mod tests {
 
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_on_already_done_session_preserves_status_reason() {
+        // Regression test: `pulpo stop` on a session that already finished (via
+        // budget/idle/exit, not an explicit stop) used to unconditionally call
+        // `mark_session_stopped`, overwriting the real reason (`budget_exceeded`
+        // here) with the generic `stopped` — destroying exactly the information an
+        // operator would want to see. It must now be a no-op on status.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("already-done")).await.unwrap();
+        let id = session.id.to_string();
+        mgr.store()
+            .update_session_status(&id, SessionStatus::Done, Some("budget_exceeded"))
+            .await
+            .unwrap();
+
+        let already_terminal = mgr.stop_session(&id, false).await.unwrap();
+
+        assert!(already_terminal, "stop_session should report a no-op");
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.status_reason.as_deref(), Some("budget_exceeded"));
+        // The backend was never even asked to kill anything for an already-dead session.
+        assert!(
+            !backend
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.starts_with("kill:")),
+            "stop_session must skip the backend-kill attempt for an already-terminal session"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_on_already_lost_session_reports_no_op_and_still_purges() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("already-lost")).await.unwrap();
+        let id = session.id.to_string();
+        mgr.store()
+            .update_session_status(&id, SessionStatus::Lost, None)
+            .await
+            .unwrap();
+
+        let already_terminal = mgr.stop_session(&id, true).await.unwrap();
+
+        assert!(already_terminal);
+        // `--purge` is independent cleanup and still runs even though the status
+        // transition itself was skipped.
+        assert!(mgr.get_session(&id).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -2250,7 +2411,7 @@ mod tests {
         *backend.alive.lock().unwrap() = true;
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         // Verify create_session was NOT called (backend session already exists)
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
@@ -2275,7 +2436,7 @@ mod tests {
         // Resume while backend session is dead — should recreate
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         // Verify create_session WAS called
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
@@ -2359,7 +2520,7 @@ mod tests {
 
         // Resuming a Ready session should succeed — it must not collide with itself
         let resumed = mgr.resume_session(&id).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
     }
 
     #[test]
@@ -2375,13 +2536,13 @@ mod tests {
         );
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
-        assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
-        assert!(cmd.contains("Run: pulpo resume test-session"));
-        // Fallback shell uses $SHELL (or /bin/bash), run as a login shell — NOT exec'd,
-        // so the wrapper regains control afterward to write the `.clean` marker.
-        assert!(cmd.contains(" -l; : > "));
+        // ADR 0009: no more fallback shell / "Agent exited" message — the wrapper
+        // just writes both markers and lets the shell (and tmux with it) exit.
+        assert!(!cmd.contains("[pulpo] Agent exited"));
+        assert!(!cmd.contains("Run: pulpo resume"));
         assert!(!cmd.contains("exec "));
-        // Exit-code marker: `$?` captured immediately, then written to `{id}.code`.
+        // Exit-code marker: `$?` captured immediately, then written to `{id}.code`,
+        // followed directly by the `.clean` marker — nothing runs in between.
         assert!(cmd.contains("ec=$?"));
         assert!(cmd.contains(&format!("{id}.code")));
         assert!(cmd.contains(&format!("{id}.clean")));
@@ -2418,8 +2579,8 @@ mod tests {
         assert!(cmd.contains("Fix the bug"));
         assert!(cmd.contains("PULPO_SESSION_ID="));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-task"));
-        assert!(cmd.contains("(session: my-task)"));
-        assert!(cmd.contains("Run: pulpo resume my-task"));
+        assert!(!cmd.contains("(session: my-task)"));
+        assert!(!cmd.contains("Run: pulpo resume my-task"));
     }
 
     #[test]
@@ -2611,8 +2772,8 @@ mod tests {
         let event = event_rx.recv().await.unwrap();
         let se = unwrap_session_event(event);
         assert_eq!(se.session_name, "event-test");
-        assert_eq!(se.status, "active");
-        assert_eq!(se.previous_status.as_deref(), Some("creating"));
+        assert_eq!(se.status, "working");
+        assert_eq!(se.previous_status.as_deref(), Some("starting"));
         assert_eq!(se.node_name, "test-node");
     }
 
@@ -2630,7 +2791,8 @@ mod tests {
             .unwrap();
         let event = event_rx.recv().await.unwrap();
         let se = unwrap_session_event(event);
-        assert_eq!(se.status, "stopped");
+        assert_eq!(se.status, "done");
+        assert_eq!(se.status_reason.as_deref(), Some("stopped"));
     }
 
     #[tokio::test]
@@ -2648,7 +2810,8 @@ mod tests {
         let stopped = event_rx.recv().await.unwrap();
         let deleted = event_rx.recv().await.unwrap();
         let stopped = unwrap_session_event(stopped);
-        assert_eq!(stopped.status, "stopped");
+        assert_eq!(stopped.status, "done");
+        assert_eq!(stopped.status_reason.as_deref(), Some("stopped"));
         match deleted {
             PulpoEvent::SessionDeleted(se) => {
                 assert_eq!(se.session_id, session.id.to_string());
@@ -2844,7 +3007,7 @@ mod tests {
 
         // Manually set to Idle (simulates watchdog marking it idle before reboot)
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
             .await
             .unwrap();
 
@@ -2861,7 +3024,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -2874,7 +3037,7 @@ mod tests {
             name: "fail-resume".into(),
             workdir: "/tmp".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("fail-resume".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
@@ -2904,7 +3067,7 @@ mod tests {
             name: "vanished-workdir".into(),
             workdir: "/nonexistent/path/that/does/not/exist".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("vanished-workdir".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
@@ -2982,7 +3145,7 @@ mod tests {
             .unwrap();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -3014,7 +3177,7 @@ mod tests {
             name: "reboot-sess".into(),
             workdir: "/tmp".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("$4".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
@@ -3063,7 +3226,7 @@ mod tests {
             workdir: "/nonexistent/original/workdir".into(),
             worktree_path: Some(worktree_path.clone()),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("worktree-sess".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
@@ -3182,7 +3345,7 @@ mod tests {
             name: "old-docker-row".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Stopped,
+            status: SessionStatus::Done,
             backend_session_id: Some("docker:pulpo-old-docker-row".into()),
             runtime: Runtime::Docker,
             created_at: Utc::now() - chrono::Duration::hours(1),
@@ -3196,7 +3359,7 @@ mod tests {
             .find(|s| s.name == "old-docker-row")
             .unwrap();
         assert_eq!(listed.runtime, Runtime::Docker);
-        assert_eq!(listed.status, SessionStatus::Stopped);
+        assert_eq!(listed.status, SessionStatus::Done);
     }
 
     #[test]
@@ -3228,7 +3391,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // Status should remain Active despite backend being dead (grace period)
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
     }
 
     #[test]
@@ -3634,7 +3797,7 @@ mod tests {
         let a = mgr.create_session(make_req("plan-auth")).await.unwrap();
         let b = mgr.create_session(make_req("plan-auth-2")).await.unwrap();
         for id in [a.id, b.id] {
-            sqlx::query("UPDATE sessions SET worktree_path = ?, status = 'stopped' WHERE id = ?")
+            sqlx::query("UPDATE sessions SET worktree_path = ?, status = 'done' WHERE id = ?")
                 .bind(&wt_path)
                 .bind(id.to_string())
                 .execute(mgr.store().pool())
@@ -3660,7 +3823,7 @@ mod tests {
             name: "old-docker-active".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("docker:pulpo-old-docker-active".into()),
             runtime: Runtime::Docker,
             created_at: Utc::now() - chrono::Duration::hours(1),
@@ -3732,9 +3895,11 @@ mod tests {
     fn test_wrap_command_empty_string() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("", &id, "test", None, "/tmp", DEFAULT_DAEMON_PORT);
-        // Empty command is not a shell command, so gets agent wrapper
+        // Empty command is not a shell command, so gets the agent wrapper (exit-code
+        // marker, no fallback shell/message — ADR 0009).
         assert!(cmd.contains("-l -c"));
-        assert!(cmd.contains("[pulpo] Agent exited"));
+        assert!(cmd.contains("ec=$?"));
+        assert!(!cmd.contains("[pulpo] Agent exited"));
     }
 
     #[test]
@@ -3826,7 +3991,7 @@ mod tests {
             .create_session(make_req("cleanup-stopped"))
             .await
             .unwrap();
-        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'done' WHERE id = ?")
             .bind(s1.id.to_string())
             .execute(&pool)
             .await
@@ -3853,7 +4018,7 @@ mod tests {
 
         let active = mgr.create_session(make_req("keep-active")).await.unwrap();
         let stopped = mgr.create_session(make_req("del-stopped")).await.unwrap();
-        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'done' WHERE id = ?")
             .bind(stopped.id.to_string())
             .execute(&pool)
             .await
@@ -3881,11 +4046,13 @@ mod tests {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
 
         let s = mgr.create_session(make_req("wt-cleanup")).await.unwrap();
-        sqlx::query("UPDATE sessions SET status = 'stopped', worktree_path = '/nonexistent/path' WHERE id = ?")
-            .bind(s.id.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE sessions SET status = 'done', worktree_path = '/nonexistent/path' WHERE id = ?",
+        )
+        .bind(s.id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let resp = mgr.cleanup_dead_sessions().await.unwrap();
         assert_eq!(resp.sessions_deleted, 1);
@@ -4008,7 +4175,7 @@ mod tests {
 
         let s = mgr.create_session(make_req("evt-cleanup")).await.unwrap();
         let _ = event_rx.recv().await; // drain create event
-        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'done' WHERE id = ?")
             .bind(s.id.to_string())
             .execute(&pool)
             .await
@@ -4039,7 +4206,7 @@ mod tests {
         let _resumed = mgr.resume_session(&id).await.unwrap();
         let event = event_rx.recv().await.unwrap();
         let se = unwrap_session_event(event);
-        assert_eq!(se.status, "active");
+        assert_eq!(se.status, "working");
         assert_eq!(se.previous_status.as_deref(), Some("lost"));
     }
 
@@ -4061,7 +4228,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
         assert_eq!(fetched.exit_code, Some(0));
     }
 
@@ -4084,8 +4251,83 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
         assert!(fetched.exit_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dead_backend_with_marker_prefers_log_tail_over_live_capture() {
+        // Regression test: a `done` session's pane is gone by the time anything
+        // resolves it (`wrap_command` closes it the instant the command exits —
+        // ADR 0009), so a live tmux capture almost never reflects the session's
+        // real final output — here it's the mock's default stale
+        // `"test output"`. The pipe-pane log (written continuously while the pane
+        // was alive) is the reliable source and must win.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("log-tail-wins")).await.unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let id = session.id.to_string();
+
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "3").unwrap();
+
+        let log_path = crate::session::utils::session_log_path(&data_dir, &id);
+        std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+        std::fs::write(&log_path, "line one\nfinal output line\n").unwrap();
+
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.exit_code, Some(3));
+        assert_eq!(
+            fetched.output_snapshot.as_deref(),
+            Some("line one\nfinal output line")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_resolve_dead_backend_session_transitions_exactly_once() {
+        // Regression test for a Fable review finding on PR #129: the watchdog's
+        // eager `is_alive()` check and a concurrent `GET`/`list_sessions` call
+        // (or another watchdog tick) could both observe the backend dead and both
+        // transition + emit a `lifecycle.done` event for the very same session —
+        // a duplicate. `transition_to_terminal_if_live`'s compare-and-set
+        // (`WHERE status IN (...)`) must ensure only one of two concurrent
+        // `resolve_dead_backend_session` calls actually performs the transition;
+        // the loser must report `false` so its caller knows to skip emitting.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("concurrent-resolve"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        let store = mgr.store().clone();
+        let backend = mgr.backend();
+        let mut session_a = session.clone();
+        let mut session_b = session.clone();
+
+        let (result_a, result_b) = tokio::join!(
+            resolve_dead_backend_session(&store, backend.as_ref(), &id, &mut session_a),
+            resolve_dead_backend_session(&store, backend.as_ref(), &id, &mut session_b),
+        );
+
+        let transitioned = [result_a.unwrap(), result_b.unwrap()];
+        assert_eq!(
+            transitioned.iter().filter(|t| **t).count(),
+            1,
+            "exactly one of two concurrent resolves must report having transitioned \
+             the session, got: {transitioned:?}"
+        );
+
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.exit_code, Some(0));
     }
 
     #[tokio::test]
@@ -4101,7 +4343,7 @@ mod tests {
             name: "no-wrapper-external".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("no-wrapper-external".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
@@ -4132,7 +4374,7 @@ mod tests {
             .unwrap();
 
         let resumed = mgr.resume_session(&id).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -4149,7 +4391,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("cannot be resumed"), "got: {msg}");
         assert!(
-            msg.contains("only stopped, lost, or ready sessions can be resumed"),
+            msg.contains("only done or lost sessions can be resumed"),
             "got: {msg}"
         );
     }
@@ -4170,7 +4412,7 @@ mod tests {
         let err = mgr.resume_session(&id).await.unwrap_err();
         assert!(
             err.to_string()
-                .contains("only stopped, lost, or ready sessions can be resumed")
+                .contains("only done or lost sessions can be resumed")
         );
     }
 
@@ -4203,7 +4445,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
         assert_eq!(fetched.exit_code, Some(42));
 
         // No new backend session was created for it.
@@ -4247,14 +4489,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_ready_session_alive_with_exit_marker_recreates_backend() {
-        // A Ready session's fallback shell can still be alive in tmux even though
-        // the agent process itself already exited (see `wrap_command`/AGENTS.md's
-        // exit-marker rules) — resuming it must not just flip status back to
-        // Active, which would leave the marker in place and get the session
-        // bounced straight back to Ready by the very next watchdog idle-check tick.
-        // It must kill the leftover shell and recreate the backend through the
-        // resume path so the harness actually relaunches the agent.
+    async fn test_resume_done_session_alive_with_exit_marker_recreates_backend() {
+        // A `done` session's backend can in principle still answer alive (the
+        // millisecond-scale race described in `resume_session`'s doc comment —
+        // ADR 0009 removed the old, much longer `Ready`-with-alive-shell window,
+        // but didn't remove the theoretical possibility outright). Resuming it must
+        // not just flip status back to `working` and leave the stale backend/marker
+        // in place — it must kill whatever's left and recreate the backend through
+        // the resume path so the harness actually relaunches the agent.
         let (mgr, backend, pool) = test_manager(MockBackend::new()).await; // alive by default
         let session = mgr
             .create_session(make_req("ready-alive-marker"))
@@ -4277,7 +4519,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&id).await.unwrap();
 
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             calls.iter().any(|c| c.starts_with("kill:")),
@@ -4318,7 +4560,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&id).await.unwrap();
 
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             calls.iter().any(|c| c.starts_with("create:")),
@@ -4370,7 +4612,7 @@ mod tests {
 
         // Still within the grace period — no transition yet.
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
 
         // Backdate created_at past the grace window and check again.
         sqlx::query("UPDATE sessions SET created_at = ? WHERE id = ?")
@@ -4381,7 +4623,7 @@ mod tests {
             .unwrap();
 
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
         assert_eq!(fetched.exit_code, Some(0));
     }
 
@@ -4415,7 +4657,7 @@ mod tests {
         let code_path = exit_code_marker_path(&data_dir, &id);
         std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
         std::fs::write(&code_path, "0").unwrap();
-        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'done' WHERE id = ?")
             .bind(&id)
             .execute(&pool)
             .await
@@ -4520,13 +4762,13 @@ mod tests {
             .unwrap();
         let harness_session_id = session.harness_session_id.clone().unwrap();
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
             .await
             .unwrap();
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls
@@ -4552,7 +4794,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
         assert!(create_call.contains("echo hello"));
@@ -4577,13 +4819,13 @@ mod tests {
         assert_eq!(session.harness.as_deref(), Some("claude"));
         assert!(session.harness_session_id.is_none());
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
             .await
             .unwrap();
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
@@ -4607,13 +4849,13 @@ mod tests {
         assert_eq!(session.harness.as_deref(), Some("codex"));
         assert!(session.harness_session_id.is_none());
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
             .await
             .unwrap();
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
@@ -4642,7 +4884,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
@@ -4800,7 +5042,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
@@ -4836,7 +5078,7 @@ mod tests {
         let harness_dir =
             crate::session::utils::harness_dir(mgr.store().data_dir(), &session.id.to_string());
         assert!(harness_dir.exists());
-        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'done' WHERE id = ?")
             .bind(session.id.to_string())
             .execute(&pool)
             .await
@@ -4909,7 +5151,7 @@ mod tests {
         let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
         let session = harness_session(&mgr).await;
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
+            .update_session_status(&session.id.to_string(), SessionStatus::Done, None)
             .await
             .unwrap();
 
@@ -4926,7 +5168,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.status, SessionStatus::Done);
         assert!(
             fetched.harness_last_event_at.is_none(),
             "a stale hook on a stopped session must touch nothing"
@@ -4938,7 +5180,7 @@ mod tests {
         let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
         let session = harness_session(&mgr).await;
         mgr.store()
-            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost, None)
             .await
             .unwrap();
 
@@ -4980,7 +5222,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(fetched.harness_last_event_at.is_some());
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -5005,7 +5247,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
         assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-from-hook"));
     }
 
@@ -5030,7 +5272,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Idle);
+        assert_eq!(fetched.status, SessionStatus::Waiting);
         assert!(fetched.idle_since.is_some());
         assert_eq!(fetched.meta_str(meta::LAST_SUMMARY), Some("Fixed it"));
     }
@@ -5056,8 +5298,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Idle);
-        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), Some("permission"));
+        assert_eq!(fetched.status, SessionStatus::Waiting);
+        assert_eq!(
+            fetched.status_reason.as_deref(),
+            Some("needs_input:permission")
+        );
+        // New code no longer writes the pre-ADR-0009 `needs_input` metadata key.
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
     }
 
     #[tokio::test]
@@ -5085,7 +5332,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Working);
         assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
     }
 
@@ -5110,7 +5357,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Idle);
+        assert_eq!(fetched.status, SessionStatus::Waiting);
         assert_eq!(
             fetched.meta_str(meta::ERROR_STATUS),
             Some("rate_limit_error")
@@ -5119,7 +5366,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_apply_harness_event_session_ended_ready_when_backend_alive() {
+    async fn test_apply_harness_event_session_ended_leaves_status_alone_without_marker() {
+        // ADR 0009: `SessionEnded` on its own never sets a status (the harness
+        // process is only just starting to exit) — backend aliveness plays no role
+        // in `apply_harness_event` at all anymore, only the exit marker does. With
+        // no marker present, the session simply stays `Working`; the ordinary
+        // dead-backend classification (driven by the next `get_session` call, once
+        // the backend is actually confirmed dead) is what eventually resolves it.
         let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
         let session = harness_session(&mgr).await;
 
@@ -5136,11 +5389,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert_eq!(fetched.status, SessionStatus::Working);
+        assert_eq!(fetched.status_reason, None);
     }
 
     #[tokio::test]
-    async fn test_apply_harness_event_session_ended_stopped_when_backend_dead() {
+    async fn test_apply_harness_event_session_ended_leaves_status_alone_when_backend_dead() {
+        // Same as above — backend aliveness alone (no marker) still isn't enough to
+        // transition; that's `check_and_mark_stale`'s job on the next check.
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let session = harness_session(&mgr).await;
         *backend.alive.lock().unwrap() = false;
@@ -5153,19 +5409,24 @@ mod tests {
         .await
         .unwrap();
 
-        let fetched = mgr
-            .get_session(&session.id.to_string())
+        // `SessionManager::get_session` itself would now run the lazy dead-backend
+        // check (no marker → `Lost`) since the mock backend reports dead — read the
+        // raw stored value instead to assert on `apply_harness_event`'s own effect
+        // in isolation, not that later reclassification.
+        let raw = sqlx::query_scalar::<_, String>("SELECT status FROM sessions WHERE id = ?")
+            .bind(session.id.to_string())
+            .fetch_one(mgr.store().pool())
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(raw, "working");
     }
 
     #[tokio::test]
-    async fn test_apply_harness_event_session_ended_records_exit_code_from_marker() {
+    async fn test_apply_harness_event_session_ended_transitions_to_done_when_marker_present() {
         // Best-effort: when the `.code` marker is already on disk by the time the
-        // `SessionEnded` hook fires, `apply_harness_event` records `exit_code`
-        // itself instead of waiting for the watchdog's marker sweep.
+        // `SessionEnded` hook fires, `apply_harness_event` transitions straight to
+        // `Done` (reason `exited`) and records `exit_code` itself, instead of
+        // waiting for the ordinary dead-backend classification to catch up later.
         let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
         let session = harness_session(&mgr).await;
         let data_dir = mgr.store().data_dir().to_owned();
@@ -5186,7 +5447,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.status_reason.as_deref(), Some("exited"));
         assert_eq!(fetched.exit_code, Some(0));
     }
 
@@ -5211,7 +5473,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert_eq!(fetched.status, SessionStatus::Working);
         assert!(fetched.exit_code.is_none());
     }
 
@@ -5239,7 +5501,7 @@ mod tests {
 
         let event = unwrap_session_event(rx.recv().await.unwrap());
         assert_eq!(event.session_id, session.id.to_string());
-        assert_eq!(event.status, "active");
+        assert_eq!(event.status, "working");
     }
 
     #[tokio::test]
@@ -5423,16 +5685,19 @@ mod real_tmux_tests {
         .await
     }
 
-    // -- Cell 3: CI promotion of THE bug (#94) ------------------------------------
+    // -- Cell 3: CI promotion of THE bug (#94), updated for ADR 0009 --------------
     //
-    // A short agent exits, writing the `.code` marker; the user then exits the
-    // lingering fallback shell (`exit` + Enter). The dead tmux session must classify
-    // as Stopped with the agent's real exit code, not Lost — this is the exact
-    // regression #94 fixed (previously classified Lost, indistinguishable from a
-    // crash).
+    // A short agent exits, writing the `.code` marker. Since `wrap_command` no
+    // longer keeps a fallback shell alive after the agent exits (ADR 0009 — the old
+    // `Ready` state), the wrapper shell itself exits right behind it and tmux tears
+    // the whole session down automatically — there's no lingering shell left for a
+    // user to `exit` out of anymore. The dead tmux session must classify as `Done`
+    // (reason `exited`) with the agent's real exit code, not `Lost` — this is the
+    // exact regression #94 fixed (previously classified Lost, indistinguishable
+    // from a crash), now reached without any manual shell-exit step at all.
 
     #[tokio::test]
-    async fn test_cell3_short_agent_exit_then_shell_exit_classifies_stopped_with_exit_code() {
+    async fn test_cell3_short_agent_exit_classifies_done_with_exit_code() {
         // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
         // so they never run concurrently under a parallel `cargo test`.
         let _guard = crate::test_serial::lock();
@@ -5446,26 +5711,22 @@ mod real_tmux_tests {
             .await
             .unwrap();
         let id = session.id.to_string();
-        let backend_id = session
-            .backend_session_id
-            .clone()
-            .expect("backend session id should resolve on create");
 
         assert!(
             wait_for_exit_marker(&mgr, &id, 20).await,
             "the wrapper should write the .code exit marker once the short agent exits"
         );
 
-        // The user exits the lingering fallback shell.
-        raw_tmux(&socket, &["send-keys", "-t", &backend_id, "exit", "Enter"]);
-
-        let stopped = wait_for_status(&mgr, &id, SessionStatus::Stopped, 20).await;
+        // No fallback shell left to exit out of — the wrapper (and tmux with it)
+        // should already be gone or about to go by the time the marker is on disk.
+        let done = wait_for_status(&mgr, &id, SessionStatus::Done, 20).await;
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
         assert!(
-            stopped,
-            "session should classify to Stopped, got {:?}",
+            done,
+            "session should classify to Done, got {:?}",
             fetched.status
         );
+        assert_eq!(fetched.status_reason.as_deref(), Some("exited"));
         assert_eq!(fetched.exit_code, Some(7));
 
         kill_test_server(&socket);
@@ -5631,66 +5892,6 @@ mod real_tmux_tests {
     // worktrees on one repo and a stop-without-purge survival check this test
     // never had.
 
-    // -- Part 2 proof: a Ready session's tmux dying resolves to Stopped -----------
-    //
-    // Reaches Ready by directly setting the DB status once the exit marker is on
-    // disk and the fallback shell is genuinely still alive in a real tmux session —
-    // the Active->Ready transition itself (driven by the watchdog's marker scrape)
-    // is exercised by `watchdog::idle`'s own tests, not re-proven here. This test's
-    // job is to prove the *fixed* `check_and_mark_stale`/`resume_lost_sessions`
-    // reclassify a dead `Ready` session via its `.code` marker instead of leaving it
-    // stuck as `Ready` forever (the #94 follow-up limitation, fixed above).
-
-    #[tokio::test]
-    async fn test_ready_death_fix_real_tmux_kill_session_classifies_stopped() {
-        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
-        // so they never run concurrently under a parallel `cargo test`.
-        let _guard = crate::test_serial::lock();
-        let socket = unique_socket();
-        let (mgr, _tmp) = real_manager(&socket).await;
-        let script_dir = tempfile::tempdir().unwrap();
-        let command = short_agent_script(script_dir.path(), 3);
-
-        let session = mgr
-            .create_session(make_req("ready-death-real-tmux", "/tmp", &command, false))
-            .await
-            .unwrap();
-        let id = session.id.to_string();
-        let backend_id = session
-            .backend_session_id
-            .clone()
-            .expect("backend session id should resolve on create");
-
-        assert!(
-            wait_for_exit_marker(&mgr, &id, 20).await,
-            "short agent should exit and write the .code marker"
-        );
-        assert!(
-            mgr.backend().is_alive(&backend_id).unwrap_or(false),
-            "the fallback shell should still be alive after the agent exits"
-        );
-
-        // Simulate the watchdog having already promoted this session to Ready (the
-        // Active->Ready transition itself is exercised by watchdog::idle's tests).
-        mgr.store()
-            .update_session_status(&id, SessionStatus::Ready)
-            .await
-            .unwrap();
-
-        raw_tmux(&socket, &["kill-session", "-t", &backend_id]);
-
-        let stopped = wait_for_status(&mgr, &id, SessionStatus::Stopped, 20).await;
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert!(
-            stopped,
-            "a dead Ready session with an exit marker must resolve to Stopped, got {:?}",
-            fetched.status
-        );
-        assert_eq!(fetched.exit_code, Some(3));
-
-        kill_test_server(&socket);
-    }
-
     // -- Cell 10: detach/no-client -------------------------------------------------
     //
     // A real attach/detach round-trip (`script -q /dev/null tmux -L <socket> attach
@@ -5740,7 +5941,7 @@ mod real_tmux_tests {
             let fetched = mgr.get_session(&id).await.unwrap().unwrap();
             assert_eq!(
                 fetched.status,
-                SessionStatus::Active,
+                SessionStatus::Working,
                 "an unattached-but-alive session must not spuriously transition"
             );
             tokio::time::sleep(Duration::from_millis(300)).await;

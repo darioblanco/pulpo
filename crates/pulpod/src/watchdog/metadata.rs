@@ -1,5 +1,5 @@
 use pulpo_common::event::SessionEvent;
-use pulpo_common::session::{Session, SessionStatus, meta};
+use pulpo_common::session::{Session, SessionStatus, meta, status_reason};
 use tracing::info;
 
 use super::output_patterns;
@@ -316,25 +316,40 @@ async fn store_exact_usage(store: &Store, session: &Session, exact: &ExactUsage)
         .await;
 }
 
-/// Build a `SessionEvent` from a session, populating token/cost enrichment from metadata.
+/// Build a `SessionEvent` from a session, populating token/cost enrichment from
+/// metadata. `reason` is the *new* `status_reason` to pair with `status` — `session`
+/// itself still carries the pre-transition status/reason, so callers pass the target
+/// status/reason explicitly rather than reading `session.status`/`status_reason`.
+/// `session.exit_code` is used as-is — callers resolving a dead backend update it on
+/// `session` themselves before calling this, so it always reflects the transition
+/// being reported here rather than a stale pre-transition value.
 pub(super) fn build_session_event(
     session: &Session,
     status: SessionStatus,
+    reason: Option<&str>,
     previous: Option<SessionStatus>,
     node_name: &str,
     output: Option<String>,
 ) -> SessionEvent {
+    // Deprecated-for-one-release compatibility field (ADR 0009): derived from
+    // `reason` rather than a separately-written `needs_input` metadata key.
+    let needs_input = reason
+        .and_then(status_reason::needs_input_reason)
+        .map(str::to_owned);
     SessionEvent {
         session_id: session.id.to_string(),
         session_name: session.name.clone(),
         status: status.to_string(),
+        status_reason: reason.map(str::to_owned),
         previous_status: previous.map(|previous_status| previous_status.to_string()),
         node_name: node_name.to_owned(),
         output_snippet: output,
         timestamp: chrono::Utc::now().to_rfc3339(),
+        needs_input,
         total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
         total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
         session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+        exit_code: session.exit_code,
         ..Default::default()
     }
 }
@@ -353,7 +368,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "echo test".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             runtime: Runtime::Tmux,
             metadata: Some(HashMap::new()),
             ..Default::default()
@@ -395,27 +410,52 @@ mod tests {
         let session = Session {
             id: Uuid::new_v4(),
             name: "event-test".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             metadata: Some(metadata),
             ..Default::default()
         };
 
         let event = build_session_event(
             &session,
-            SessionStatus::Idle,
-            Some(SessionStatus::Active),
+            SessionStatus::Waiting,
+            Some(status_reason::IDLE),
+            Some(SessionStatus::Working),
             "node-a",
             Some("snippet".into()),
         );
 
         assert_eq!(event.session_name, "event-test");
-        assert_eq!(event.status, "idle");
-        assert_eq!(event.previous_status.as_deref(), Some("active"));
+        assert_eq!(event.status, "waiting");
+        assert_eq!(event.status_reason.as_deref(), Some("idle"));
+        assert_eq!(event.previous_status.as_deref(), Some("working"));
         assert_eq!(event.node_name, "node-a");
         assert_eq!(event.output_snippet.as_deref(), Some("snippet"));
         assert_eq!(event.total_input_tokens, Some(123));
         assert_eq!(event.total_output_tokens, Some(456));
         assert_eq!(event.session_cost_usd, Some(1.25));
+    }
+
+    #[test]
+    fn test_build_session_event_needs_input_populates_compat_field() {
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "needs-input-test".into(),
+            status: SessionStatus::Waiting,
+            ..Default::default()
+        };
+        let event = build_session_event(
+            &session,
+            SessionStatus::Waiting,
+            Some(&status_reason::needs_input("permission")),
+            None,
+            "node-a",
+            None,
+        );
+        assert_eq!(
+            event.status_reason.as_deref(),
+            Some("needs_input:permission")
+        );
+        assert_eq!(event.needs_input.as_deref(), Some("permission"));
     }
 
     #[tokio::test]

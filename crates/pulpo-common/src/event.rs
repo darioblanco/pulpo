@@ -2,6 +2,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::session::status_reason;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionEvent {
     pub session_id: String,
@@ -11,6 +13,10 @@ pub struct SessionEvent {
     pub node_name: String,
     pub output_snippet: Option<String>,
     pub timestamp: String,
+    /// Why the session is in `status` — see `pulpo_common::session::status_reason`.
+    /// Only set for `waiting`/`done`, mirroring `Session::status_reason`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<String>,
     /// Enrichment fields for notifications (populated from session metadata/fields).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
@@ -26,10 +32,12 @@ pub struct SessionEvent {
     pub pr_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_status: Option<String>,
-    /// The `needs_input` metadata key (e.g. "permission", "question"), when set —
-    /// mirrors `Session::meta_str(meta::NEEDS_INPUT)` so live SSE consumers (the web
-    /// UI) can render "needs input (<reason>)" without an extra fetch. Absent (not
-    /// just empty) when the session has no `needs_input` metadata.
+    /// The needs-input sub-reason (e.g. "permission", "question"), when `status_reason`
+    /// is `needs_input:<reason>` — kept for one release after ADR 0009's five-state
+    /// model (which moved this from a `needs_input` metadata key to `status_reason`)
+    /// so an older SSE consumer still sees it, populated from `status_reason` rather
+    /// than written independently. Absent for a plain `waiting` (reason `idle`) session
+    /// or any other status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub needs_input: Option<String>,
     /// Token and cost enrichment fields.
@@ -39,6 +47,12 @@ pub struct SessionEvent {
     pub total_output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_cost_usd: Option<f64>,
+    /// The agent's own process exit code, when known — set once a session
+    /// resolves to `done` via an exit marker (`{id}.code`). `None` for every
+    /// other status, and for a `done` session with no marker (e.g. an explicit
+    /// `pulpo stop`/intervention, or a `lost` session with no clean end).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -133,6 +147,9 @@ pub struct EventSessionRef {
     pub cost_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u64>,
+    /// The agent's own process exit code, when known — see [`SessionEvent::exit_code`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 /// The canonical, forward-facing event envelope.
@@ -169,11 +186,19 @@ pub struct Event {
     pub payload: serde_json::Value,
 }
 
-/// Severity for a lifecycle subtype (session status).
-fn lifecycle_severity(status: &str) -> &'static str {
+/// Severity for a lifecycle subtype (session status + its `status_reason`).
+///
+/// `done` no longer distinguishes "finished on its own" (the old `ready`) from
+/// "forcibly/explicitly ended" (the old `stopped`) as separate top-level statuses —
+/// that distinction now lives in `reason`, so severity has to look at it: a clean
+/// `exited` end is informational, same as `ready` always was; anything else under
+/// `done` (`stopped`, an intervention code, or an unrecognized/absent reason) keeps
+/// `stopped`'s old `warn` severity.
+fn lifecycle_severity(status: &str, reason: Option<&str>) -> &'static str {
     match status {
         "lost" => "critical",
-        "stopped" | "idle" => "warn",
+        "waiting" => "warn",
+        "done" if reason != Some(status_reason::EXITED) => "warn",
         _ => "info",
     }
 }
@@ -210,7 +235,7 @@ impl Event {
                 event_id: Uuid::new_v4().to_string(),
                 event_type: "lifecycle".into(),
                 subtype: se.status.clone(),
-                severity: lifecycle_severity(&se.status).into(),
+                severity: lifecycle_severity(&se.status, se.status_reason.as_deref()).into(),
                 occurred_at: rfc3339_or_now(&se.timestamp),
                 node: node.to_string(),
                 session: Some(EventSessionRef {
@@ -222,6 +247,7 @@ impl Event {
                     pr_url: se.pr_url.clone(),
                     cost_usd: se.session_cost_usd,
                     total_tokens: sum_tokens(se.total_input_tokens, se.total_output_tokens),
+                    exit_code: se.exit_code,
                 }),
                 payload: serde_json::json!({}),
             }),
@@ -264,7 +290,7 @@ impl Event {
                     session: Some(EventSessionRef {
                         id: iv.session_id.clone(),
                         name: iv.session_name.clone(),
-                        status: "stopped".into(),
+                        status: "done".into(),
                         ..Default::default()
                     }),
                     payload: serde_json::Value::Object(payload),
@@ -308,8 +334,8 @@ mod tests {
         let event = SessionEvent {
             session_id: "abc-123".into(),
             session_name: "my-session".into(),
-            status: "active".into(),
-            previous_status: Some("creating".into()),
+            status: "working".into(),
+            previous_status: Some("starting".into()),
             node_name: "node-1".into(),
             output_snippet: Some("Hello world".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
@@ -319,8 +345,8 @@ mod tests {
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.session_id, "abc-123");
         assert_eq!(deserialized.session_name, "my-session");
-        assert_eq!(deserialized.status, "active");
-        assert_eq!(deserialized.previous_status, Some("creating".into()));
+        assert_eq!(deserialized.status, "working");
+        assert_eq!(deserialized.previous_status, Some("starting".into()));
         assert_eq!(deserialized.node_name, "node-1");
         assert_eq!(deserialized.output_snippet, Some("Hello world".into()));
     }
@@ -330,7 +356,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "idle".into(),
+            status: "waiting".into(),
             node_name: "n".into(),
             timestamp: "t".into(),
             needs_input: Some("permission".into()),
@@ -347,7 +373,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "active".into(),
+            status: "working".into(),
             node_name: "n".into(),
             timestamp: "t".into(),
             ..Default::default()
@@ -361,7 +387,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "stopped".into(),
+            status: "done".into(),
             node_name: "n".into(),
             timestamp: "2026-01-01T00:00:00Z".into(),
             ..Default::default()
@@ -376,7 +402,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "active".into(),
+            status: "working".into(),
             node_name: "n".into(),
             timestamp: "t".into(),
             ..Default::default()
@@ -390,7 +416,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "s1".into(),
             session_name: "test".into(),
-            status: "active".into(),
+            status: "working".into(),
             node_name: "n".into(),
             timestamp: "t".into(),
             ..Default::default()
@@ -402,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_pulpo_event_deserialize_session() {
-        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"active","previous_status":null,"node_name":"n","output_snippet":null,"timestamp":"t"}"#;
+        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"working","previous_status":null,"node_name":"n","output_snippet":null,"timestamp":"t"}"#;
         let event: PulpoEvent = serde_json::from_str(json).unwrap();
         assert!(matches!(&event, PulpoEvent::Session(se) if se.session_id == "s1"));
     }
@@ -461,7 +487,7 @@ mod tests {
         assert_eq!(ev.severity, "critical");
         assert_eq!(ev.node, "mac-mini");
         assert_eq!(ev.session.as_ref().unwrap().id, "s1");
-        assert_eq!(ev.session.as_ref().unwrap().status, "stopped");
+        assert_eq!(ev.session.as_ref().unwrap().status, "done");
         assert_eq!(
             ev.payload.get("intervention_reason").unwrap(),
             "Cost $10.00 reached budget $10.00"
@@ -496,7 +522,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "active".into(),
+            status: "working".into(),
             node_name: "n".into(),
             timestamp: "t".into(),
             ..Default::default()
@@ -510,8 +536,9 @@ mod tests {
         let original = PulpoEvent::Session(SessionEvent {
             session_id: "s1".into(),
             session_name: "test".into(),
-            status: "ready".into(),
-            previous_status: Some("active".into()),
+            status: "done".into(),
+            status_reason: Some("exited".into()),
+            previous_status: Some("working".into()),
             node_name: "n".into(),
             output_snippet: Some("done".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
@@ -520,7 +547,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();
         assert!(
-            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "ready")
+            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "done" && se.status_reason.as_deref() == Some("exited"))
         );
     }
 
@@ -555,13 +582,23 @@ mod tests {
 
     #[test]
     fn test_lifecycle_severity_mapping() {
-        assert_eq!(lifecycle_severity("lost"), "critical");
-        assert_eq!(lifecycle_severity("stopped"), "warn");
-        assert_eq!(lifecycle_severity("idle"), "warn");
-        assert_eq!(lifecycle_severity("active"), "info");
-        assert_eq!(lifecycle_severity("ready"), "info");
-        assert_eq!(lifecycle_severity("creating"), "info");
-        assert_eq!(lifecycle_severity("error"), "info");
+        assert_eq!(lifecycle_severity("lost", None), "critical");
+        assert_eq!(lifecycle_severity("waiting", Some("idle")), "warn");
+        assert_eq!(
+            lifecycle_severity("waiting", Some("needs_input:permission")),
+            "warn"
+        );
+        assert_eq!(lifecycle_severity("working", None), "info");
+        assert_eq!(lifecycle_severity("starting", None), "info");
+        // `done` with a clean-exit reason is informational, same as the old `ready`.
+        assert_eq!(lifecycle_severity("done", Some("exited")), "info");
+        // Any other `done` reason (explicit stop, an intervention code, or an
+        // absent/unrecognized reason) keeps the old `stopped` severity.
+        assert_eq!(lifecycle_severity("done", Some("stopped")), "warn");
+        assert_eq!(lifecycle_severity("done", Some("idle_timeout")), "warn");
+        assert_eq!(lifecycle_severity("done", Some("budget_exceeded")), "warn");
+        assert_eq!(lifecycle_severity("done", None), "warn");
+        assert_eq!(lifecycle_severity("error", None), "info");
     }
 
     #[test]
@@ -584,42 +621,50 @@ mod tests {
     }
 
     #[test]
-    fn test_from_pulpo_event_session_active() {
-        let ev = PulpoEvent::Session(sample_session_event("active"));
+    fn test_from_pulpo_event_session_working() {
+        let ev = PulpoEvent::Session(sample_session_event("working"));
         let event = Event::from_pulpo_event(&ev, "mac-mini").unwrap();
         assert_eq!(event.schema_version, 1);
         assert!(!event.event_id.is_empty());
         assert_eq!(event.event_type, "lifecycle");
-        assert_eq!(event.subtype, "active");
+        assert_eq!(event.subtype, "working");
         assert_eq!(event.severity, "info");
         assert_eq!(event.occurred_at, "2026-06-13T12:00:00Z");
         assert_eq!(event.node, "mac-mini");
         let session = event.session.unwrap();
         assert_eq!(session.id, "sess-1");
         assert_eq!(session.name, "fix-auth");
-        assert_eq!(session.status, "active");
+        assert_eq!(session.status, "working");
         assert_eq!(event.payload, serde_json::json!({}));
     }
 
     #[test]
     fn test_from_pulpo_event_session_severities() {
-        for (status, expected) in [
-            ("lost", "critical"),
-            ("stopped", "warn"),
-            ("idle", "warn"),
-            ("ready", "info"),
-            ("active", "info"),
+        for (status, reason, expected) in [
+            ("lost", None, "critical"),
+            ("waiting", Some("idle"), "warn"),
+            ("waiting", Some("needs_input:permission"), "warn"),
+            ("done", Some("exited"), "info"),
+            ("done", Some("stopped"), "warn"),
+            ("working", None, "info"),
+            ("starting", None, "info"),
         ] {
-            let ev = PulpoEvent::Session(sample_session_event(status));
+            let mut se = sample_session_event(status);
+            se.status_reason = reason.map(str::to_owned);
+            let ev = PulpoEvent::Session(se);
             let event = Event::from_pulpo_event(&ev, "n").unwrap();
-            assert_eq!(event.severity, expected, "status {status}");
+            assert_eq!(
+                event.severity, expected,
+                "status {status} reason {reason:?}"
+            );
             assert_eq!(event.subtype, status);
         }
     }
 
     #[test]
     fn test_from_pulpo_event_session_enrichment() {
-        let mut se = sample_session_event("ready");
+        let mut se = sample_session_event("done");
+        se.status_reason = Some("exited".into());
         se.git_branch = Some("feat/x".into());
         se.pr_url = Some("https://github.com/org/repo/pull/9".into());
         se.session_cost_usd = Some(2.5);
@@ -639,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_from_pulpo_event_session_tokens_partial() {
-        let mut se = sample_session_event("ready");
+        let mut se = sample_session_event("done");
         se.total_output_tokens = Some(500);
         let ev = PulpoEvent::Session(se);
         let event = Event::from_pulpo_event(&ev, "n").unwrap();
@@ -648,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_from_pulpo_event_session_no_tokens() {
-        let ev = PulpoEvent::Session(sample_session_event("active"));
+        let ev = PulpoEvent::Session(sample_session_event("working"));
         let event = Event::from_pulpo_event(&ev, "n").unwrap();
         assert_eq!(event.session.unwrap().total_tokens, None);
     }
@@ -712,14 +757,14 @@ mod tests {
             schema_version: 1,
             event_id: "abc".into(),
             event_type: "lifecycle".into(),
-            subtype: "idle".into(),
+            subtype: "waiting".into(),
             severity: "warn".into(),
             occurred_at: "2026-06-13T12:00:00Z".into(),
             node: "mac-mini".into(),
             session: Some(EventSessionRef {
                 id: "sid".into(),
                 name: "fix-auth".into(),
-                status: "idle".into(),
+                status: "waiting".into(),
                 ..Default::default()
             }),
             payload: serde_json::json!({}),
@@ -729,7 +774,7 @@ mod tests {
         assert_eq!(json["type"], "lifecycle");
         assert!(json.get("event_type").is_none());
         assert_eq!(json["schema_version"], 1);
-        assert_eq!(json["subtype"], "idle");
+        assert_eq!(json["subtype"], "waiting");
         assert_eq!(json["severity"], "warn");
         assert_eq!(json["session"]["name"], "fix-auth");
         // Optional session fields omitted when None.

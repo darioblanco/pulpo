@@ -61,11 +61,12 @@ pulpo logs my-api --follow
 
 The important statuses to know early are:
 
-- `active`: the command is still working
-- `idle`: the command is waiting for input or has gone quiet
-- `ready`: the command finished, but the session is still resumable
+- `working`: the command is still working
+- `waiting`: the command is waiting for input (`needs input: <reason>`) or has just
+  gone quiet (`idle`)
+- `done`: the command finished, was stopped, or was ended by a watchdog intervention —
+  either way, the session is still resumable
 - `lost`: the backend disappeared and the session may need resume
-- `stopped`: the session was terminated (or exited cleanly) — still resumable
 
 ## 5. Detach And Reattach From Anywhere
 
@@ -89,8 +90,8 @@ pulpo list
 pulpo resume my-api
 ```
 
-`ready` and `stopped` sessions are also resumable — only a session still `active`,
-`idle`, or `creating` cannot be (it's still running).
+`done` sessions are also resumable — only a session still `working`, `waiting`, or
+`starting` cannot be (it's still running).
 
 ## 7. Parallel Agents With Worktrees
 

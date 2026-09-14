@@ -79,7 +79,7 @@ pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo --budget-cost 5.0
 ```
 
 The watchdog alerts at 80% of the schedule's `budget_cost_usd` and stops the session at
-100% — you find a `stopped` session with a clear reason in the morning, not a surprise on
+100% — you find a `done` session with a clear reason in the morning, not a surprise on
 the invoice.
 
 Best docs to read next:

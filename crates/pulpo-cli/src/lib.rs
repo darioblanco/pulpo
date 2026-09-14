@@ -138,12 +138,12 @@ pub enum Commands {
         command: Vec<String>,
     },
 
-    /// List sessions (Active, Idle, Ready, and Lost by default — Stopped is
+    /// List sessions (Starting, Working, Waiting, and Lost by default — Done is
     /// hidden; a lost session is exactly the kind worth resuming after a reboot,
     /// so it's shown, not treated like a finished one)
     #[command(visible_alias = "ls")]
     List {
-        /// Show every session, including Stopped
+        /// Show every session, including Done
         #[arg(short, long)]
         all: bool,
     },
@@ -175,17 +175,17 @@ pub enum Commands {
         purge: bool,
     },
 
-    /// Remove a single session (must not be active or idle — stop it first)
+    /// Remove a single session (must not be working or waiting — stop it first)
     #[command(alias = "remove")]
     Rm {
         /// Session name or ID
         name: String,
     },
 
-    /// Remove all stopped and lost sessions
+    /// Remove all done and lost sessions
     Cleanup,
 
-    /// Resume a lost, ready, or stopped session
+    /// Resume a lost or done session
     #[command(visible_alias = "r")]
     Resume {
         /// Session name or ID
@@ -319,9 +319,6 @@ pub enum ScheduleAction {
         name: String,
     },
 }
-
-/// The marker emitted by the agent wrapper when the agent process exits.
-const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
 
 /// Resolve a path to an absolute path string.
 fn resolve_path(path: &str) -> String {
@@ -545,9 +542,9 @@ async fn fetch_session_status(
     Ok(session.status.to_string())
 }
 
-/// Wait for the session to leave "creating" state, then check if it died instantly.
-/// Uses the session ID (not name) to avoid matching old stopped sessions with the same name.
-/// Returns an error with a helpful message if the session is lost/stopped.
+/// Wait for the session to leave "starting" state, then check if it died instantly.
+/// Uses the session ID (not name) to avoid matching old done sessions with the same name.
+/// Returns an error with a helpful message if the session is lost/done.
 async fn check_session_alive(
     client: &reqwest::Client,
     base: &str,
@@ -570,15 +567,15 @@ async fn check_session_alive(
             && let Ok(session) = serde_json::from_str::<Session>(&text)
         {
             match session.status {
-                SessionStatus::Creating => continue,
-                SessionStatus::Lost | SessionStatus::Stopped => {
+                SessionStatus::Starting => continue,
+                SessionStatus::Lost | SessionStatus::Done => {
                     anyhow::bail!(
                         "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
                         session.name,
                         session.name
                     );
                 }
-                _ => return Ok(()),
+                SessionStatus::Working | SessionStatus::Waiting => return Ok(()),
             }
         }
         // fetch failed — don't block, proceed to attach
@@ -588,8 +585,8 @@ async fn check_session_alive(
 }
 
 /// Shared tail for `spawn` and `handoff`: print the creation message, optionally
-/// verify the new session survived past `creating` (only for explicit commands —
-/// shell sessions may be immediately marked idle/stopped by the watchdog, which is
+/// verify the new session survived past `starting` (only for explicit commands —
+/// shell sessions may be immediately marked waiting/done by the watchdog, which is
 /// expected), then attach unless `detach` is set or the target node isn't local.
 async fn attach_or_report(
     client: &reqwest::Client,
@@ -696,17 +693,16 @@ async fn follow_logs(
             unchanged_ticks = 0;
         }
 
-        // Check for agent exit marker in output
-        if new_output.contains(AGENT_EXIT_MARKER) {
-            break;
-        }
-
         prev_output = new_output;
 
-        // Only check session status when output has been unchanged for 3+ ticks
+        // Only check session status when output has been unchanged for 3+ ticks.
+        // ADR 0009: `wrap_command` no longer prints an "Agent exited" marker into
+        // the terminal output before the session ends (there's no more fallback
+        // shell to print it into) — the session's own `status` is now the only
+        // signal this loop needs to detect the end.
         if unchanged_ticks >= 3 {
             let status = fetch_session_status(client, base, name, token).await?;
-            let is_terminal = status == "ready" || status == "stopped" || status == "lost";
+            let is_terminal = status == "done" || status == "lost";
             if is_terminal {
                 break;
             }
@@ -1045,16 +1041,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             match session.status {
                 SessionStatus::Lost => {
                     anyhow::bail!(
-                        "Session \"{name}\" is lost (agent process died). Resume it first:\n  pulpo resume {name}"
+                        "Session \"{name}\" is lost (agent process died) — cannot attach.\n  Resume it: pulpo resume {name}\n  Or view its last output: pulpo logs {name}"
                     );
                 }
-                SessionStatus::Stopped => {
+                SessionStatus::Done => {
                     anyhow::bail!(
-                        "Session \"{name}\" is {} — cannot attach to a stopped session.",
-                        session.status
+                        "Session \"{name}\" is done — cannot attach to a finished session.\n  Resume it: pulpo resume {name}\n  Or view its last output: pulpo logs {name}"
                     );
                 }
-                _ => {}
+                SessionStatus::Starting | SessionStatus::Working | SessionStatus::Waiting => {}
             }
             let backend_id = session.backend_session_id.unwrap_or_else(|| name.clone());
             attach_session(&backend_id)?;
@@ -1085,12 +1080,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if *all {
                 return Ok(format_sessions(&sessions));
             }
-            // Default view hides only `Stopped` — a `Lost` session is exactly the
+            // Default view hides only `Done` — a `Lost` session is exactly the
             // kind worth resuming after a reboot (see AGENTS.md's "no sessions"
-            // bug report), so it stays visible alongside Active/Idle/Ready.
+            // bug report), so it stays visible alongside Starting/Working/Waiting.
             let (visible, hidden): (Vec<Session>, Vec<Session>) = sessions
                 .into_iter()
-                .partition(|s| s.status != SessionStatus::Stopped);
+                .partition(|s| s.status != SessionStatus::Done);
             let mut out = format_sessions(&visible);
             if let Some(hint) = format_hidden_sessions_hint(hidden.len()) {
                 out.push('\n');
@@ -1236,13 +1231,25 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
-                let action = if *purge {
-                    "stopped and purged"
+                // `200 OK` means the session was already done/lost — a no-op on
+                // status (see `SessionManager::stop_session`) — vs. `204 No
+                // Content` for an actual live-session stop; word the message
+                // accordingly rather than claiming "stopped" for a session that
+                // already finished on its own.
+                let already_done = resp.status() == reqwest::StatusCode::OK;
+                let message = if already_done {
+                    if *purge {
+                        format!("Session {name} was already done (purged).")
+                    } else {
+                        format!("Session {name} already done.")
+                    }
+                } else if *purge {
+                    format!("Session {name} stopped and purged.")
                 } else {
-                    "stopped"
+                    format!("Session {name} stopped.")
                 };
                 match ok_or_api_error(resp).await {
-                    Ok(_) => results.push(format!("Session {name} {action}.")),
+                    Ok(_) => results.push(message),
                     Err(e) => results.push(format!("Error stopping {name}: {e}")),
                 }
             }
@@ -1893,7 +1900,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"working","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// A valid `CreateSessionResponse` JSON wrapping the session.
     fn test_create_response_json() -> String {
@@ -1983,8 +1990,8 @@ mod tests {
         assert_eq!(result, "No sessions.");
     }
 
-    /// Server for `pulpo ls` tests: one session in each of Active, Lost, and
-    /// Stopped so a single fixed response can prove both the default filter and
+    /// Server for `pulpo ls` tests: one session in each of Working, Lost, and
+    /// Done so a single fixed response can prove both the default filter and
     /// `--all`.
     async fn start_ls_test_server() -> String {
         use axum::{Json, Router, routing::get};
@@ -1993,15 +2000,11 @@ mod tests {
             "[{},{},{}]",
             session_json(
                 "00000000-0000-0000-0000-000000000001",
-                "active-one",
-                "active"
+                "working-one",
+                "working"
             ),
             session_json("00000000-0000-0000-0000-000000000002", "lost-one", "lost"),
-            session_json(
-                "00000000-0000-0000-0000-000000000003",
-                "stopped-one",
-                "stopped"
-            ),
+            session_json("00000000-0000-0000-0000-000000000003", "done-one", "done"),
         );
         let app = Router::new().route(
             "/api/v1/sessions",
@@ -2017,7 +2020,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_list_default_hides_stopped_shows_lost() {
+    async fn test_execute_list_default_hides_done_shows_lost() {
         let node = start_ls_test_server().await;
         let cli = Cli {
             url: node,
@@ -2026,17 +2029,17 @@ mod tests {
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("active-one"), "{result}");
+        assert!(result.contains("working-one"), "{result}");
         assert!(
             result.contains("lost-one"),
             "Lost sessions are the resumable ones after a reboot — must stay visible by default: {result}"
         );
         assert!(
-            !result.contains("stopped-one"),
-            "Stopped must be hidden by default: {result}"
+            !result.contains("done-one"),
+            "Done must be hidden by default: {result}"
         );
         assert!(
-            result.contains("1 stopped session(s) hidden — use --all"),
+            result.contains("1 done session(s) hidden — use --all"),
             "must print the hidden-count hint: {result}"
         );
     }
@@ -2051,9 +2054,9 @@ mod tests {
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("active-one"));
+        assert!(result.contains("working-one"));
         assert!(result.contains("lost-one"));
-        assert!(result.contains("stopped-one"));
+        assert!(result.contains("done-one"));
         assert!(
             !result.contains("hidden"),
             "no hint expected with --all: {result}"
@@ -2384,6 +2387,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_stop_on_already_done_session_prints_already_done() {
+        // The daemon's `stop` handler returns `200 OK` (vs. `204 No Content` for
+        // an actual stop) when the session was already `done`/`lost` — the CLI
+        // must word its message accordingly instead of implying it just stopped
+        // a live session.
+        use axum::{Router, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{name}/stop",
+            post(|| async { axum::http::StatusCode::OK }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::Stop {
+                names: vec!["test-session".into()],
+                purge: false,
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(
+            result.contains("already done"),
+            "expected 'already done' wording, got: {result}"
+        );
+        assert!(!result.to_lowercase().contains("stopped."));
+    }
+
+    #[tokio::test]
     async fn test_execute_rm_success() {
         let node = start_test_server().await;
         let cli = Cli {
@@ -2603,7 +2640,7 @@ mod tests {
             post(|| async {
                 (
                     StatusCode::BAD_REQUEST,
-                    "{\"error\":\"session is not lost (status: active)\"}",
+                    "{\"error\":\"session is not lost (status: working)\"}",
                 )
             }),
         );
@@ -2621,7 +2658,7 @@ mod tests {
             path: None,
         };
         let err = execute(&cli).await.unwrap_err();
-        assert_eq!(err.to_string(), "session is not lost (status: active)");
+        assert_eq!(err.to_string(), "session is not lost (status: working)");
     }
 
     #[tokio::test]
@@ -3191,7 +3228,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_with_backend_session_id() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","command":"echo test","description":null,"status":"working","exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -3280,12 +3317,13 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(err.contains("lost"));
         assert!(err.contains("pulpo resume"));
+        assert!(err.contains("pulpo logs"));
     }
 
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"stopped","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"done","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -3304,8 +3342,10 @@ mod tests {
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("stopped"));
+        assert!(err.contains("done"));
         assert!(err.contains("cannot attach"));
+        assert!(err.contains("pulpo resume"));
+        assert!(err.contains("pulpo logs"));
     }
 
     // -- Alias parse tests --
@@ -3428,6 +3468,7 @@ mod tests {
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let output_count = call_count.clone();
+        let status_count = call_count.clone();
 
         let app = Router::new()
             .route(
@@ -3450,8 +3491,20 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}",
-                get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                get(move |_path: Path<String>| {
+                    let count = status_count.clone();
+                    async move {
+                        // The output has stopped changing by n == 2 (the exit-marker
+                        // line repeats forever after that); once `follow_logs` has
+                        // seen enough unchanged ticks to check status (n has moved
+                        // well past that point), report the session as `done` so the
+                        // poll loop actually terminates instead of running forever.
+                        let n = count.load(Ordering::SeqCst);
+                        let status = if n >= 4 { "done" } else { "working" };
+                        format!(
+                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"{status}","status_reason":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+                        )
+                    }
                 }),
             );
 
@@ -3538,7 +3591,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"stopped","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"done","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 

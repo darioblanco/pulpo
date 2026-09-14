@@ -11,10 +11,7 @@ use std::time::Duration;
 use crate::harness::{HarnessRegistry, HarnessSignals};
 use idle::check_idle_sessions;
 #[cfg(test)]
-use idle::{
-    check_session_idle, handle_active_session, handle_idle_session, handle_session_ready,
-    sweep_ready_exit_code,
-};
+use idle::{check_session_idle, handle_active_session, handle_idle_session};
 pub(crate) use metadata::refresh_exact_usage;
 use metadata::{build_session_event, detect_and_store_output_metadata};
 pub use output_patterns::detect_waiting_for_input;
@@ -27,14 +24,6 @@ use pulpo_common::session::Session;
 use crate::backend::Backend;
 use crate::store::Store;
 use git::update_git_info;
-
-/// The marker emitted by the agent wrapper when the agent process exits.
-const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
-
-/// Check if the terminal output contains the agent exit marker.
-pub fn detect_agent_exited(output: &str) -> bool {
-    output.contains(AGENT_EXIT_MARKER)
-}
 
 /// Resolve the backend session ID from a session, falling back to session name.
 fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {

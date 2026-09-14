@@ -38,6 +38,7 @@ pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
         status: status_str
             .parse::<SessionStatus>()
             .map_err(|e| anyhow::anyhow!(e))?,
+        status_reason: row.try_get("status_reason").unwrap_or(None),
         exit_code: row.try_get("exit_code").unwrap_or(None),
         backend_session_id: row.try_get("backend_session_id").unwrap_or(None),
         output_snapshot: row.try_get("output_snapshot").unwrap_or(None),
@@ -155,7 +156,7 @@ mod tests {
                 '/tmp/repo' AS workdir,
                 'echo hi' AS command,
                 NULL AS description,
-                'active' AS status,
+                'working' AS status,
                 NULL AS exit_code,
                 'backend-1' AS backend_session_id,
                 NULL AS output_snapshot,
@@ -203,7 +204,7 @@ mod tests {
                 '/tmp/repo' AS workdir,
                 'echo hi' AS command,
                 NULL AS description,
-                'active' AS status,
+                'working' AS status,
                 NULL AS exit_code,
                 'backend-1' AS backend_session_id,
                 NULL AS output_snapshot,
@@ -251,7 +252,7 @@ mod tests {
                 '/tmp/repo' AS workdir,
                 'echo hi' AS command,
                 NULL AS description,
-                'stopped' AS status,
+                'done' AS status,
                 NULL AS exit_code,
                 'backend-1' AS backend_session_id,
                 NULL AS output_snapshot,
@@ -288,6 +289,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_row_to_session_clamps_negative_counts_and_defaults_runtime() {
+        // Incidentally also exercises `SessionStatus::from_str`'s pre-ADR-0009 alias:
+        // a raw `'idle'` row (old vocabulary, still on disk for any row not yet
+        // touched by migration 0010, or a downgrade) must still parse to `Waiting`.
         let pool = memory_pool().await;
         let row = sqlx::query(
             r"
@@ -328,7 +332,7 @@ mod tests {
         .unwrap();
 
         let session = row_to_session(&row).unwrap();
-        assert_eq!(session.status, SessionStatus::Idle);
+        assert_eq!(session.status, SessionStatus::Waiting);
         assert_eq!(session.idle_threshold_secs, Some(0));
         assert_eq!(session.git_files_changed, Some(0));
         assert_eq!(session.git_insertions, Some(0));
@@ -348,7 +352,7 @@ mod tests {
                 '/tmp/repo' AS workdir,
                 'claude' AS command,
                 NULL AS description,
-                'active' AS status,
+                'working' AS status,
                 NULL AS exit_code,
                 'backend-1' AS backend_session_id,
                 NULL AS output_snapshot,
@@ -398,7 +402,7 @@ mod tests {
                 '/tmp/repo' AS workdir,
                 'claude' AS command,
                 NULL AS description,
-                'active' AS status,
+                'working' AS status,
                 NULL AS exit_code,
                 'backend-1' AS backend_session_id,
                 NULL AS output_snapshot,

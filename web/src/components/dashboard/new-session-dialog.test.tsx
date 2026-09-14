@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NewSessionDialog } from './new-session-dialog';
 import * as api from '@/api/client';
+import type { Session } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
@@ -13,10 +14,11 @@ vi.mock('@/api/client', () => ({
 
 const mockCreateSession = vi.mocked(api.createSession);
 
-const defaultSession = {
+const defaultSession: Session = {
   id: '1',
   name: 'test',
-  status: 'creating',
+  status: 'starting',
+  status_reason: null,
   command: 'claude code',
   description: null,
   workdir: '/repo',

@@ -6,12 +6,11 @@
 
 | State | Meaning | Terminal? |
 |-------|---------|-----------|
-| **Creating** | tmux session is being set up | No |
-| **Active** | Agent is working — terminal output is changing | No |
-| **Idle** | Agent needs attention — waiting for input or at its prompt | No |
-| **Ready** | Agent process exited — task is done | Yes (resumable) |
-| **Stopped** | Session was terminated by user or a watchdog intervention | Yes (resumable) |
-| **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
+| **Starting** | tmux session is being set up | No |
+| **Working** | Agent is working — terminal output is changing | No |
+| **Waiting** | Agent is at its prompt — `status_reason` says whether it needs input from you or is just idle | No |
+| **Done** | Agent process exited and the backend is gone — task is done, or the session was stopped by the user or a watchdog intervention (`status_reason` says which) | Yes (resumable) |
+| **Lost** | tmux process disappeared unexpectedly (crash, reboot), with no evidence of a clean end | Yes (resumable) |
 
 ## Common Recovery Path
 
@@ -24,23 +23,23 @@ pulpo resume my-api
 
 `resume` auto-attaches to the tmux session after restarting the agent. Detach with `Ctrl-b d`.
 
-It works for **lost** (tmux gone after crash/reboot), **ready** (agent exited normally),
-and **stopped** (terminated by user or a watchdog intervention) sessions. The session
-command is re-executed in a new tmux session — for a harness with its own resume
-mechanism (Claude Code, Codex, pi), that means the harness's resume command, so the
-conversation continues. A **ready** session's fallback shell is often still alive (the
-tmux pane lingers after the agent exits), but resume still recreates it and reruns the
-resume command rather than just flipping the status back to active — the agent process
-itself has already exited, so there's nothing to "reattach" to otherwise.
+It works for **lost** (tmux gone after crash/reboot) and **done** (agent exited
+normally, was stopped by the user, or ended via a watchdog intervention) sessions. The
+session command is re-executed in a new tmux session — for a harness with its own
+resume mechanism (Claude Code, Codex, pi), that means the harness's resume command, so
+the conversation continues. A **done** session's backend is already gone by the time it
+reaches that state — there's no lingering shell to reattach to — so resume always
+recreates the backend and reruns the resume command rather than just flipping the
+status back to `working`.
 
-A session still **active**, **idle**, or **creating** cannot be resumed — it's still
-running. Start a fresh session with `pulpo spawn` instead.
+A session still **working**, **waiting**, or **starting** cannot be resumed — it's
+still running. Start a fresh session with `pulpo spawn` instead.
 
 ## Recovery After Daemon Restart
 
-When `pulpod` starts, it checks all previously active sessions:
-- If the tmux session is still alive → stays **active** (backend ID upgraded to tmux `$N` ID)
-- If the tmux session is gone → re-created automatically, stays **active**
+When `pulpod` starts, it checks all previously running sessions:
+- If the tmux session is still alive → stays **working**/**waiting** (backend ID upgraded to tmux `$N` ID)
+- If the tmux session is gone → re-created automatically, stays **working**
 
 If auto-resume fails, sessions are marked **lost** and appear in `pulpo list` for manual resume.
 

@@ -6,7 +6,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    status: 'active',
+    status: 'working',
+    status_reason: null,
     command: 'Fix the bug',
     description: null,
     workdir: '/home/user/repo',
@@ -22,9 +23,9 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('detectStatusChanges', () => {
-  it('detects active → ready transition', () => {
-    const prev = [makeSession({ id: '1', status: 'active' })];
-    const curr = [makeSession({ id: '1', status: 'ready' })];
+  it('detects working → done (clean exit) transition', () => {
+    const prev = [makeSession({ id: '1', status: 'working' })];
+    const curr = [makeSession({ id: '1', status: 'done', status_reason: 'exited' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -33,25 +34,27 @@ describe('detectStatusChanges', () => {
       expect.objectContaining({
         sessionId: '1',
         sessionName: 'my-api',
-        from: 'active',
-        to: 'ready',
+        from: 'working',
+        to: 'done',
+        toReason: 'exited',
       }),
     );
   });
 
-  it('detects active → stopped transition', () => {
-    const prev = [makeSession({ id: '1', status: 'active' })];
-    const curr = [makeSession({ id: '1', status: 'stopped' })];
+  it('detects working → done (forced stop) transition', () => {
+    const prev = [makeSession({ id: '1', status: 'working' })];
+    const curr = [makeSession({ id: '1', status: 'done', status_reason: 'stopped' })];
 
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0].to).toBe('stopped');
+    expect(changes[0].to).toBe('done');
+    expect(changes[0].toReason).toBe('stopped');
   });
 
-  it('detects lost → active transition', () => {
+  it('detects lost → working transition', () => {
     const prev = [makeSession({ id: '1', status: 'lost' })];
-    const curr = [makeSession({ id: '1', status: 'active' })];
+    const curr = [makeSession({ id: '1', status: 'working' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -61,14 +64,14 @@ describe('detectStatusChanges', () => {
         sessionId: '1',
         sessionName: 'my-api',
         from: 'lost',
-        to: 'active',
+        to: 'working',
       }),
     );
   });
 
   it('ignores sessions with no status change', () => {
-    const prev = [makeSession({ id: '1', status: 'active' })];
-    const curr = [makeSession({ id: '1', status: 'active' })];
+    const prev = [makeSession({ id: '1', status: 'working' })];
+    const curr = [makeSession({ id: '1', status: 'working' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -76,8 +79,8 @@ describe('detectStatusChanges', () => {
   });
 
   it('ignores non-interesting transitions', () => {
-    const prev = [makeSession({ id: '1', status: 'creating' })];
-    const curr = [makeSession({ id: '1', status: 'active' })];
+    const prev = [makeSession({ id: '1', status: 'starting' })];
+    const curr = [makeSession({ id: '1', status: 'working' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -86,12 +89,12 @@ describe('detectStatusChanges', () => {
 
   it('detects multiple changes at once', () => {
     const prev = [
-      makeSession({ id: '1', name: 'api-fix', status: 'active' }),
-      makeSession({ id: '2', name: 'refactor', status: 'active' }),
+      makeSession({ id: '1', name: 'api-fix', status: 'working' }),
+      makeSession({ id: '2', name: 'refactor', status: 'working' }),
     ];
     const curr = [
-      makeSession({ id: '1', name: 'api-fix', status: 'ready' }),
-      makeSession({ id: '2', name: 'refactor', status: 'stopped' }),
+      makeSession({ id: '1', name: 'api-fix', status: 'done', status_reason: 'exited' }),
+      makeSession({ id: '2', name: 'refactor', status: 'done', status_reason: 'stopped' }),
     ];
 
     const changes = detectStatusChanges(prev, curr);
@@ -103,7 +106,7 @@ describe('detectStatusChanges', () => {
 
   it('handles new sessions not in previous list', () => {
     const prev: Session[] = [];
-    const curr = [makeSession({ id: '1', status: 'active' })];
+    const curr = [makeSession({ id: '1', status: 'working' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -111,7 +114,7 @@ describe('detectStatusChanges', () => {
   });
 
   it('handles sessions removed from current list', () => {
-    const prev = [makeSession({ id: '1', status: 'active' })];
+    const prev = [makeSession({ id: '1', status: 'working' })];
     const curr: Session[] = [];
 
     const changes = detectStatusChanges(prev, curr);

@@ -74,13 +74,14 @@ in a third-party relay.
 Core infrastructure:
 - `pulpod` daemon + REST API + embedded web UI (single binary); `pulpo` CLI with
   attach, spawn, resume, stop, logs, schedule, handoff
-- SQLite-backed session persistence with a full lifecycle state machine (`creating`,
-  `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`/`stopped`) —
-  a five-state replacement (`starting`/`working`/`waiting`/`done`/`lost`) is accepted
-  but not yet implemented, see ADR [0009](docs/adr/0009-five-state-session-model.md)
+- SQLite-backed session persistence with a five-state lifecycle state machine
+  (`starting`, `working`, `waiting`, `done`, `lost`; resume from `done`/`lost`),
+  replacing the earlier six-state model (`creating`, `active`, `idle`, `ready`,
+  `stopped`, `lost`) — `ready`/`stopped` merged into `done`, with the *how* moved to a
+  new `status_reason` field — see ADR [0009](docs/adr/0009-five-state-session-model.md)
 - Harness adapters: hook-driven lifecycle events for Claude Code, Codex, and pi,
-  replacing scrollback-only detection with real resume and a `needs input (<reason>)`
-  status label — see ADR [0001](docs/adr/0001-hook-driven-agent-state.md) and
+  replacing scrollback-only detection with real resume and a `waiting (needs input:
+  <reason>)` status label — see ADR [0001](docs/adr/0001-hook-driven-agent-state.md) and
   [docs/architecture/harness-adapters.md](docs/architecture/harness-adapters.md)
 - Watchdog: idle detection (runs before budget enforcement each tick), error/failure
   detection, a flat per-session/per-schedule budget breaker (alert 80%, stop 100%,
@@ -242,8 +243,8 @@ Pulpo is succeeding if:
   quota
 - A scheduled overnight run alerts you at 80% of its budget and stops at 100%, instead
   of a surprise on the invoice
-- An agent blocked on a permission prompt shows `needs input (<reason>)` and fires a
-  webhook you can route to your phone
+- An agent blocked on a permission prompt shows `waiting (needs input: <reason>)` and
+  fires a webhook you can route to your phone
 - Sessions survive reboots; you wake up to PRs and an exact cost number, not crashed
   terminals
 - Your code and your usage data never leave your infrastructure

@@ -22,14 +22,22 @@
 
 Every time `pulpod` starts against a database with pending migrations (i.e. an
 existing, previously-used `state.db` — not a brand-new one), it copies
-`state.db` to `state.db.pre-<version>` in the data dir *before* running the
-migrations, where `<version>` is the `pulpod` version doing the migrating.
-Migrations can be irreversible (for example, migration 0008 dropped the
-`secrets` table and 0009 dropped `push_subscriptions`), so this gives you a
-snapshot to fall back to even when upgrading across several releases at once.
-A backup at the same version is overwritten on a later run, and only the 3
-most recent `state.db.pre-*` files are kept — older ones are pruned
-automatically. This is logged at `INFO`.
+`state.db` to `state.db.pre-m<migration>` in the data dir *before* running the
+migrations, where `<migration>` is the highest migration version already
+applied to that database (e.g. `state.db.pre-m7` for a database about to be
+upgraded past migration 0007). Named after the migration level rather than the
+`pulpod` version doing the migrating: `release-please` only bumps the crate
+version at release time, so two PRs landing between releases (each adding a
+migration) would otherwise both back up to the exact same
+`state.db.pre-<version>` name and silently clobber each other's snapshot — the
+migration number is monotonic and unique to what's actually about to change,
+independent of release cadence. Migrations can be irreversible (for example,
+migration 0008 dropped the `secrets` table and 0009 dropped
+`push_subscriptions`), so this gives you a snapshot to fall back to even when
+upgrading across several releases at once. A backup at the same migration
+level is overwritten on a later run, and only the 3 most recent
+`state.db.pre-*` files are kept — older ones are pruned automatically. This is
+logged at `INFO`.
 
 To restore a backup: stop `pulpod`, move the backup over `state.db` (and
 remove any `state.db-wal`/`state.db-shm` files so SQLite doesn't try to

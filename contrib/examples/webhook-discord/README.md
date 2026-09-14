@@ -15,7 +15,7 @@ PagerDuty, ntfy, an internal collector, or whatever you run.
 POST <your endpoint>
   Content-Type: application/json
   User-Agent: pulpo/<version>
-  X-Pulpo-Event: lifecycle.idle          # "<type>.<subtype>" — route/drop without parsing
+  X-Pulpo-Event: lifecycle.waiting       # "<type>.<subtype>" — route/drop without parsing
   X-Pulpo-Event-Id: <uuid>               # stable across retries of one delivery attempt
 
 {
@@ -24,12 +24,12 @@ POST <your endpoint>
   "type": "lifecycle",          // lifecycle | intervention | usage_alert
                                  // ("fleet" is reserved from an earlier multi-node
                                  // design; nothing emits it today)
-  "subtype": "idle",
+  "subtype": "waiting",         // starting | working | waiting | done | lost
   "severity": "warn",           // info | warn | critical
   "occurred_at": "2026-06-13T12:00:00Z",
   "node": "mac-mini",
   "session": {                  // present for session-scoped events
-    "id": "...", "name": "fix-auth", "status": "idle",
+    "id": "...", "name": "fix-auth", "status": "waiting",
     "git_branch": "...", "pr_url": null,
     "cost_usd": 2.5, "total_tokens": 1234000
   },

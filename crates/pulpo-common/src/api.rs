@@ -807,13 +807,13 @@ mod tests {
     #[test]
     fn test_list_sessions_query_debug() {
         let q = ListSessionsQuery {
-            status: Some("active".into()),
+            status: Some("working".into()),
             search: None,
             sort: None,
             order: None,
         };
         let debug = format!("{q:?}");
-        assert!(debug.contains("active"));
+        assert!(debug.contains("working"));
     }
 
     #[test]
@@ -880,7 +880,7 @@ mod tests {
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "echo hi".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         };
         let resp = CreateSessionResponse { session };

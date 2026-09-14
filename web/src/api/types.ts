@@ -8,10 +8,29 @@ export interface NodeInfo {
   gpu: string | null;
 }
 
+/**
+ * The five-state session model (ADR 0009): `starting` (spawn requested, backend not
+ * yet confirmed), `working` (the agent process is running and busy), `waiting` (the
+ * agent is at its prompt — see `Session.status_reason`), `done` (the process has
+ * exited and the backend is gone — resumable), and `lost` (the backend died with no
+ * evidence of a clean end — resumable). Mirrors `pulpo_common::session::SessionStatus`.
+ * Replaces the old six-state model (`creating`, `active`, `idle`, `ready`, `stopped`,
+ * `lost`) — `ready`/`stopped` merged into `done`, with the distinction moved to
+ * `status_reason`. A live daemon only ever sends these five values.
+ */
+export type SessionStatus = 'starting' | 'working' | 'waiting' | 'done' | 'lost';
+
 export interface Session {
   id: string;
   name: string;
-  status: string;
+  status: SessionStatus;
+  /** Why the session is in `status` — see `pulpo_common::session::status_reason`.
+   * Only meaningful for `waiting` (`"idle"` or `"needs_input:<reason>"`) and `done`
+   * (`"exited"`, `"stopped"`, `"idle_timeout"`, `"budget_exceeded"`,
+   * `"memory_pressure"`, or another/absent value treated as a generic fallback).
+   * Always `null` for `starting`/`working`/`lost`. */
+  status_reason: string | null;
+  exit_code?: number | null;
   command: string;
   description: string | null;
   workdir: string;
@@ -48,12 +67,17 @@ export interface Session {
 export interface SessionSSEEvent {
   session_id: string;
   session_name: string;
-  status: string;
+  status: SessionStatus;
   output_snippet: string | null;
-  /** The `needs_input` metadata key (e.g. "permission"), when set. Absent — not
-   * just an empty string — when the session has no `needs_input` metadata; the
-   * event is authoritative, so a receiver should always sync (set-or-clear) its
-   * local `metadata.needs_input` from this field rather than only setting it. */
+  /** Why the session is in `status` — see `Session.status_reason`. Omitted from the
+   * wire payload (not just `null`) when not applicable (`starting`/`working`/`lost`).
+   * The event is authoritative for a session already known client-side: always sync
+   * (set-or-clear) the local value from this field rather than only ever setting it. */
+  status_reason?: string | null;
+  /** Deprecated for removal — the needs-input sub-reason (e.g. "permission"), kept
+   * for one release after ADR 0009 for older consumers. Populated from
+   * `status_reason` server-side; prefer reading `status_reason` directly (or
+   * `needsInputReason()` in `@/lib/utils`) going forward. */
   needs_input?: string | null;
 }
 

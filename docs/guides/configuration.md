@@ -19,7 +19,7 @@ Breaking cleanup note:
   on a database it can't use (a corrupt file, an unsupported legacy schema, or a
   downgrade). It quarantines the unusable file as `state.db.unusable-<UTC timestamp>` in
   the data dir and starts fresh instead of exiting — no manual `rm` needed. Every startup
-  against an existing database also backs it up to `state.db.pre-<version>` before running
+  against an existing database also backs it up to `state.db.pre-m<migration>` before running
   migrations, so an in-place upgrade is reversible too. See
   [Release and Distribution](../operations/release-and-distribution.md) "Upgrading
   `pulpod`" for restoring a backup or inspecting a quarantined file.
@@ -58,7 +58,7 @@ enabled = true                # Enable watchdog (default: true)
 check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
-idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
+idle_threshold_secs = 60       # Seconds of unchanged output before Working→Waiting (default: 60)
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
 

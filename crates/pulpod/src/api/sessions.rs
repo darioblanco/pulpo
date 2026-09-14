@@ -98,6 +98,10 @@ pub struct StopQuery {
     pub purge: Option<bool>,
 }
 
+/// `POST /api/v1/sessions/{id}/stop`. `200 OK` means the session was already
+/// `done`/`lost` (a no-op — see `SessionManager::stop_session`); `204 No Content`
+/// means this call is what stopped it. Both are success; the CLI uses the
+/// distinction only to word its own message ("already done" vs. "stopped").
 pub async fn stop(
     State(state): State<Arc<super::AppState>>,
     Path(id): Path<String>,
@@ -108,7 +112,8 @@ pub async fn stop(
         .stop_session(&id, query.purge.unwrap_or(false))
         .await
     {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Ok(true) => Ok(StatusCode::OK),
+        Ok(false) => Ok(StatusCode::NO_CONTENT),
         Err(e) => Err(map_manager_err(&e)),
     }
 }
@@ -139,10 +144,28 @@ pub async fn output(
     };
 
     let lines = query.lines.unwrap_or(100);
-    let backend_id = state.session_manager.resolve_backend_id(&session);
-    let output = state
-        .session_manager
-        .capture_output(&id, &backend_id, lines);
+    // A `done` session's pane is guaranteed gone by the time it gets here (ADR
+    // 0009 — no more lingering fallback shell keeping it open), so a live tmux
+    // capture always comes back empty; worse, the tmux backend's own
+    // `capture_output` swallows `tmux capture-pane` failing (no such session) and
+    // returns `Ok("")` rather than an `Err`, so `SessionManager::capture_output`'s
+    // own log-tail fallback never even triggers. `resolve_dead_backend_session`
+    // already computed and persisted the best available final output (a live
+    // capture attempt made at resolution time, then the pipe-pane log) into
+    // `output_snapshot` — use that directly instead of re-deriving it here.
+    let output = if session.status == SessionStatus::Done {
+        session.output_snapshot.clone().unwrap_or_default()
+    } else {
+        let backend_id = state.session_manager.resolve_backend_id(&session);
+        // `session.id` (the UUID), not the path's `id` — a request addressed by
+        // *name* (as every `pulpo logs <name>` call is) would otherwise look up
+        // the pipe-pane log fallback under `logs/<name>.log`, which never exists
+        // (the file is always named by UUID — see
+        // `SessionManager::create_session`).
+        state
+            .session_manager
+            .capture_output(&session.id.to_string(), &backend_id, lines)
+    };
 
     Ok(Json(serde_json::json!({ "output": output })))
 }
@@ -177,15 +200,17 @@ pub async fn download_output(
         return Err(not_found(&format!("session not found: {id}")));
     };
 
-    let output = if session.status == SessionStatus::Active || session.status == SessionStatus::Lost
-    {
-        let backend_id = state.session_manager.resolve_backend_id(&session);
-        state
-            .session_manager
-            .capture_output(&id, &backend_id, 10_000)
-    } else {
-        session.output_snapshot.unwrap_or_default()
-    };
+    let output =
+        if session.status == SessionStatus::Working || session.status == SessionStatus::Lost {
+            let backend_id = state.session_manager.resolve_backend_id(&session);
+            // See the `output` handler above for why this must be `session.id`,
+            // not the path's `id` (which may be a name).
+            state
+                .session_manager
+                .capture_output(&session.id.to_string(), &backend_id, 10_000)
+        } else {
+            session.output_snapshot.unwrap_or_default()
+        };
 
     let filename = format!("{}.log", session.name);
     Ok((
