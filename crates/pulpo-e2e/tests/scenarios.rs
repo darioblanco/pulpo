@@ -129,7 +129,9 @@ fn s2_needs_input_then_input_resolves_it() {
 fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
     let daemon = Daemon::start(DaemonConfig::default());
     let (_dir, workdir) = temp_workdir();
-    set_scenario(&workdir, "start,prompt,stop,exit");
+    // `spend:0.25` (before `exit`) writes a real Claude-shaped transcript record —
+    // see below for why the session must report that cost once it's Stopped.
+    set_scenario(&workdir, "start,prompt,stop,spend:0.25,exit");
     let claude = daemon.fake_claude_bin();
     let claude_str = claude.to_string_lossy().into_owned();
 
@@ -165,6 +167,30 @@ fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
     daemon.input("s3-clean-exit", Some("exit"));
     let session = daemon.wait_status("s3-clean-exit", SessionStatus::Stopped, SHORT);
     assert_eq!(session.exit_code, Some(0));
+
+    // Regression: exact usage used to be refreshed only by the watchdog's idle
+    // sweep, which never revisits a session once it leaves Active/Idle — a session
+    // that reached Ready/Stopped before the next tick kept reporting no cost at
+    // all, even though its transcript (the `spend:0.25` step above) had the data
+    // the whole time. The `SessionEnded` hook handling now runs the exact reader
+    // itself (`watchdog::refresh_exact_usage`), so the cost should already be
+    // there — poll briefly rather than asserting instantly, since it's recorded
+    // asynchronously relative to this test's own polling of `status`.
+    let session = daemon.wait_for("s3-clean-exit", SHORT, |s| {
+        s.metadata
+            .as_ref()
+            .and_then(|m| m.get("session_cost_usd"))
+            .and_then(|v| v.parse::<f64>().ok())
+            .is_some_and(|cost| cost > 0.0)
+    });
+    assert_eq!(session.status, SessionStatus::Stopped);
+    let cost: f64 = session
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("session_cost_usd"))
+        .and_then(|v| v.parse().ok())
+        .expect("session_cost_usd should be recorded for a stopped session with a transcript");
+    assert!(cost > 0.0, "expected session_cost_usd > 0, got {cost}");
 
     // Swap in a scenario that just stays up after starting, so the *resumed*
     // process is reliably observable as Active before it does anything else.

@@ -100,7 +100,12 @@ token this endpoint would hand back.
 
 Both are computed from the structured usage readers (exact token/cost data read
 directly from each harness's own session files) — there is no output-scraping
-fallback and no credential reading.
+fallback and no credential reading. This data is normally refreshed by the
+watchdog while a session is `Active`/`Idle`, and again the moment it reaches
+`Ready`/`Stopped`; a `Stopped` session that still has no cost recorded (e.g. one
+from before this on-demand path existed) is computed and persisted on demand the
+first time `GET /api/v1/usage/sessions` (or `pulpo usage`) is queried, rather than
+reporting no cost forever.
 
 **`GET /api/v1/usage/sessions`** → `UsageSessionsResponse`:
 

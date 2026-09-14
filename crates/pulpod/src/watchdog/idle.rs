@@ -240,6 +240,14 @@ pub(super) async fn handle_session_ready(
             );
         }
     }
+
+    // The idle-sweep loop (`check_idle_sessions`) only visits `Active`/`Idle`
+    // sessions, so this exit-marker transition into `Ready` is the last chance for
+    // this tick to read the agent's own transcript — without this, a session that
+    // exits cleanly never gets its final `session_cost_usd` recorded (see
+    // `metadata::refresh_exact_usage`).
+    super::refresh_exact_usage(store, session).await;
+
     #[allow(unused_variables)]
     if let Err(error) = store
         .update_session_status(&session.id.to_string(), SessionStatus::Ready)
