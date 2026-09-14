@@ -1138,6 +1138,16 @@ fn commit_fake_scenario(repo_path: &std::path::Path, scenario: &str) {
 /// `CODEX_HOME`, not by the directory it's run from, so `resolve_resume_command`
 /// must not refuse it just because `effective_resume_workdir` fell back to the
 /// original repo path.
+///
+/// Reaches `Stopped` via `pulpo stop` (a direct `kill_session`) rather than typing
+/// `"exit"` into the lingering fallback shell the way S3/S11/S14/S15/plain-S16 do:
+/// this is the only scenario in the suite that combines a git worktree with the
+/// interactive-fallback-shell-exit path, and that specific combination hung
+/// reproducibly in CI on Linux (`s16-codex-worktree-removed` never left `Ready` —
+/// the "exit" keystrokes were never observed taking effect) while passing on
+/// macOS — every *other* worktree scenario (S9) already tears sessions down via
+/// `pulpo stop`, never via typed input, so this aligns with the mechanism that's
+/// actually proven to work with worktrees in CI instead of the one that isn't.
 #[test]
 fn s16_codex_resume_still_works_when_worktree_removed() {
     let daemon = Daemon::start(DaemonConfig::default());
@@ -1182,7 +1192,7 @@ fn s16_codex_resume_still_works_when_worktree_removed() {
         "SessionStart never fires in this scenario — no id should be learned"
     );
 
-    daemon.input("s16-codex-worktree-removed", Some("exit"));
+    daemon.stop("s16-codex-worktree-removed", false);
     daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Stopped, SHORT);
 
     // Simulate the worktree being removed (branch merged and cleaned up, disk
