@@ -1110,3 +1110,162 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
         "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
     );
 }
+
+/// Write `pulpo-fake-scenario.txt` in `repo_path` and commit it — used (instead of
+/// plain [`set_scenario`]) when the file needs to already be present the moment a
+/// *worktree* is created from this repo (`git worktree add` only checks out tracked
+/// content, so an untracked scenario file written into `repo_path` would never reach
+/// a fresh worktree — and writing it into the worktree directory afterward would
+/// race the fake harness process reading it once at startup).
+fn commit_fake_scenario(repo_path: &std::path::Path, scenario: &str) {
+    set_scenario(repo_path, scenario);
+    let run = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo_path)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed in {repo_path:?}");
+    };
+    run(&["add", "pulpo-fake-scenario.txt"]);
+    run(&["commit", "-q", "-m", "add fake scenario"]);
+}
+
+/// #128 follow-up, S16 extension: Codex's fallback resume must keep working even
+/// when the session's worktree has been removed — unlike Claude/pi's `--continue`
+/// (refused in that case, see `session::manager::resolve_resume_command`'s unit
+/// tests), `codex resume --last` is keyed by this session's own isolated
+/// `CODEX_HOME`, not by the directory it's run from, so `resolve_resume_command`
+/// must not refuse it just because `effective_resume_workdir` fell back to the
+/// original repo path.
+#[test]
+fn s16_codex_resume_still_works_when_worktree_removed() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_repo_dir, repo_path) = temp_workdir();
+    init_git_repo(&repo_path);
+    // Committed (not just written) so a fresh `git worktree add` checkout already
+    // has it in place before the fake harness process ever starts — see
+    // `commit_fake_scenario`.
+    commit_fake_scenario(&repo_path, "stop,exit");
+
+    let codex = daemon.fake_codex_bin();
+    let codex_str = codex.to_string_lossy().into_owned();
+    let output = daemon.spawn(
+        "s16-codex-worktree-removed",
+        &repo_path,
+        &["--worktree"],
+        &[&codex_str, "-m", "gpt-5-codex", "fix the bug"],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_for("s16-codex-worktree-removed", SHORT, |s| {
+        s.worktree_path.is_some()
+    });
+    assert_eq!(session.harness.as_deref(), Some("codex"));
+    let worktree_path = std::path::PathBuf::from(session.worktree_path.expect("worktree path"));
+    assert!(worktree_path.exists(), "expected the worktree to exist");
+
+    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Active, SHORT);
+    daemon.wait_for("s16-codex-worktree-removed", SHORT, |s| {
+        s.exit_code == Some(0)
+    });
+    assert!(
+        daemon
+            .session("s16-codex-worktree-removed")
+            .unwrap()
+            .harness_session_id
+            .is_none(),
+        "SessionStart never fires in this scenario — no id should be learned"
+    );
+
+    daemon.input("s16-codex-worktree-removed", Some("exit"));
+    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Stopped, SHORT);
+
+    // Simulate the worktree being removed (branch merged and cleaned up, disk
+    // wiped, ...) — `effective_resume_workdir` will now fall back to `repo_path`.
+    std::fs::remove_dir_all(&worktree_path).expect("remove worktree");
+    assert!(!worktree_path.exists());
+
+    // `repo_path` never had a fake-claude/-codex process run in it before (the
+    // initial run's cwd was the worktree), so there is no stale state file to race
+    // against here, unlike S16's plain (non-worktree) case above.
+    set_scenario(&repo_path, "start,hang");
+
+    daemon.resume("s16-codex-worktree-removed");
+
+    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Active, SHORT);
+    wait_for_fake_state(&repo_path, SHORT, |s| s["pid"].as_u64().is_some());
+
+    let argv = read_fake_argv(&repo_path).expect("resumed fake-codex should have recorded argv");
+    assert!(
+        argv.iter().any(|a| a == "resume"),
+        "expected a resume subcommand in argv: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--last"),
+        "no id was ever learned — resume must fall back to --last: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--dangerously-bypass-hook-trust"),
+        "hooks must still be re-injected on the fallback resume: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|a| a == "fix the bug"),
+        "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S19 — single-instance lock: a second pulpod on the same data dir refuses to start
+// ---------------------------------------------------------------------------
+
+/// #126 follow-up: `pulpod` acquires an exclusive advisory lock on
+/// `{data_dir}/pulpod.lock` before ever touching `state.db` (well before the port
+/// bind too — see `lib.rs::build_app`), so a second `pulpod` accidentally started
+/// against the same data directory refuses to start instead of racing the first one
+/// to open (and, on an unusable-database error, quarantine) the same database out
+/// from under it.
+#[test]
+fn s19_second_daemon_on_same_data_dir_refuses_to_start() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let db_path = daemon.data_dir.join("state.db");
+    assert!(
+        db_path.exists(),
+        "expected state.db to exist while the daemon runs"
+    );
+
+    let output = daemon.try_start_second_instance(MEDIUM);
+    assert!(
+        !output.status.success(),
+        "a second pulpod on the same data dir must exit non-zero; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The first daemon's database must be untouched: still at the canonical path,
+    // and no quarantine file appeared alongside it.
+    assert!(
+        db_path.exists(),
+        "state.db must still be at the canonical path"
+    );
+    let quarantined = std::fs::read_dir(&daemon.data_dir)
+        .expect("read data dir")
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().contains("unusable"));
+    assert!(
+        !quarantined,
+        "must not quarantine a healthy, in-use database"
+    );
+
+    // The first daemon is still completely healthy and serving requests.
+    let output = daemon.pulpo(&["ls", "--all"]);
+    assert!(
+        output.status.success(),
+        "pulpo ls --all failed after a blocked second instance: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

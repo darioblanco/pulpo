@@ -247,6 +247,26 @@ pub trait HarnessAdapter: Send + Sync {
         None
     }
 
+    /// Whether [`fallback_resume_command`](HarnessAdapter::fallback_resume_command)'s
+    /// output means "the most recent conversation in the *current working
+    /// directory*" — true for Claude's `--continue` and pi's `-c`/`--continue`
+    /// (pi's own docs describe it as scoped to `(cwd, sessionDir)`), false for
+    /// Codex's `resume --last`, which is scoped to this session's own isolated
+    /// `CODEX_HOME` (keyed by session id, not by cwd — see `codex::rewrite_spawn`).
+    ///
+    /// `session::manager::resolve_resume_command` uses this to refuse a fallback
+    /// resume rather than silently run it from the wrong directory: when a
+    /// session's worktree has been removed, `effective_resume_workdir` falls back
+    /// to the original (non-worktree) `workdir`, so a cwd-scoped fallback command
+    /// run there could continue a completely unrelated conversation that happens
+    /// to be the most recent one in that directory. Defaults to `true` — the safer
+    /// default is to assume a fallback is cwd-scoped and refuse rather than guess;
+    /// an adapter overrides it to `false` only once it's confirmed its fallback
+    /// doesn't depend on cwd at all.
+    fn fallback_resume_is_cwd_scoped(&self) -> bool {
+        true
+    }
+
     /// Translate a raw hook payload (as posted by `pulpo hook <harness>`) into a
     /// normalized event. Returns `Ok(None)` for events pulpo does not care about.
     fn parse_event(&self, raw: &serde_json::Value) -> Result<Option<HarnessEvent>>;
@@ -439,6 +459,20 @@ mod tests {
                 .fallback_resume_command("bash")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn test_fallback_resume_is_cwd_scoped_default_is_true() {
+        // The trait default is the conservative one: assume cwd-scoped (and thus
+        // refuse a fallback resume from a different directory) unless an adapter
+        // has confirmed otherwise. GenericAdapter, ClaudeAdapter, and PiAdapter
+        // don't override it — pi's own `-c`/`--continue` is documented (see
+        // `pi.rs`'s module doc) as "most recent session in this cwd", same as
+        // Claude's `--continue`. Only Codex overrides it (see codex.rs's own
+        // test) — its fallback is keyed by an isolated `CODEX_HOME`, not cwd.
+        assert!(generic::GenericAdapter.fallback_resume_is_cwd_scoped());
+        assert!(claude::ClaudeAdapter.fallback_resume_is_cwd_scoped());
+        assert!(pi::PiAdapter.fallback_resume_is_cwd_scoped());
     }
 
     #[test]

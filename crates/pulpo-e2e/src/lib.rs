@@ -671,6 +671,26 @@ impl Daemon {
         self.child = Some(child);
         self.wait_healthy(Duration::from_secs(20));
     }
+
+    /// Try to start a *second* `pulpod` pointed at this same config/data dir while
+    /// this daemon is still running — for the single-instance-lock scenario (S19).
+    /// Unlike `restart_daemon`, this daemon's own `child` is left untouched; the
+    /// second process is spawned, waited on (it must exit quickly — the
+    /// single-instance lock check happens before `state.db` is even opened, well
+    /// before the port bind this data dir's config would otherwise conflict on),
+    /// and its output returned for the caller to assert on.
+    #[must_use]
+    pub fn try_start_second_instance(&self, timeout: Duration) -> std::process::Output {
+        let mut cmd = Command::new(&self.pulpod_bin);
+        cmd.arg("--config")
+            .arg(&self.config_path)
+            .env("HOME", &self.home_dir)
+            .env("PATH", &self.path_env)
+            .env("TMUX_TMPDIR", &self.tmux_tmp)
+            .env_remove("PULPO_URL")
+            .stdin(Stdio::null());
+        run_with_timeout(cmd, timeout)
+    }
 }
 
 impl Drop for Daemon {

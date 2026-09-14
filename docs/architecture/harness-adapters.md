@@ -442,6 +442,44 @@ plain original command (a fresh conversation) if the adapter has neither:
 does for `resume_command` — so hooks get re-injected on top regardless of which path
 produced the base command.
 
+### Refusing a cwd-scoped fallback when the worktree is gone
+
+Claude's `--continue` and pi's `-c`/`--continue` both mean "the most recent
+conversation *in the current working directory*" — literally, whatever conversation
+history the harness itself finds there. `resolve_resume_command` runs
+`fallback_resume_command`'s output against `effective_resume_workdir`
+(`session::manager`), which is the session's `worktree_path` when it still exists on
+disk, else the plain `workdir` it silently substitutes otherwise. If a session's
+worktree was removed (branch merged and cleaned up, disk wiped, `pulpo cleanup`) and
+no `harness_session_id` was ever learned, that substitution means the fallback would
+run from a directory that has nothing to do with this session — `claude --continue`
+there resumes whatever conversation is merely most-recent *in that other directory*,
+silently, with no indication anything went wrong.
+
+`resolve_resume_command` now refuses instead of guessing: when the fallback path is
+taken and `HarnessAdapter::fallback_resume_is_cwd_scoped` (default `true`) reports the
+fallback is cwd-scoped, it compares `effective_resume_workdir` against where the
+harness conversation actually ran (the worktree if one was used, regardless of
+whether it still exists) and returns an error — *"cannot resume '\<name\>': its
+original workdir (\<path\>) is gone and no \<harness\> session id is known — ...
+fallback resume runs from the current directory (\<dir\>) instead and could silently
+continue an unrelated conversation there; start a new session instead"* — rather than
+spawning anything. `resume_session` (manual `pulpo resume`) surfaces this as the
+resume failing outright; `resume_lost_sessions` (auto-resume on daemon restart) logs
+it as a warning and marks the session `Lost`, the same way it already handles a
+workdir that fails `validate_workdir`.
+
+Codex overrides `fallback_resume_is_cwd_scoped` to `false` and is exempt: `codex
+resume --last` is keyed by this session's own isolated `CODEX_HOME`
+(`data_dir/harness/<session_id>/codex-home`), never by the directory it's run
+from, so it keeps resuming the right thread regardless of where the worktree went.
+pi does *not* get this exemption — despite pi's `--session-id` being scoped to
+`(cwd, sessionDir)` similarly to how Codex uses an isolated home, pi has no
+per-session home isolation pulpo controls: `-c`/`--continue` is pi's own
+documented "most recent session in this cwd" flag, resolved against whatever the
+real process cwd happens to be, so it is exactly as cwd-dependent as Claude's
+`--continue` and is refused the same way.
+
 ## Event ingestion
 
 `POST /api/v1/sessions/{id}/harness-events` (see the [API reference](../reference/api.md))

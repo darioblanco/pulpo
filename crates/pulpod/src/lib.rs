@@ -20,7 +20,7 @@ pub mod watchdog;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use pulpo_common::event::{DaemonEvent, PulpoEvent};
 use tokio::sync::{broadcast, watch};
@@ -69,6 +69,11 @@ pub struct ShutdownHandle {
     senders: Vec<watch::Sender<bool>>,
     /// Whether `tailscale serve` was started and needs cleanup on shutdown.
     tailscale_serve_active: bool,
+    /// The single-instance lock acquired in `build_app`, kept alive for the
+    /// daemon's whole run — dropping it (e.g. at process exit) releases the OS
+    /// `flock` so a subsequent `pulpod` can start. `None` only in tests that build
+    /// a bare `ShutdownHandle` directly rather than going through `build_app`.
+    pulpod_lock: Option<store::lock::SingleInstanceLock>,
 }
 
 impl ShutdownHandle {
@@ -76,6 +81,7 @@ impl ShutdownHandle {
         Self {
             senders: Vec::new(),
             tailscale_serve_active: false,
+            pulpod_lock: None,
         }
     }
 
@@ -239,9 +245,33 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config::save(&config, &config_path)?;
     }
 
+    // Single-instance guard: acquire an exclusive advisory lock on
+    // `{data_dir}/pulpod.lock` *before* touching `state.db` at all. Without this, a
+    // second `pulpod` accidentally started against the same data directory could
+    // race the first to open/migrate the database — and, on an unusable-database
+    // error, quarantine (rename away) a file the first, already-running instance
+    // still holds open and considers perfectly healthy. See `store::lock`.
+    std::fs::create_dir_all(config.data_dir())
+        .with_context(|| format!("failed to create data directory {}", config.data_dir()))?;
+    let pulpod_lock = match store::lock::try_acquire(&config.data_dir())? {
+        store::lock::LockOutcome::Acquired(lock) => lock,
+        store::lock::LockOutcome::HeldByAnother { holder_pid } => {
+            let pid_desc = holder_pid.map_or_else(|| "unknown".to_owned(), |pid| pid.to_string());
+            let data_dir = config.data_dir();
+            let message = format!(
+                "another pulpod is running (pid {pid_desc}) against data directory \
+                 {data_dir} — refusing to start"
+            );
+            tracing::error!("store: {message}");
+            anyhow::bail!(message);
+        }
+    };
+
     // Never crash-loop on an unusable database (corrupt file, unsupported
-    // pre-migration schema, or a downgrade's `VersionMissing`): recover by
-    // quarantining it and starting fresh rather than exiting. See
+    // pre-migration schema, or a downgrade's `VersionMissing`/`VersionMismatch`):
+    // recover by quarantining it and starting fresh rather than exiting. Any other
+    // error (a lock held by another process, an I/O failure, a failed pre-migration
+    // backup) refuses to start instead — see `store::open_and_migrate` and
     // `docs/operations/*` for the recovery story.
     let (store, recovered_db) = store::open_and_migrate(&config.data_dir()).await?;
 
@@ -298,6 +328,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     upgrade_backend_ids(&manager, &store).await;
 
     let mut shutdown_handle = ShutdownHandle::new();
+    shutdown_handle.pulpod_lock = Some(pulpod_lock);
 
     // Start built-in scheduler
     #[cfg(not(coverage))]
@@ -649,6 +680,58 @@ data_dir = "{}"
         );
 
         handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_build_app_refuses_when_another_pulpod_holds_the_lock() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        // Hold the single-instance lock ourselves, simulating another already-running
+        // pulpod against this same data directory.
+        let held = match store::lock::try_acquire(data_dir.to_str().unwrap()).unwrap() {
+            store::lock::LockOutcome::Acquired(lock) => lock,
+            store::lock::LockOutcome::HeldByAnother { .. } => {
+                panic!("expected the lock to be free")
+            }
+        };
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+        };
+
+        // `ShutdownHandle` isn't `Debug`, so `.unwrap_err()` (which needs `T: Debug`
+        // to format the Ok case in its panic message) doesn't apply here — match.
+        let error = match build_app(&cli).await {
+            Ok(_) => panic!("expected build_app to refuse when the lock is already held"),
+            Err(e) => e,
+        };
+        assert!(
+            error.to_string().contains("another pulpod is running"),
+            "{error}"
+        );
+
+        // The database must never even have been touched — no state.db, and
+        // certainly no quarantine file.
+        assert!(!data_dir.join("state.db").exists());
+
+        drop(held);
     }
 
     #[test]

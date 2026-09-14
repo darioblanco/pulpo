@@ -65,8 +65,8 @@ anyhow = "1"
 rust-embed = "8"
 mime_guess = "2"
 
-# PTY and streaming
-rustix = { version = "0.38", features = ["termios"] }
+# PTY and streaming, plus the single-instance advisory file lock (store::lock)
+rustix = { version = "0.38", features = ["fs", "termios"] }
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
