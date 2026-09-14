@@ -100,7 +100,8 @@ Core infrastructure:
 - The config file (`~/.pulpo/config.toml`) is the sole source of truth — no
   config-editing API, read-only `GET` views only — see ADR
   [0005](docs/adr/0005-config-file-is-source-of-truth.md); unknown config keys warn
-  and are ignored — see ADR
+  and are ignored, replacing ~15 named retired-key special cases with one general
+  rule (#123) — see ADR
   [0008](docs/adr/0008-unknown-config-keys-warn-and-are-ignored.md)
 - Two-tier test strategy: unit tests for logic (TDD), scenario tests
   (`crates/pulpo-e2e`, a real daemon + real tmux + a fake harness) as the behavior
@@ -110,6 +111,23 @@ Core infrastructure:
   detection
 - Homebrew tap distribution, CLI auto-start daemon, Tailscale transport
   (`bind = "tailscale"`) for private remote access
+- Database resilience: `pulpod` never crash-loops on a database it can't use — an
+  unusable `state.db` is quarantined as `state.db.unusable-<UTC timestamp>` and a
+  fresh one takes its place automatically, and every startup against an existing
+  database backs it up to `state.db.pre-<version>` before migrating (#126, scenario
+  S13) — see
+  [docs/operations/release-and-distribution.md](docs/operations/release-and-distribution.md)
+  "Upgrading `pulpod`"
+- Usage/session cleanup: usage is reconciled a final time when a session ends so
+  `pulpo usage` reflects the last turn, `pulpo rm` (+ `DELETE /api/v1/sessions/:id`)
+  removes a single session outright, and `pulpo ls` shows `lost` sessions by default
+  instead of hiding them (#127)
+- `fake-codex`/`fake-pi` scenario harnesses (S14-S16) alongside `fake-claude`, and a
+  resume fallback for a session whose harness adapter has no known
+  `harness_session_id` — the harness's own "most recent conversation here" command
+  (`claude --continue`, `codex resume --last`, `pi -c`) instead of silently starting
+  a fresh conversation (#128) — see
+  [docs/architecture/harness-adapters.md](docs/architecture/harness-adapters.md)
 
 Track R (removals, all shipped as their own PRs): Docker session runtime, worktrees
 web-UI page, Tauri mobile builds, MCP server, Discord bot, voice experiments — see

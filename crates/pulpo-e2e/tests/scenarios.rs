@@ -731,7 +731,7 @@ fn assert_recovered_and_usable(daemon: &Daemon) {
 /// migrator knows — simulating a database a *newer* `pulpod` already
 /// migrated, now opened by an *older* binary after a downgrade. Shells out to
 /// the system `sqlite3` (also relied on being present the way `tmux` is for
-/// this whole suite — see `CLAUDE.md`'s "Running it" note).
+/// this whole suite — see `AGENTS.md`'s "Running it" note).
 fn seed_downgraded_database(path: &std::path::Path) {
     let sql = "\
         CREATE TABLE _sqlx_migrations (\n\
@@ -773,7 +773,7 @@ fn s13_garbage_database_recovers_and_starts_fresh() {
     assert_recovered_and_usable(&daemon);
 }
 
-/// Same recovery, for the other failure mode called out in `CLAUDE.md`: a
+/// Same recovery, for the other failure mode called out in `AGENTS.md`: a
 /// downgrade, where `MIGRATOR.run()` fails with sqlx's `VersionMissing`
 /// rather than the legacy-schema check.
 #[test]

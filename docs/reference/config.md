@@ -9,8 +9,13 @@ not listed below, at any nesting level — is logged once at startup (`config: u
 '<path>' ignored`) and otherwise ignored; it never fails startup. Recognized keys with an
 invalid value (e.g. `bind = "container"`) still fail loudly, since that's a mistake in a
 real setting, not an unrecognized one.
-Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
-delete `~/.pulpo/state.db` and restart.
+Pre-`sqlx` legacy databases are unsupported, but `pulpod` never crash-loops on one: an
+unusable `state.db` (corrupt, an unsupported legacy schema, or a downgrade) is quarantined
+as `state.db.unusable-<UTC timestamp>` and a fresh database is created in its place
+automatically — no manual deletion needed. Every startup against an existing database also
+backs it up to `state.db.pre-<version>` before migrating. See
+[Release and Distribution](../operations/release-and-distribution.md) "Upgrading `pulpod`"
+for the full recovery/backup behavior.
 
 The config file is the source of truth: `pulpod` and the web UI only read it (see
 [`GET /api/v1/config`](api.md#node--config)). To change anything, edit the file

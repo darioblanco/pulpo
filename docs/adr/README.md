@@ -24,7 +24,7 @@ documentation.
 | [0005](0005-config-file-is-source-of-truth.md) | The config file is the source of truth; no config-editing API | Accepted | 2026-09-13 |
 | [0006](0006-exact-metering-and-flat-budget-cap-only.md) | Exact metering plus a flat budget cap — nothing else on the enforcement surface | Accepted | 2026-09-13 |
 | [0007](0007-rust-stays-go-decision-deferred.md) | Rust stays for now; a Go rewrite is deferred until after a real dogfood test | Accepted | 2026-09-13 |
-| [0008](0008-unknown-config-keys-warn-and-are-ignored.md) | Unknown config keys warn and are ignored | Accepted | 2026-09 |
+| [0008](0008-unknown-config-keys-warn-and-are-ignored.md) | Unknown config keys warn and are ignored | Implemented | 2026-09-14 |
 | [0009](0009-five-state-session-model.md) | Five-state session model: starting / working / waiting / done / lost | Accepted (implementation pending) | 2026-09-14 |
 
 See also [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) for
