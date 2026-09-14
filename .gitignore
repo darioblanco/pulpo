@@ -5,6 +5,7 @@ node_modules
 /web/build
 /web/coverage
 /web/tsconfig.tsbuildinfo
+/docs/book/
 *.db
 *.db-journal
 .pulpo/config.toml

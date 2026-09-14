@@ -10,7 +10,7 @@ have. Use [WSL2](https://learn.microsoft.com/windows/wsl/install) and follow
 the Linux instructions below inside your distribution.
 
 If you are still deciding whether Pulpo fits your workflow, read
-[Use Cases](/getting-started/use-cases) first.
+[Use Cases](use-cases.md) first.
 
 ## Homebrew (macOS/Linux)
 

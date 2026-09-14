@@ -117,7 +117,7 @@ pulpo spawn glm-risky --workdir ~/repos/my-api --worktree -d -- opencode
 ```
 
 If you want the worktree-isolation rationale, see
-[Worktrees](/guides/worktrees).
+[Worktrees](worktrees.md).
 
 ## Local Models (Ollama, LM Studio)
 
@@ -197,9 +197,9 @@ It is a practical illustration of Pulpo's command-agnostic model.
 
 ## Related Docs
 
-- [Quickstart](/getting-started/quickstart)
-- [Configuration Guide](/guides/configuration)
-- [Config Reference](/reference/config) — see `[rates.<model>]`
-- [Nightly Code Review](/guides/nightly-code-review)
-- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
-- [Worktrees](/guides/worktrees)
+- [Quickstart](../getting-started/quickstart.md)
+- [Configuration Guide](configuration.md)
+- [Config Reference](../reference/config.md) — see `[rates.<model>]`
+- [Nightly Code Review](nightly-code-review.md)
+- [Parallel Agents On One Repo](parallel-agents-one-repo.md)
+- [Worktrees](worktrees.md)

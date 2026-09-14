@@ -58,7 +58,7 @@ pulpo stop plan-auth-2 --purge       # now nothing references it
 pulpo cleanup                        # reclaims it (also a safe no-op if already gone)
 ```
 
-See [Worktrees](/guides/worktrees) for the full isolation model.
+See [Worktrees](worktrees.md) for the full isolation model.
 
 ## Full Example
 
@@ -76,5 +76,5 @@ pulpo usage   # cost for both the planning and the build session, shown separate
 ```
 
 Codex reports exact tokens and subscription quota rather than a dollar cost — see
-[CLI Reference](/reference/cli#handoff) for the full flag list, and
-[Why Pulpo](/getting-started/why-pulpo) for the metering model this builds on.
+[CLI Reference](../reference/cli.md#handoff) for the full flag list, and
+[Why Pulpo](../getting-started/why-pulpo.md) for the metering model this builds on.

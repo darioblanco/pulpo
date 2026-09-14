@@ -33,7 +33,7 @@ Use this when you want:
 - an unattended background workflow you can check in the morning
 
 This recipe is especially useful for the "operator running recurring agent work"
-ICP described in [Use Cases](/getting-started/use-cases).
+ICP described in [Use Cases](../getting-started/use-cases.md).
 
 ## Direct Scheduled Command
 
@@ -101,7 +101,7 @@ pulpo schedule add nightly-review "0 3 * * *" \
 
 Each run gets a fresh git worktree on its own branch. A plain `pulpo stop` leaves it on
 disk for inspection; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or
-watchdog intervention — see [Worktrees](/guides/worktrees).
+watchdog intervention — see [Worktrees](worktrees.md).
 
 ### Review On Another Machine
 
@@ -121,8 +121,8 @@ Make sure the workdir path exists on `mac-mini`, not just on the machine you're 
 
 This recipe gets stronger when combined with:
 
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) for API keys and repo credentials
-- [Control Your Agents From Anywhere](/guides/remote-control) if you run more than one machine
+- [Private Infrastructure With Tailscale](private-infra-with-tailscale.md) for API keys and repo credentials
+- [Control Your Agents From Anywhere](remote-control.md) if you run more than one machine
 - notifications so you know when the overnight run is `ready`, `stopped`, or `lost`
 
 ## Related Commands

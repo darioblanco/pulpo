@@ -310,7 +310,7 @@ inserted as keys of the root `Table` value directly.
 **`notify` and the `codex-notify` CLI variant**: Codex's `notify` config delivers its
 JSON as a trailing argv element, not stdin, so the adapter also wires
 `notify = ["sh", "-c", "'<pulpo-bin>' hook codex-notify \"$0\""]`. See the
-[CLI reference](/reference/cli#hook-internal) for `pulpo hook codex-notify`'s contract
+[CLI reference](../reference/cli.md#hook-internal) for `pulpo hook codex-notify`'s contract
 — it posts the raw notify payload, unmodified, as harness `"codex"`; `parse_event`
 maps its `type` field, `agent-turn-complete`, to a single `TurnFinished` event. An
 earlier version also posted a synthetic `SessionStart`-shaped event first whenever the
@@ -444,9 +444,9 @@ produced the base command.
 
 ## Event ingestion
 
-`POST /api/v1/sessions/{id}/harness-events` (see the [API reference](/reference/api))
+`POST /api/v1/sessions/{id}/harness-events` (see the [API reference](../reference/api.md))
 is the ingestion endpoint; `pulpo hook <harness>` (see the
-[CLI reference](/reference/cli#hook-internal)) is what actually posts to it — command
+[CLI reference](../reference/cli.md#hook-internal)) is what actually posts to it — command
 hooks receive the harness's JSON on stdin and inherit the harness process's
 environment, so `PULPO_SESSION_ID` (exported by the session wrapper into every
 pulpo-managed process, alongside `PULPO_SESSION_NAME` and `PULPO_URL`) is how the hook
@@ -478,7 +478,7 @@ webhook path; no new channel was added.
 on me." `pulpo ls` and the web session list/detail render `needs input (<reason>)`
 distinctly from plain `idle`. The `SessionStatus` enum itself is unchanged — this is
 additive, not a state-machine rename. See
-[Session Lifecycle](/operations/session-lifecycle) for the full state machine
+[Session Lifecycle](../operations/session-lifecycle.md) for the full state machine
 (unaffected states/transitions aren't repeated here).
 
 ## Watchdog bypass

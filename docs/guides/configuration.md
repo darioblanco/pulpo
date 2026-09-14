@@ -9,7 +9,7 @@ Breaking cleanup note:
 - any config key that isn't recognized — a leftover from a superseded feature, a typo,
   anything not documented on this page, at any nesting level — is logged once at startup
   and ignored rather than rejected; it never fails startup (see
-  [Config Reference](/reference/config) "Unknown keys"). Nothing rewrites the config file
+  [Config Reference](../reference/config.md) "Unknown keys"). Nothing rewrites the config file
   on its own, so an unknown key stays in the file, still ignored, until you remove it by
   hand.
 - the config file is the source of truth — `pulpod` and the web UI only read it (there
@@ -59,8 +59,8 @@ Per-session idle threshold: `pulpo spawn my-task --idle-threshold 0` (never idle
 
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), most of this idle
 detection stops applying once a session's events start flowing — see
-[Harness Adapters](/architecture/harness-adapters). See
-[Session Lifecycle](/operations/session-lifecycle) for the full state-transition picture.
+[Harness Adapters](../architecture/harness-adapters.md). See
+[Session Lifecycle](../operations/session-lifecycle.md) for the full state-transition picture.
 
 ## Scheduler
 
@@ -78,7 +78,7 @@ doesn't have to wait a full minute per schedule check.
 
 `[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`). A cap on what a
 session or schedule can spend is set directly on it (`--budget-cost`), not in this file —
-see [Config Reference](/reference/config) for `[rates.<model>]` field-by-field.
+see [Config Reference](../reference/config.md) for `[rates.<model>]` field-by-field.
 
 ## Notifications
 
@@ -98,7 +98,7 @@ Delivery is a plain POST (no signing) from an in-memory queue: the initial attem
 up to 3 retries (~1s, 3s, 9s), then the event is logged and dropped — there's no durable
 outbox, so nothing is retried after a restart. The older `[[notifications.webhooks]]`
 form is deprecated but still read for back-compat (unioned with the top-level list). See
-the [config reference](/reference/config#webhooks) for the glob forms and the full event
+the [config reference](../reference/config.md#webhooks) for the glob forms and the full event
 catalogue.
 
 ## Auth
@@ -118,16 +118,16 @@ There is no `[controller]` section — controller/node relay mode was removed. E
 is standalone. There is also no `[peers]` section — manual peer configuration and Tailscale
 peer discovery were removed for the same reason. A leftover `[controller]`, `[peers]`, or
 `discovery_interval_secs` key from an older config still loads — like any other unknown
-key, it's logged once and ignored (see [Config Reference](/reference/config) "Unknown
+key, it's logged once and ignored (see [Config Reference](../reference/config.md) "Unknown
 keys"). Remove it by hand when you're ready; `pulpod` only rewrites the file on its own
 once, the very first time it runs with no auth token yet, so an unknown key otherwise
 stays in the file until you edit it out.
 
 To reach another machine, point the CLI or web UI at it directly (`pulpo --url <host:port>`,
 a saved web UI connection, or SSH + `pulpo attach`) — see
-[Control Your Agents From Anywhere](/guides/remote-control) for the daily workflow. For a
+[Control Your Agents From Anywhere](remote-control.md) for the daily workflow. For a
 view across machines, point every node's `[[webhooks]]` at the same collector.
 
 ## Full Reference
 
-For field-level details, see [Config Reference](/reference/config).
+For field-level details, see [Config Reference](../reference/config.md).

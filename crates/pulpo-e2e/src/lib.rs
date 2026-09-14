@@ -9,7 +9,7 @@
 //!
 //! See `tests/scenarios.rs` for the scenarios themselves, and
 //! `docs/architecture/harness-adapters.md` / `docs/operations/session-lifecycle.md`
-//! for the behavior they exercise. `CLAUDE.md`'s testing section documents the
+//! for the behavior they exercise. `AGENTS.md`'s testing section documents the
 //! strategy this crate implements and how to add a new scenario.
 
 use std::collections::HashMap;
@@ -625,7 +625,7 @@ impl Daemon {
 
     /// Whether a tmux session literally named `name` exists on this daemon's
     /// private server. `backend_session_id` gets upgraded from a name to tmux's
-    /// own `$N` id shortly after creation (see `CLAUDE.md`'s "Session IDs" note),
+    /// own `$N` id shortly after creation (see `AGENTS.md`'s "Session IDs" note),
     /// so this — not the session's `backend_session_id` field — is the reliable
     /// way to check what a newly (re)created tmux session was actually named:
     /// tmux accepts either its name or its `$N` id as a `-t` target for the same

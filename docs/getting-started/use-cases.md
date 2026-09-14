@@ -21,9 +21,9 @@ checkout.
 
 Best docs to read next:
 
-- [Quickstart](/getting-started/quickstart)
-- [Why Pulpo](/getting-started/why-pulpo)
-- [CLI Reference](/reference/cli)
+- [Quickstart](quickstart.md)
+- [Why Pulpo](why-pulpo.md)
+- [CLI Reference](../reference/cli.md)
 
 ## 2. The Daily Driver: An Agent That Survives Your Laptop Lid
 
@@ -42,9 +42,9 @@ power state. Reattach over SSH from a laptop, or check status from a phone throu
 
 Best docs to read next:
 
-- [Control Your Agents From Anywhere](/guides/remote-control)
-- [Session Lifecycle](/operations/session-lifecycle)
-- [Quickstart](/getting-started/quickstart)
+- [Control Your Agents From Anywhere](../guides/remote-control.md)
+- [Session Lifecycle](../operations/session-lifecycle.md)
+- [Quickstart](quickstart.md)
 
 ## 3. Parallel Agents On One Repo, Without Collisions
 
@@ -62,8 +62,8 @@ a durable, cost-tracked object you can inspect independently.
 
 Best docs to read next:
 
-- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
-- [Worktrees Guide](/guides/worktrees)
+- [Parallel Agents On One Repo](../guides/parallel-agents-one-repo.md)
+- [Worktrees Guide](../guides/worktrees.md)
 
 ## 4. Unattended, Scheduled Jobs That Can't Run Away
 
@@ -84,8 +84,8 @@ the invoice.
 
 Best docs to read next:
 
-- [Nightly Code Review](/guides/nightly-code-review)
-- [Configuration Guide](/guides/configuration)
+- [Nightly Code Review](../guides/nightly-code-review.md)
+- [Configuration Guide](../guides/configuration.md)
 
 ## 5. The 2 A.M. Runaway
 
@@ -119,8 +119,8 @@ metering plus a cap you actually set is the whole of Pulpo's runaway protection,
 
 Best docs to read next:
 
-- [Configuration Guide](/guides/configuration)
-- [Config Reference](/reference/config)
+- [Configuration Guide](../guides/configuration.md)
+- [Config Reference](../reference/config.md)
 
 ## 6. Sovereign Infrastructure: Private Repos, Private Data
 
@@ -140,16 +140,16 @@ on that machine — Pulpo never stores them.
 
 Best docs to read next:
 
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale)
+- [Private Infrastructure With Tailscale](../guides/private-infra-with-tailscale.md)
 
 ## Quick Decision Table
 
 | If you need... | Start here |
 | --- | --- |
-| An instant answer to "what are my agents costing me" | [Quickstart](/getting-started/quickstart) |
-| An agent that survives a closed laptop lid | [Control Your Agents From Anywhere](/guides/remote-control) |
-| Multiple agents on one repo without collisions | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
-| A recurring job that can't overspend | [Nightly Code Review](/guides/nightly-code-review) |
-| Alerts before a runaway session gets expensive | [Configuration Guide](/guides/configuration) |
-| Agents near private repos or internal APIs | [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) |
-| An objective comparison with alternatives | [Alternatives And Comparisons](/getting-started/alternatives) |
+| An instant answer to "what are my agents costing me" | [Quickstart](quickstart.md) |
+| An agent that survives a closed laptop lid | [Control Your Agents From Anywhere](../guides/remote-control.md) |
+| Multiple agents on one repo without collisions | [Parallel Agents On One Repo](../guides/parallel-agents-one-repo.md) |
+| A recurring job that can't overspend | [Nightly Code Review](../guides/nightly-code-review.md) |
+| Alerts before a runaway session gets expensive | [Configuration Guide](../guides/configuration.md) |
+| Agents near private repos or internal APIs | [Private Infrastructure With Tailscale](../guides/private-infra-with-tailscale.md) |
+| An objective comparison with alternatives | [Alternatives And Comparisons](alternatives.md) |

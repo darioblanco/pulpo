@@ -1,4 +1,4 @@
-.PHONY: all check fmt lint test test-rust e2e coverage coverage-rust coverage-web build build-web-if-missing clean sweep setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
+.PHONY: all check fmt lint test test-rust e2e coverage coverage-rust coverage-web build build-web-if-missing clean sweep setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci docs docs-serve
 
 # Run all checks (what pre-commit runs)
 all: fmt lint test
@@ -55,6 +55,18 @@ dev-web:
 doc-preview:
 	cd web && PORT=5174 npm run dev -- --host 0.0.0.0 --port 5174
 
+# ─── Docs (mdBook) ─────────────────────────────────────────────────────────
+# make docs        → build the mdBook docs site to docs/book/
+# make docs-serve   → serve the docs site locally with live reload
+
+# Build the mdBook docs site (requires `cargo install mdbook`; see AGENTS.md)
+docs:
+	mdbook build docs
+
+# Serve the docs site locally with live reload (default: http://localhost:3000)
+docs-serve:
+	mdbook serve docs
+
 # Run web tests in watch mode
 test-web-watch:
 	cd web && npx vitest
@@ -101,7 +113,7 @@ test-rust:
 # HTTP API — no mocks. See crates/pulpo-e2e (the harness + fake-claude/fake-codex/
 # fake-pi binaries) and crates/pulpo-e2e/tests/scenarios.rs (the scenarios) for what
 # this covers, and
-# CLAUDE.md's testing section for the strategy. Not part of `make ci`/the pre-commit
+# AGENTS.md's testing section for the strategy. Not part of `make ci`/the pre-commit
 # hook (too slow — the full suite takes roughly a minute, dominated by a schedule
 # test that has to wait for a real minute boundary) — it runs in its own CI job and
 # is meant to be run manually before a PR that touches session/watchdog/harness

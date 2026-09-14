@@ -88,7 +88,7 @@ If the source session used a worktree, the new session **adopts it** — no new 
 checkout is created. A worktree shared this way is only reclaimed once *every* session
 referencing it has stopped (via `stop --purge` or `pulpo cleanup`), so purging the source
 session early never deletes work a handoff session still needs. See
-[Plan Then Build](/guides/plan-then-build) for the full workflow.
+[Plan Then Build](../guides/plan-then-build.md) for the full workflow.
 
 If no command is given, the new session opens a login shell in the same directory —
 handy for wrapping up manually.
@@ -116,9 +116,9 @@ There is no per-schedule node flag — a schedule always fires on the node that 
 create it on another machine, use the global `--url` flag before the subcommand (see
 [Global Options](#global-options)): `pulpo --url gpu-box schedule add ...`.
 
-**Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every `[scheduler] tick_secs` seconds (default 60, minimum 1 — see [Config Reference](/reference/config)), so cron expressions more granular than the tick interval won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
+**Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every `[scheduler] tick_secs` seconds (default 60, minimum 1 — see [Config Reference](config.md)), so cron expressions more granular than the tick interval won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
-**Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. A plain `pulpo stop` on that run's session leaves the worktree on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention. See [Worktrees](/guides/worktrees) for the full cleanup model.
+**Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. A plain `pulpo stop` on that run's session leaves the worktree on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention. See [Worktrees](../guides/worktrees.md) for the full cleanup model.
 
 ## Hook (internal)
 
@@ -127,7 +127,7 @@ pulpo hook <harness> [--event <NAME>]     Report a harness lifecycle event to th
 pulpo hook codex-notify <payload>         Codex's notify variant: payload as an argument, not stdin
 ```
 
-Not meant to be run by hand — a [harness adapter](/architecture/harness-adapters) (the
+Not meant to be run by hand — a [harness adapter](../architecture/harness-adapters.md) (the
 Claude Code adapter's `--settings` hooks, the Codex adapter's hooks/notify config, or the
 pi adapter's `pulpo.ts` extension) injects this as the command its own hook/event config
 invokes, so the harness itself runs it whenever a lifecycle event fires (a turn finishes,
@@ -162,7 +162,7 @@ argument. It posts the raw payload, unmodified, to the daemon as harness `"codex
 even when the real `SessionStart` hook never fired, but it flapped the session
 Active→Idle on every turn and was removed; a lost session whose `SessionStart` hook never
 fired is instead recovered by Codex's rollout-discovery fallback on its next spawn/resume
-— see [Harness Adapters](/architecture/harness-adapters#shipped-the-codex-adapter)). Same
+— see [Harness Adapters](../architecture/harness-adapters.md#shipped-the-codex-adapter)). Same
 always-exit-0/2s-timeout/silent contract as the general form.
 
 ## Global Options
@@ -216,7 +216,7 @@ pulpo spawn frontend --workdir ~/repos/my-app --worktree -d -- claude -p "Redesi
 pulpo spawn backend  --workdir ~/repos/my-app --worktree -d -- codex "Optimize the user query path"
 ```
 
-See [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for the complete recipe.
+See [Parallel Agents On One Repo](../guides/parallel-agents-one-repo.md) for the complete recipe.
 
 ### Nightly review with a cost budget
 
@@ -227,7 +227,7 @@ pulpo schedule add nightly-review "0 3 * * *" \
   -- claude -p "Review the last day's commits for bugs, security issues, and style"
 ```
 
-See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.
+See [Nightly Code Review](../guides/nightly-code-review.md) for the complete recipe.
 
 ### Remote private-infra run with a credential
 
@@ -237,7 +237,7 @@ pulpo --url mac-mini spawn review-backend \
   -- env GITHUB_TOKEN=ghp_work_xxxxxxxxxxxx claude -p "Review this service for correctness, security issues, and missing tests."
 ```
 
-See [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) for the complete recipe.
+See [Private Infrastructure With Tailscale](../guides/private-infra-with-tailscale.md) for the complete recipe.
 
 ### Worktree-isolated risky task
 
@@ -248,7 +248,7 @@ pulpo spawn risky-refactor \
   -- claude --dangerously-skip-permissions -p "Refactor the service layer and simplify the data flow."
 ```
 
-The `--worktree` flag gives the agent an isolated git worktree on its own branch, so a high-permission run cannot disturb your main checkout. See [Worktrees](/guides/worktrees) for the complete recipe.
+The `--worktree` flag gives the agent an isolated git worktree on its own branch, so a high-permission run cannot disturb your main checkout. See [Worktrees](../guides/worktrees.md) for the complete recipe.
 
 ### Follow all sessions in parallel (tmux panes)
 

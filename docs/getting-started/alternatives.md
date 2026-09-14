@@ -88,7 +88,7 @@ are not something Pulpo competes with — they're the layer Pulpo runs on top of
 `pulpo spawn` takes any command after `--`. The agent does the actual coding work; Pulpo wraps
 that invocation with a durable lifecycle, exact usage metering (Claude Code, Codex, and pi so
 far), budgets, and remote reachability. Switching agents, or running several at once, doesn't
-change how you use Pulpo — see [Agent Examples](/guides/agent-examples).
+change how you use Pulpo — see [Agent Examples](../guides/agent-examples.md).
 
 ## Category 4: Raw Infrastructure (tmux, cron, SSH, Docker Scripts)
 

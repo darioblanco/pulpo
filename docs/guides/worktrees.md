@@ -1,8 +1,6 @@
 # Worktrees Guide
 
-::: warning Operational Layer
-Worktrees are a useful operational feature, but they are not required to understand or use Pulpo. The core model is still session -> runtime -> lifecycle.
-:::
+> **Operational Layer:** Worktrees are a useful operational feature, but they are not required to understand or use Pulpo. The core model is still session -> runtime -> lifecycle.
 
 This guide matters most for:
 
@@ -13,7 +11,7 @@ This guide matters most for:
 Run multiple agents on the same repository without conflicts. Each agent gets its own git worktree — an isolated checkout with its own branch and working directory.
 
 If you want the full end-to-end workflow rather than the feature explanation,
-see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
+see [Parallel Agents On One Repo](parallel-agents-one-repo.md).
 
 ## Why worktrees?
 
@@ -105,7 +103,7 @@ many sessions, worktrees, and log files it removed.
 If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
 
 `pulpo handoff` can make two sessions share one worktree (see
-[Plan Then Build](/guides/plan-then-build)) — in that case the worktree is only reclaimed
+[Plan Then Build](plan-then-build.md)) — in that case the worktree is only reclaimed
 once *every* session referencing it has stopped, so purging one early never deletes work
 the other still needs.
 

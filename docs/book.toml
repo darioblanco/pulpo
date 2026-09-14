@@ -1,0 +1,20 @@
+[book]
+title = "Pulpo"
+description = "Self-hosted meter and breaker box for coding agents"
+authors = ["Dario Blanco"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/darioblanco/pulpo"
+edit-url-template = "https://github.com/darioblanco/pulpo/edit/main/docs/{path}"
+site-url = "/"
+cname = "pulpo.darioblanco.com"
+
+[output.html.fold]
+enable = true
+level = 1

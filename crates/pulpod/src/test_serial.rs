@@ -9,7 +9,7 @@
 //! `tmux_run_and_capture`-based tests, `test_setup_logging_captures_session_output_to_file`,
 //! `test_check_tmux_version_succeeds_if_installed`). Running several of those
 //! concurrently was a documented source of flakiness (session name collisions,
-//! server startup races) — see `CLAUDE.md`'s testing section. A single process-wide
+//! server startup races) — see `AGENTS.md`'s testing section. A single process-wide
 //! mutex, held for a whole test's duration, is the simplest fix: it doesn't require
 //! auditing every test for which socket it uses today, and it stays correct if a
 //! future test is added without an isolated socket.
@@ -29,7 +29,7 @@ static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 // Every caller is a `#[cfg(not(coverage))]` real-tmux test (see `session::manager::
 // real_tmux_tests` and `backend::tmux`'s own integration tests), so this has no
 // callers left at all under a coverage build — same "dead code under coverage"
-// pattern documented in CLAUDE.md's coverage-exclusion section.
+// pattern documented in AGENTS.md's coverage-exclusion section.
 #[cfg_attr(coverage, allow(dead_code))]
 pub fn lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))

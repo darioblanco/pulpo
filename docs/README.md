@@ -1,34 +1,32 @@
----
-home: true
-title: Pulpo Documentation
-heroText: Pulpo
-heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
-tagline: The self-hosted meter and breaker box for coding agents. Run any agent as a durable session on your own machine, metered exactly and capped before the wall.
-actions:
-  - text: Why Pulpo
-    link: /getting-started/why-pulpo
-    type: primary
-  - text: Quickstart
-    link: /getting-started/quickstart
-    type: secondary
-  - text: Install
-    link: /getting-started/install
-    type: default
-  - text: Use Cases
-    link: /getting-started/use-cases
-    type: default
-features:
-  - title: Hook-driven state
-    details: "For Claude Code, Codex, and pi, Pulpo wires the harness's own lifecycle hooks at spawn time — real status (including a `needs input (<reason>)` label and the real exit code) instead of a scrollback guess, and `pulpo resume` replays the harness's own conversation after a reboot. Any other command falls back to the same scrollback-pattern watchdog Pulpo always had."
-  - title: Exact metering, per repo
-    details: "Reads exact token counts from each agent's own session files (Claude Code, Codex, pi) and costs them from your rate table, attributed per session and rolled up per repo. Codex reports exact quota rather than a per-token cost. `[rates.<model>]` prices new models with no code change. No output-scraping fallback: an unsupported agent shows no usage."
-  - title: A cap that stops at 100%
-    details: "Per-session and per-schedule cost caps that alert at 80% and stop at 100%, recorded as an intervention you can audit."
-  - title: One webhook, your stack
-    details: "Canonical events (lifecycle changes, interventions, usage/cost alerts) delivered as a plain POST to any number of `[[webhooks]]`, in-memory queue with a fixed retry schedule. Pulpo doesn't ship dashboards; your Grafana/Datadog/SIEM is the dashboard."
-  - title: Durable, scheduled, isolated
-    details: "Each agent runs in a `tmux` session with an explicit lifecycle that survives reboots, cron-based schedules for unattended recurring runs, and per-session git worktrees so parallel agents never collide. Command-agnostic."
----
+# Pulpo Documentation
+
+The self-hosted meter and breaker box for coding agents. Run any agent as a durable
+session on your own machine, metered exactly and capped before the wall.
+
+[Why Pulpo](getting-started/why-pulpo.md) ·
+[Quickstart](getting-started/quickstart.md) ·
+[Install](getting-started/install.md) ·
+[Use Cases](getting-started/use-cases.md)
+
+- **Hook-driven state** — For Claude Code, Codex, and pi, Pulpo wires the harness's own
+  lifecycle hooks at spawn time: real status (including a `needs input (<reason>)` label
+  and the real exit code) instead of a scrollback guess, and `pulpo resume` replays the
+  harness's own conversation after a reboot. Any other command falls back to the same
+  scrollback-pattern watchdog Pulpo always had.
+- **Exact metering, per repo** — Reads exact token counts from each agent's own session
+  files (Claude Code, Codex, pi) and costs them from your rate table, attributed per
+  session and rolled up per repo. Codex reports exact quota rather than a per-token cost.
+  `[rates.<model>]` prices new models with no code change. No output-scraping fallback: an
+  unsupported agent shows no usage.
+- **A cap that stops at 100%** — Per-session and per-schedule cost caps that alert at 80%
+  and stop at 100%, recorded as an intervention you can audit.
+- **One webhook, your stack** — Canonical events (lifecycle changes, interventions,
+  usage/cost alerts) delivered as a plain POST to any number of `[[webhooks]]`, in-memory
+  queue with a fixed retry schedule. Pulpo doesn't ship dashboards; your
+  Grafana/Datadog/SIEM is the dashboard.
+- **Durable, scheduled, isolated** — Each agent runs in a `tmux` session with an explicit
+  lifecycle that survives reboots, cron-based schedules for unattended recurring runs, and
+  per-session git worktrees so parallel agents never collide. Command-agnostic.
 
 ## What Pulpo Is
 
@@ -65,17 +63,17 @@ Pulpo exists for that gap.
 - operators who need budgets and alerts that actually intervene, not a post-hoc invoice
 - teams that require self-hosting, private-network access, and vendor independence
 
-See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view, and
-[Use Cases](/getting-started/use-cases) for concrete profiles.
+See [Why Pulpo](getting-started/why-pulpo.md) for the full ICP and competitor view, and
+[Use Cases](getting-started/use-cases.md) for concrete profiles.
 
 ## Example Workflows
 
-- [Control Your Agents From Anywhere](/guides/remote-control): spawn, detach, and reattach from a laptop or phone over Tailscale
-- [Nightly Code Review](/guides/nightly-code-review): schedule an overnight review with a budget cap and wake to the result + an exact cost
-- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across concurrent sessions, each in its own worktree
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale): run agents across your own machines, reachable from your phone over the tailnet
-- [Worktrees](/guides/worktrees): give a risky run an isolated git worktree
-- [Agent Examples](/guides/agent-examples): how Pulpo wraps Claude Code, Codex, Gemini CLI, and more
+- [Control Your Agents From Anywhere](guides/remote-control.md): spawn, detach, and reattach from a laptop or phone over Tailscale
+- [Nightly Code Review](guides/nightly-code-review.md): schedule an overnight review with a budget cap and wake to the result + an exact cost
+- [Parallel Agents On One Repo](guides/parallel-agents-one-repo.md): split one repository across concurrent sessions, each in its own worktree
+- [Private Infrastructure With Tailscale](guides/private-infra-with-tailscale.md): run agents across your own machines, reachable from your phone over the tailnet
+- [Worktrees](guides/worktrees.md): give a risky run an isolated git worktree
+- [Agent Examples](guides/agent-examples.md): how Pulpo wraps Claude Code, Codex, Gemini CLI, and more
 
 ## Where Pulpo Fits
 
@@ -100,44 +98,44 @@ and SSE stream, the scheduler, and the event-forwarding backbone (`[[webhooks]]`
 Pulpo is **single-node-first** — each node meters and governs its own sessions with no central
 server required. There is deliberately no control plane: reach each node directly with
 `pulpo --url <host:port>`, a saved connection in the web UI, or SSH/tmux — see
-[Control Your Agents From Anywhere](/guides/remote-control). For a view across machines, point
+[Control Your Agents From Anywhere](guides/remote-control.md). For a view across machines, point
 every node's event forwarding (`[[webhooks]]`) at the same collector you already run.
 
 ## Read In Order
 
-1. [Why Pulpo](/getting-started/why-pulpo) for positioning, ICPs, and alternatives
-2. [Use Cases](/getting-started/use-cases) for concrete user profiles and workflows
-3. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
-4. [Core Concepts](/architecture/core-concepts) for the vocabulary
-5. [Architecture Overview](/architecture/overview) for the mental model
-6. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
-7. [Harness Adapters](/architecture/harness-adapters) for how agent lifecycle events replace scrollback scraping
-8. [Configuration Guide](/guides/configuration) for operational setup
-9. [Config Reference](/reference/config) for every config key, including `[rates.<model>]`
-10. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+1. [Why Pulpo](getting-started/why-pulpo.md) for positioning, ICPs, and alternatives
+2. [Use Cases](getting-started/use-cases.md) for concrete user profiles and workflows
+3. [Quickstart](getting-started/quickstart.md) for the shortest hands-on path
+4. [Core Concepts](architecture/core-concepts.md) for the vocabulary
+5. [Architecture Overview](architecture/overview.md) for the mental model
+6. [Session Lifecycle](operations/session-lifecycle.md) for behavior guarantees
+7. [Harness Adapters](architecture/harness-adapters.md) for how agent lifecycle events replace scrollback scraping
+8. [Configuration Guide](guides/configuration.md) for operational setup
+9. [Config Reference](reference/config.md) for every config key, including `[rates.<model>]`
+10. [CLI Reference](reference/cli.md) or [API Reference](reference/api.md) for exact commands
 
 ## Quick Links
 
-- [Why Pulpo](/getting-started/why-pulpo)
-- [Use Cases](/getting-started/use-cases)
-- [Alternatives And Comparisons](/getting-started/alternatives)
-- [Install](/getting-started/install)
-- [Quickstart](/getting-started/quickstart)
-- [Core Concepts](/architecture/core-concepts)
-- [Architecture Overview](/architecture/overview)
-- [Session Lifecycle](/operations/session-lifecycle)
-- [Harness Adapters](/architecture/harness-adapters)
-- [Configuration Guide](/guides/configuration)
-- [Control Your Agents From Anywhere](/guides/remote-control)
-- [Nightly Code Review](/guides/nightly-code-review)
-- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale)
-- [Worktrees](/guides/worktrees)
-- [Agent Examples](/guides/agent-examples)
-- [Recovery Guide](/guides/recovery)
-- [CLI Reference](/reference/cli)
-- [Config Reference](/reference/config)
-- [API Reference](/reference/api)
+- [Why Pulpo](getting-started/why-pulpo.md)
+- [Use Cases](getting-started/use-cases.md)
+- [Alternatives And Comparisons](getting-started/alternatives.md)
+- [Install](getting-started/install.md)
+- [Quickstart](getting-started/quickstart.md)
+- [Core Concepts](architecture/core-concepts.md)
+- [Architecture Overview](architecture/overview.md)
+- [Session Lifecycle](operations/session-lifecycle.md)
+- [Harness Adapters](architecture/harness-adapters.md)
+- [Configuration Guide](guides/configuration.md)
+- [Control Your Agents From Anywhere](guides/remote-control.md)
+- [Nightly Code Review](guides/nightly-code-review.md)
+- [Parallel Agents On One Repo](guides/parallel-agents-one-repo.md)
+- [Private Infrastructure With Tailscale](guides/private-infra-with-tailscale.md)
+- [Worktrees](guides/worktrees.md)
+- [Agent Examples](guides/agent-examples.md)
+- [Recovery Guide](guides/recovery.md)
+- [CLI Reference](reference/cli.md)
+- [Config Reference](reference/config.md)
+- [API Reference](reference/api.md)
 - [Examples](https://github.com/darioblanco/pulpo/tree/main/examples)
-- [Release and Distribution](/operations/release-and-distribution)
-- [LLM Index](/llms.txt)
+- [Release and Distribution](operations/release-and-distribution.md)
+- [LLM Index](llms.txt)
