@@ -11,6 +11,8 @@ pulpo logs <NAME> [--lines N] [--follow]  Show session output (alias: l; default
 pulpo attach <NAME>                       Attach to a session terminal (alias: a)
 pulpo input <NAME> [TEXT]                 Send text input to a session (alias: i, send)
 pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, kill; -p/--purge also removes from history)
+pulpo rm <NAME>                           Remove a single session outright (alias: remove; must not
+                                          be active or idle — stop it first)
 pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost, ready, or stopped session (alias: r; auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions (alias: iv)

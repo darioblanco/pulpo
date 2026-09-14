@@ -6,6 +6,7 @@ import {
   getSession,
   createSession,
   stopSession,
+  removeSession,
   getSessionOutput,
   downloadSessionOutput,
   sendInput,
@@ -290,6 +291,50 @@ describe('stopSession', () => {
     });
 
     await expect(stopSession('abc')).rejects.toThrow('Failed to stop session');
+  });
+});
+
+describe('removeSession', () => {
+  it('sends DELETE to /api/v1/sessions/:id', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await removeSession('abc');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/abc', {
+      method: 'DELETE',
+      headers: {},
+    });
+  });
+
+  it('encodes the session id', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await removeSession('id with space');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/id%20with%20space', {
+      method: 'DELETE',
+      headers: {},
+    });
+  });
+
+  it('throws on conflict response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'session cannot be removed' })),
+      json: () => Promise.resolve({ error: 'session cannot be removed' }),
+    });
+
+    await expect(removeSession('abc')).rejects.toThrow('session cannot be removed');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(removeSession('abc')).rejects.toThrow('Failed to remove session');
   });
 });
 

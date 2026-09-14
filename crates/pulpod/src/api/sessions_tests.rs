@@ -309,6 +309,134 @@ async fn test_stop_with_purge() {
 }
 
 #[tokio::test]
+async fn test_remove_not_found() {
+    let state = test_state().await;
+    let result = remove(State(state), Path("nonexistent".into())).await;
+    assert!(result.is_err());
+    let (status, _) = result.unwrap_err();
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_remove_conflict_when_active() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "remove-active".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let session = resp.session;
+
+    let result = remove(State(state), Path(session.id.to_string())).await;
+    assert!(result.is_err());
+    let (status, _) = result.unwrap_err();
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_remove_purges_stopped_session() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "remove-stopped".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let sid = resp.session.id.to_string();
+
+    stop(
+        State(state.clone()),
+        Path(sid.clone()),
+        Query(StopQuery { purge: None }),
+    )
+    .await
+    .unwrap();
+
+    let result = remove(State(state.clone()), Path(sid.clone())).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+
+    let get_result = get(State(state), Path(sid)).await;
+    assert!(get_result.is_err());
+    let (status, _) = get_result.unwrap_err();
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_remove_purges_intervention_events() {
+    use pulpo_common::session::InterventionCode;
+
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "remove-events".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let sid = resp.session.id.to_string();
+
+    stop(
+        State(state.clone()),
+        Path(sid.clone()),
+        Query(StopQuery { purge: None }),
+    )
+    .await
+    .unwrap();
+    state
+        .store
+        .update_session_intervention(&sid, InterventionCode::IdleTimeout, "idle for 10m")
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .store
+            .list_intervention_events(&sid)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    remove(State(state.clone()), Path(sid.clone()))
+        .await
+        .unwrap();
+
+    assert!(
+        state
+            .store
+            .list_intervention_events(&sid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn test_output_for_session() {
     let state = test_state().await;
     let req = CreateSessionRequest {

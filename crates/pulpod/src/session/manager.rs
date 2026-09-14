@@ -703,9 +703,33 @@ impl SessionManager {
         remove_session_log(self.store.data_dir(), &session_id);
         remove_exit_markers(self.store.data_dir(), &session_id);
         cleanup_harness_dir(self.store.data_dir(), &session_id);
+        self.store.delete_intervention_events(&session_id).await?;
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
+    }
+
+    /// Remove a session outright (`DELETE /api/v1/sessions/{id}`, `pulpo rm`):
+    /// purge its row, intervention events, exit markers, session log, and harness
+    /// dir via [`Self::purge_session`] — the same helper `stop_session(..., purge:
+    /// true)` uses. Only sessions not currently `Active`/`Idle` may be removed —
+    /// stop it first, same rule `pulpo cleanup`'s dead-session sweep already
+    /// follows implicitly (it only ever considers `Stopped`/`Lost` sessions).
+    pub async fn remove_session(&self, id: &str) -> Result<()> {
+        let session = self
+            .store
+            .get_session(id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {id}"))?;
+
+        if matches!(session.status, SessionStatus::Active | SessionStatus::Idle) {
+            bail!(
+                "session cannot be removed while status is {} — stop it first",
+                session.status
+            );
+        }
+
+        self.purge_session(&session).await
     }
 
     /// True when another (non-dead) session still references `worktree_path` — guards

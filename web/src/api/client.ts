@@ -118,6 +118,19 @@ export async function stopSession(id: string, purge?: boolean): Promise<void> {
   if (!res.ok) throw await apiError(res, 'Failed to stop session');
 }
 
+/**
+ * Remove a single session outright (`DELETE /api/v1/sessions/{id}`). Only sessions
+ * not currently active/idle may be removed — the daemon returns 409 otherwise
+ * (stop it first). Purges the session row, its intervention events, exit markers,
+ * session log, and harness dir.
+ */
+export async function removeSession(id: string): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw await apiError(res, 'Failed to remove session');
+}
+
 export async function cleanupSessions(): Promise<CleanupSessionsResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/sessions/cleanup`, { method: 'POST' });
   if (!res.ok) throw await apiError(res, 'Failed to cleanup sessions');

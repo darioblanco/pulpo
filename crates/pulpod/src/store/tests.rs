@@ -1336,6 +1336,55 @@ async fn test_intervention_events_after_table_dropped() {
 }
 
 #[tokio::test]
+async fn test_delete_intervention_events_removes_only_that_sessions_rows() {
+    let store = test_store().await;
+    let session = make_session("purge-events-test");
+    store.insert_session(&session).await.unwrap();
+    let sid = session.id.to_string();
+
+    let other = make_session("other-session");
+    store.insert_session(&other).await.unwrap();
+    let other_id = other.id.to_string();
+
+    store
+        .update_session_intervention(&sid, InterventionCode::MemoryPressure, "Memory 95%")
+        .await
+        .unwrap();
+    store
+        .update_session_intervention(&other_id, InterventionCode::IdleTimeout, "Idle 10m")
+        .await
+        .unwrap();
+
+    store.delete_intervention_events(&sid).await.unwrap();
+
+    assert!(
+        store
+            .list_intervention_events(&sid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_intervention_events(&other_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn test_delete_intervention_events_noop_for_unknown_session() {
+    let store = test_store().await;
+    // No rows to delete — must succeed rather than error.
+    store
+        .delete_intervention_events("nonexistent-id")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_intervention_event_debug_clone() {
     let event = InterventionEvent {
         id: 1,

@@ -173,6 +173,13 @@ pub enum Commands {
         purge: bool,
     },
 
+    /// Remove a single session (must not be active or idle — stop it first)
+    #[command(alias = "remove")]
+    Rm {
+        /// Session name or ID
+        name: String,
+    },
+
     /// Remove all stopped and lost sessions
     Cleanup,
 
@@ -1225,6 +1232,18 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             Ok(results.join("\n"))
         }
+        Commands::Rm { name } => {
+            request_text(
+                &client,
+                reqwest::Method::DELETE,
+                format!("{url}/api/v1/sessions/{name}"),
+                token.as_deref(),
+                node,
+                None,
+            )
+            .await?;
+            Ok(format!("Removed session \"{name}\""))
+        }
         Commands::Cleanup => {
             let result: CleanupResponse = request_json(
                 &client,
@@ -1884,7 +1903,8 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}",
-                get(|| async { TEST_SESSION_JSON.to_owned() }),
+                get(|| async { TEST_SESSION_JSON.to_owned() })
+                    .delete(|| async { StatusCode::NO_CONTENT }),
             )
             .route(
                 "/api/v1/sessions/{id}/handoff",
@@ -2260,6 +2280,30 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("stopped and purged"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_rm_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::Rm {
+                name: "test-session".into(),
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "Removed session \"test-session\"");
+    }
+
+    #[test]
+    fn test_parse_rm_alias_remove() {
+        let cli = Cli::try_parse_from(["pulpo", "remove", "test-session"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Rm { name }) if name == "test-session"
+        ));
     }
 
     #[tokio::test]
