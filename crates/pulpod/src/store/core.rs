@@ -49,9 +49,32 @@ impl Store {
             self.backup_before_migrating()?;
         }
         MIGRATOR.run(&self.pool).await?;
+        self.warm_up_after_migrating().await;
         self.enforce_db_permissions();
 
         Ok(())
+    }
+
+    /// Work around a `sqlx-sqlite` 0.8.6 defect: on a connection that has just
+    /// executed an `ALTER TABLE ... ADD COLUMN` (as several migrations here do),
+    /// the *first* subsequent query bound with 2+ parameters against that table
+    /// mis-sizes its cached column metadata and panics the connection's worker
+    /// thread (`index out of bounds` in `SqliteRow::current`) — which silently
+    /// kills that connection for the rest of the pool's life (later queries on it
+    /// return no rows instead of erroring). Reproduced independently of this
+    /// crate's own SQL — a bare `ALTER TABLE t ADD COLUMN x` followed directly by
+    /// any 2-parameter `SELECT` on `t` triggers it. A single zero-bind query
+    /// against the *same table* on the connection in between avoids it (a
+    /// zero-bind query against an unrelated table/expression, e.g. plain `SELECT
+    /// 1`, was not reliably enough in testing with many prior statements on the
+    /// connection — `SELECT * FROM sessions LIMIT 0` is). Run it right after
+    /// migrating (a no-op if nothing was pending) so every migration that adds a
+    /// column is protected without each one needing to know about this itself.
+    /// Best-effort: failure here must never block startup.
+    async fn warm_up_after_migrating(&self) {
+        let _ = sqlx::query("SELECT * FROM sessions LIMIT 0")
+            .fetch_optional(&self.pool)
+            .await;
     }
 
     /// Whether this database already has migration history (i.e. isn't a

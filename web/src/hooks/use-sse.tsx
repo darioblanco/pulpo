@@ -64,21 +64,15 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     setSessions(
       current.map((s, i) => {
         if (i !== idx) return s;
-        // The event is authoritative for `needs_input` — always sync (set or
-        // clear) the metadata key from it rather than only ever setting it,
-        // otherwise a stale badge would survive a `Working`/`TurnFinished`
-        // transition that cleared it server-side.
-        const metadata = { ...(s.metadata ?? {}) };
-        if (event.needs_input) {
-          metadata.needs_input = event.needs_input;
-        } else {
-          delete metadata.needs_input;
-        }
+        // The event is authoritative for `status_reason` — always sync it from the
+        // event (set or clear) rather than only ever setting it, otherwise a stale
+        // reason would survive a transition that cleared it server-side (e.g.
+        // `waiting` → `working`).
         return {
           ...s,
           status: event.status,
+          status_reason: event.status_reason ?? null,
           output_snippet: event.output_snippet ?? s.output_snippet,
-          metadata,
         };
       }),
     );

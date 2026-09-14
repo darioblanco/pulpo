@@ -25,7 +25,7 @@ pub mod registry;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use pulpo_common::session::{SessionStatus, meta};
+use pulpo_common::session::{SessionStatus, meta, status_reason};
 use serde::{Deserialize, Serialize};
 
 pub use registry::HarnessRegistry;
@@ -292,6 +292,10 @@ pub trait HarnessAdapter: Send + Sync {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StateUpdate {
     pub status: Option<SessionStatus>,
+    /// `Session::status_reason` to pair with `status` — see
+    /// `pulpo_common::session::status_reason`. `None` when `status` is `None`, or
+    /// when the target status is one that never carries a reason.
+    pub status_reason: Option<String>,
     pub metadata_set: Vec<(&'static str, String)>,
     pub metadata_clear: Vec<&'static str>,
     /// Set on `SessionStarted` when the harness reported its own session id.
@@ -313,23 +317,33 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 
 /// Map a normalized [`HarnessEvent`] to the session/metadata changes it implies.
 ///
-/// `backend_alive` decides the `SessionEnded` branch (Ready if the backend — e.g. the
-/// tmux session — is still alive, Stopped if it's already gone); the caller resolves
-/// this via the `Backend` trait since it requires I/O this pure function can't do.
+/// `SessionEnded` deliberately returns `status: None` — the harness process is in
+/// the middle of exiting, but the wrapper's own exit marker (the deterministic
+/// signal `wrap_command` writes) hasn't necessarily landed yet, and the tmux backend
+/// hasn't necessarily died yet either. `session::manager::apply_harness_event`
+/// leaves the status alone in that case and lets the ordinary dead-backend
+/// classification (`SessionManager::resolve_dead_backend_session`, driven by the
+/// next `get_session`/`list_sessions`/`resume_lost_sessions` check) resolve it to
+/// `Done`/`Lost` once the backend is actually confirmed dead — except when the exit
+/// marker has *already* landed by the time the event is processed, in which case the
+/// caller transitions straight to `Done` itself rather than waiting.
 #[must_use]
-pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateUpdate {
+pub fn transition_for_event(event: &HarnessEvent) -> StateUpdate {
     match event {
         HarnessEvent::SessionStarted {
             harness_session_id,
             resumed: _,
         } => StateUpdate {
-            status: Some(SessionStatus::Active),
+            status: Some(SessionStatus::Working),
+            // Opportunistic cleanup of the pre-ADR-0009 `needs_input` metadata key —
+            // new code never writes it (the reason lives in `status_reason` now), but
+            // a legacy row not yet touched by migration 0010 may still have it.
             metadata_clear: vec![meta::NEEDS_INPUT],
             harness_session_id: harness_session_id.clone(),
             ..Default::default()
         },
         HarnessEvent::Working => StateUpdate {
-            status: Some(SessionStatus::Active),
+            status: Some(SessionStatus::Working),
             metadata_clear: vec![meta::NEEDS_INPUT, meta::ERROR_STATUS, meta::ERROR_STATUS_AT],
             ..Default::default()
         },
@@ -340,20 +354,25 @@ pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateU
                 .into_iter()
                 .collect();
             StateUpdate {
-                status: Some(SessionStatus::Idle),
+                status: Some(SessionStatus::Waiting),
+                status_reason: Some(status_reason::IDLE.to_owned()),
                 metadata_set,
                 // A turn finishing (e.g. `Stop` after the user approved a permission
                 // prompt in the terminal, with no hook in between) always clears a
-                // stale `needs_input` — otherwise `pulpo ls`/the web UI keep showing
-                // "needs input (permission)" on a session that's simply done.
+                // stale `needs_input` key — otherwise a legacy row could keep it
+                // forever now that new code never overwrites it.
                 metadata_clear: vec![meta::NEEDS_INPUT],
                 set_idle_since: true,
                 ..Default::default()
             }
         }
         HarnessEvent::NeedsInput { reason } => StateUpdate {
-            status: Some(SessionStatus::Idle),
-            metadata_set: vec![(meta::NEEDS_INPUT, truncate_chars(&reason.to_string(), 500))],
+            status: Some(SessionStatus::Waiting),
+            status_reason: Some(status_reason::needs_input(&truncate_chars(
+                &reason.to_string(),
+                500,
+            ))),
+            metadata_clear: vec![meta::NEEDS_INPUT],
             notify: true,
             ..Default::default()
         },
@@ -372,23 +391,17 @@ pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateU
                 metadata_set.push((meta::RATE_LIMIT_AT, now));
             }
             StateUpdate {
-                status: Some(SessionStatus::Idle),
+                status: Some(SessionStatus::Waiting),
+                status_reason: Some(status_reason::IDLE.to_owned()),
                 metadata_set,
-                // A failed turn also clears any stale `needs_input` — the harness
+                // A failed turn also clears any stale `needs_input` key — the harness
                 // moved past whatever it was blocked on (or crashed out of it).
                 metadata_clear: vec![meta::NEEDS_INPUT],
                 notify: true,
                 ..Default::default()
             }
         }
-        HarnessEvent::SessionEnded { reason: _ } => StateUpdate {
-            status: Some(if backend_alive {
-                SessionStatus::Ready
-            } else {
-                SessionStatus::Stopped
-            }),
-            ..Default::default()
-        },
+        HarnessEvent::SessionEnded { reason: _ } => StateUpdate::default(),
     }
 }
 
@@ -485,37 +498,33 @@ mod tests {
     }
 
     #[test]
-    fn test_transition_session_started_sets_active_and_id() {
-        let update = transition_for_event(
-            &HarnessEvent::SessionStarted {
-                harness_session_id: Some("sid-1".into()),
-                resumed: false,
-            },
-            true,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Active));
+    fn test_transition_session_started_sets_working_and_id() {
+        let update = transition_for_event(&HarnessEvent::SessionStarted {
+            harness_session_id: Some("sid-1".into()),
+            resumed: false,
+        });
+        assert_eq!(update.status, Some(SessionStatus::Working));
+        assert_eq!(update.status_reason, None);
         assert_eq!(update.harness_session_id.as_deref(), Some("sid-1"));
         assert_eq!(update.metadata_clear, vec![meta::NEEDS_INPUT]);
         assert!(!update.notify);
     }
 
     #[test]
-    fn test_transition_session_started_resumed_still_active() {
-        let update = transition_for_event(
-            &HarnessEvent::SessionStarted {
-                harness_session_id: None,
-                resumed: true,
-            },
-            true,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Active));
+    fn test_transition_session_started_resumed_still_working() {
+        let update = transition_for_event(&HarnessEvent::SessionStarted {
+            harness_session_id: None,
+            resumed: true,
+        });
+        assert_eq!(update.status, Some(SessionStatus::Working));
         assert!(update.harness_session_id.is_none());
     }
 
     #[test]
     fn test_transition_working_clears_needs_input_and_error() {
-        let update = transition_for_event(&HarnessEvent::Working, true);
-        assert_eq!(update.status, Some(SessionStatus::Active));
+        let update = transition_for_event(&HarnessEvent::Working);
+        assert_eq!(update.status, Some(SessionStatus::Working));
+        assert_eq!(update.status_reason, None);
         assert_eq!(
             update.metadata_clear,
             vec![meta::NEEDS_INPUT, meta::ERROR_STATUS, meta::ERROR_STATUS_AT]
@@ -524,14 +533,12 @@ mod tests {
     }
 
     #[test]
-    fn test_transition_turn_finished_sets_idle_and_summary() {
-        let update = transition_for_event(
-            &HarnessEvent::TurnFinished {
-                summary: Some("Fixed the bug".into()),
-            },
-            true,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Idle));
+    fn test_transition_turn_finished_sets_waiting_idle_and_summary() {
+        let update = transition_for_event(&HarnessEvent::TurnFinished {
+            summary: Some("Fixed the bug".into()),
+        });
+        assert_eq!(update.status, Some(SessionStatus::Waiting));
+        assert_eq!(update.status_reason.as_deref(), Some(status_reason::IDLE));
         assert!(update.set_idle_since);
         assert_eq!(
             update.metadata_set,
@@ -543,18 +550,15 @@ mod tests {
     #[test]
     fn test_transition_turn_finished_truncates_summary_to_200_chars() {
         let long = "x".repeat(500);
-        let update = transition_for_event(
-            &HarnessEvent::TurnFinished {
-                summary: Some(long),
-            },
-            true,
-        );
+        let update = transition_for_event(&HarnessEvent::TurnFinished {
+            summary: Some(long),
+        });
         assert_eq!(update.metadata_set[0].1.chars().count(), 200);
     }
 
     #[test]
     fn test_transition_turn_finished_no_summary_sets_no_metadata() {
-        let update = transition_for_event(&HarnessEvent::TurnFinished { summary: None }, true);
+        let update = transition_for_event(&HarnessEvent::TurnFinished { summary: None });
         assert!(update.metadata_set.is_empty());
         assert!(update.set_idle_since);
     }
@@ -563,38 +567,48 @@ mod tests {
     fn test_transition_turn_finished_clears_needs_input() {
         // Scenario: permission_prompt sets needs_input, the user approves in the
         // terminal (no hook fires for the approval itself), the turn then finishes
-        // via `Stop` with no further hook to clear it — the stale "needs input
-        // (permission)" badge must not survive a completed turn.
-        let update = transition_for_event(&HarnessEvent::TurnFinished { summary: None }, true);
+        // via `Stop` with no further hook to clear it — a stale legacy `needs_input`
+        // metadata key (kept for cleanup only; new code never writes it) must not
+        // survive a completed turn.
+        let update = transition_for_event(&HarnessEvent::TurnFinished { summary: None });
         assert_eq!(update.metadata_clear, vec![meta::NEEDS_INPUT]);
     }
 
     #[test]
-    fn test_transition_needs_input_sets_idle_and_reason_and_notifies() {
-        let update = transition_for_event(
-            &HarnessEvent::NeedsInput {
-                reason: NeedsInputReason::Permission,
-            },
-            true,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Idle));
+    fn test_transition_needs_input_sets_waiting_and_reason_and_notifies() {
+        let update = transition_for_event(&HarnessEvent::NeedsInput {
+            reason: NeedsInputReason::Permission,
+        });
+        assert_eq!(update.status, Some(SessionStatus::Waiting));
         assert_eq!(
-            update.metadata_set,
-            vec![(meta::NEEDS_INPUT, "permission".to_owned())]
+            update.status_reason.as_deref(),
+            Some("needs_input:permission")
         );
+        assert!(update.metadata_set.is_empty());
         assert!(update.notify);
     }
 
     #[test]
-    fn test_transition_failed_sets_idle_error_and_notifies() {
-        let update = transition_for_event(
-            &HarnessEvent::Failed {
-                error: "API error".into(),
-                rate_limited: false,
-            },
-            true,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Idle));
+    fn test_transition_needs_input_idle_reason_is_distinct_from_plain_idle() {
+        // `NeedsInputReason::Idle` (the harness idle-prompting the user, e.g. "still
+        // there?") is a *needs_input* sub-reason, distinct from the plain top-level
+        // `waiting` reason `idle` (turn finished / no output) that `TurnFinished`/
+        // `Failed` set.
+        let update = transition_for_event(&HarnessEvent::NeedsInput {
+            reason: NeedsInputReason::Idle,
+        });
+        assert_eq!(update.status_reason.as_deref(), Some("needs_input:idle"));
+        assert_ne!(update.status_reason.as_deref(), Some(status_reason::IDLE));
+    }
+
+    #[test]
+    fn test_transition_failed_sets_waiting_idle_error_and_notifies() {
+        let update = transition_for_event(&HarnessEvent::Failed {
+            error: "API error".into(),
+            rate_limited: false,
+        });
+        assert_eq!(update.status, Some(SessionStatus::Waiting));
+        assert_eq!(update.status_reason.as_deref(), Some(status_reason::IDLE));
         assert!(
             update
                 .metadata_set
@@ -611,13 +625,10 @@ mod tests {
 
     #[test]
     fn test_transition_failed_rate_limited_sets_rate_limit_metadata() {
-        let update = transition_for_event(
-            &HarnessEvent::Failed {
-                error: "429 rate limited".into(),
-                rate_limited: true,
-            },
-            true,
-        );
+        let update = transition_for_event(&HarnessEvent::Failed {
+            error: "429 rate limited".into(),
+            rate_limited: true,
+        });
         assert!(
             update
                 .metadata_set
@@ -634,26 +645,20 @@ mod tests {
 
     #[test]
     fn test_transition_failed_clears_needs_input() {
-        let update = transition_for_event(
-            &HarnessEvent::Failed {
-                error: "API error".into(),
-                rate_limited: false,
-            },
-            true,
-        );
+        let update = transition_for_event(&HarnessEvent::Failed {
+            error: "API error".into(),
+            rate_limited: false,
+        });
         assert_eq!(update.metadata_clear, vec![meta::NEEDS_INPUT]);
     }
 
     #[test]
     fn test_transition_failed_truncates_error_to_500_chars() {
         let long = "x".repeat(2000);
-        let update = transition_for_event(
-            &HarnessEvent::Failed {
-                error: long,
-                rate_limited: true,
-            },
-            true,
-        );
+        let update = transition_for_event(&HarnessEvent::Failed {
+            error: long,
+            rate_limited: true,
+        });
         for (key, value) in &update.metadata_set {
             if *key == meta::ERROR_STATUS || *key == meta::RATE_LIMIT {
                 assert_eq!(value.chars().count(), 500, "key {key} not truncated");
@@ -664,29 +669,30 @@ mod tests {
     #[test]
     fn test_transition_needs_input_truncates_other_reason_to_500_chars() {
         let long = "y".repeat(2000);
-        let update = transition_for_event(
-            &HarnessEvent::NeedsInput {
-                reason: NeedsInputReason::Other(long),
-            },
-            true,
+        let update = transition_for_event(&HarnessEvent::NeedsInput {
+            reason: NeedsInputReason::Other(long),
+        });
+        // "needs_input:" (12 chars) + 500 chars of the (truncated) inner reason.
+        assert_eq!(
+            update.status_reason.as_deref().unwrap().len()
+                - status_reason::NEEDS_INPUT_PREFIX.len(),
+            500
         );
-        assert_eq!(update.metadata_set[0].1.chars().count(), 500);
     }
 
     #[test]
-    fn test_transition_session_ended_ready_when_backend_alive() {
-        let update = transition_for_event(&HarnessEvent::SessionEnded { reason: None }, true);
-        assert_eq!(update.status, Some(SessionStatus::Ready));
-    }
+    fn test_transition_session_ended_leaves_status_alone() {
+        // The harness process is only just starting to exit — the caller
+        // (`session::manager::apply_harness_event`) decides whether to transition to
+        // `Done` immediately (exit marker already landed) or leave the status as-is
+        // and let the ordinary dead-backend classification catch it later.
+        let update = transition_for_event(&HarnessEvent::SessionEnded { reason: None });
+        assert_eq!(update.status, None);
+        assert_eq!(update.status_reason, None);
 
-    #[test]
-    fn test_transition_session_ended_stopped_when_backend_gone() {
-        let update = transition_for_event(
-            &HarnessEvent::SessionEnded {
-                reason: Some("exit".into()),
-            },
-            false,
-        );
-        assert_eq!(update.status, Some(SessionStatus::Stopped));
+        let update = transition_for_event(&HarnessEvent::SessionEnded {
+            reason: Some("exit".into()),
+        });
+        assert_eq!(update.status, None);
     }
 }

@@ -16,7 +16,9 @@ import { detectStatusChanges } from '@/lib/notifications';
 import { toast } from 'sonner';
 import type { NodeInfo, Session } from '@/api/types';
 
-const DEFAULT_STATUSES = new Set(['active', 'idle', 'ready']);
+// Mirrors `pulpo ls`'s default: hide only `done`, show everything still "live"
+// (starting/working/waiting/lost) — see `SessionFilter`'s own default.
+const DEFAULT_STATUSES = new Set(['starting', 'working', 'waiting', 'lost']);
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -75,8 +77,11 @@ export function DashboardPage() {
     if (previousSessionsRef.current.length > 0) {
       const changes = detectStatusChanges(previousSessionsRef.current, sessions);
       for (const change of changes) {
+        // `done` merges the old `ready` (clean exit) and `stopped` (forced/explicit)
+        // statuses — recover the distinction from `toReason`, mirroring the
+        // backend's own `exited` = informational vs. anything else = warn split.
         const label =
-          change.to === 'ready' ? 'ready' : change.to === 'stopped' ? 'stopped' : 'resumed';
+          change.to === 'done' ? (change.toReason === 'exited' ? 'done' : 'stopped') : 'resumed';
         toast(`${change.sessionName} ${label}`);
       }
     }
@@ -88,15 +93,8 @@ export function DashboardPage() {
     setSearchQuery(query.search);
   }, []);
 
-  // Build the set of visible statuses: always include 'creating' plus selected
-  const visibleStatuses = useMemo(() => {
-    const s = new Set(selectedStatuses);
-    s.add('creating');
-    return s;
-  }, [selectedStatuses]);
-
   const filteredSessions = useMemo(() => {
-    let result = sessions.filter((s) => visibleStatuses.has(s.status));
+    let result = sessions.filter((s) => selectedStatuses.has(s.status));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -104,10 +102,10 @@ export function DashboardPage() {
       );
     }
     return result;
-  }, [sessions, visibleStatuses, searchQuery]);
+  }, [sessions, selectedStatuses, searchQuery]);
 
   const hasCleanable = useMemo(
-    () => sessions.some((s) => s.status === 'stopped' || s.status === 'lost'),
+    () => sessions.some((s) => s.status === 'done' || s.status === 'lost'),
     [sessions],
   );
 

@@ -72,19 +72,20 @@ Use `pulpo worktree list` (or `pulpo wt ls`) to see all sessions with worktrees:
 
 ```
 NAME                 BRANCH               STATUS     PATH
-fix-auth             fix-auth             active     /home/user/.pulpo/worktrees/fix-auth
-add-tests            add-tests            idle       /home/user/.pulpo/worktrees/add-tests
+fix-auth             fix-auth             working    /home/user/.pulpo/worktrees/fix-auth
+add-tests            add-tests            waiting    /home/user/.pulpo/worktrees/add-tests
 ```
 
 ## Cleanup
 
 A worktree is reclaimed when its session is **purged** — either by stopping with
-`--purge`, or by `pulpo cleanup`. A plain `pulpo stop` marks the session `stopped` but
-leaves the worktree on disk so you can still inspect it; it is reclaimed on the next purge.
+`--purge`, or by `pulpo cleanup`. A plain `pulpo stop` marks the session `done` (reason
+`stopped`) but leaves the worktree on disk so you can still inspect it; it is reclaimed
+on the next purge.
 
 ```bash
 pulpo stop fix-auth --purge   # stop + remove worktree dir, prune git refs, delete branch
-pulpo cleanup                 # reclaim every stopped/lost session's worktree, plus a safe sweep
+pulpo cleanup                 # reclaim every done/lost session's worktree, plus a safe sweep
 ```
 
 Per-session reclamation (purge) does three things:
@@ -96,8 +97,8 @@ Per-session reclamation (purge) does three things:
 `pulpo cleanup` additionally runs a **safe orphan sweep**: it removes worktree directories
 under `~/.pulpo/worktrees/` that are no longer referenced by *any* session (left behind by
 sessions deleted long ago) and deletes leftover per-session output logs. It never touches a
-directory still owned by a live session — to reclaim a finished session that is still
-`active`/`idle`/`ready` (its tmux pane lingers), stop it first. `pulpo cleanup` reports how
+directory still owned by a live session — to reclaim a session that is still
+`working`/`waiting`, stop it first. `pulpo cleanup` reports how
 many sessions, worktrees, and log files it removed.
 
 If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
@@ -134,9 +135,9 @@ Create PRs from each branch, or merge directly.
 Sessions using worktrees show a `[wt]` badge in `pulpo list`:
 
 ```
-ID        NAME            STATUS   USAGE     BRANCH      COMMAND
-a1b2c3d4  fix-auth [wt]   active   1.2K tok  fix-auth    claude -p "fix auth middleware"
-e5f6a7b8  add-tests [wt]  idle     840 tok   add-tests   claude -p "add missing unit tests"
+ID        NAME            STATUS    USAGE     BRANCH      COMMAND
+a1b2c3d4  fix-auth [wt]   working   1.2K tok  fix-auth    claude -p "fix auth middleware"
+e5f6a7b8  add-tests [wt]  waiting   840 tok   add-tests   claude -p "add missing unit tests"
 ```
 
 ## Requirements

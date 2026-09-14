@@ -101,11 +101,11 @@ token this endpoint would hand back.
 Both are computed from the structured usage readers (exact token/cost data read
 directly from each harness's own session files) — there is no output-scraping
 fallback and no credential reading. This data is normally refreshed by the
-watchdog while a session is `Active`/`Idle`, and again the moment it reaches
-`Ready`/`Stopped`; a `Stopped` session that still has no cost recorded (e.g. one
-from before this on-demand path existed) is computed and persisted on demand the
-first time `GET /api/v1/usage/sessions` (or `pulpo usage`) is queried, rather than
-reporting no cost forever.
+watchdog while a session is `Working`/`Waiting`, and again the moment it reaches
+`Done`; a `Done` session that still has no cost recorded (e.g. one from before this
+on-demand path existed) is computed and persisted on demand the first time
+`GET /api/v1/usage/sessions` (or `pulpo usage`) is queried, rather than reporting no
+cost forever.
 
 **`GET /api/v1/usage/sessions`** → `UsageSessionsResponse`:
 
@@ -150,9 +150,9 @@ table, or an unrecognized model).
 | GET | `/api/v1/sessions` | List sessions (`?status=`, `?search=`, `?sort=`, `?order=`) |
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details (`:id` resolves by UUID or name) |
-| DELETE | `/api/v1/sessions/:id` | Remove a single session outright (only when not `Active`/`Idle`) |
+| DELETE | `/api/v1/sessions/:id` | Remove a single session outright (only when not `Working`/`Waiting`) |
 | POST | `/api/v1/sessions/:id/stop` | Stop a running session (`?purge=true` to also remove the record) |
-| POST | `/api/v1/sessions/:id/resume` | Resume a lost, ready, or stopped session |
+| POST | `/api/v1/sessions/:id/resume` | Resume a done or lost session |
 | GET | `/api/v1/sessions/:id/output?lines=<n>` | Get captured terminal output (default 100 lines) |
 | GET | `/api/v1/sessions/:id/output/download` | Download full output as a `.log` file |
 | POST | `/api/v1/sessions/:id/input` | Send text input to a session |
@@ -160,7 +160,7 @@ table, or an unrecognized model).
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
 | POST | `/api/v1/sessions/:id/harness-events` | Ingest a harness lifecycle event (posted by `pulpo hook <harness>`) |
 | POST | `/api/v1/sessions/:id/handoff` | Spawn a new session inheriting this one's working directory and git worktree |
-| POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
+| POST | `/api/v1/sessions/cleanup` | Remove all done and lost sessions |
 
 ### The Session object
 
@@ -174,7 +174,8 @@ Every endpoint that returns a session (`list`, `get`, `create`, `resume`, `hando
 | `workdir` | string | Working directory |
 | `command` | string | The (possibly harness-rewritten) command actually run |
 | `description` | string \| null | Free-text note set at spawn time |
-| `status` | string | `creating` \| `active` \| `idle` \| `ready` \| `stopped` \| `lost` (see [Session Lifecycle](../operations/session-lifecycle.md)) |
+| `status` | string | `starting` \| `working` \| `waiting` \| `done` \| `lost` (see [Session Lifecycle](../operations/session-lifecycle.md)). Old six-state text (`creating`, `active`, `idle`, `ready`, `stopped`, `killed`) still deserializes on input, aliased onto the new states, for back-compat with older clients/stored data |
+| `status_reason` | string \| null | Why the session is in `status` — only ever set for `waiting` (`idle` \| `needs_input:<reason>`) and `done` (`exited` \| `stopped` \| `idle_timeout` \| `budget_exceeded` \| `memory_pressure`); `null` for `starting`/`working`/`lost` |
 | `exit_code` | number \| null | The agent process's exit code, once known (recorded from the `.code` exit marker, or from a hook-reported `SessionEnded` for harness-managed sessions) |
 | `backend_session_id` | string \| null | tmux `$N` id |
 | `output_snapshot` | string \| null | Last captured output (persisted snapshot; live tail comes from `output`/`stream`) |
@@ -261,10 +262,10 @@ doesn't exist, `409 Conflict` covers no stop case today (stop is idempotent-safe
 already-stopped session).
 
 `POST /api/v1/sessions/:id/resume` → `200 OK` with the updated `Session`; `400 Bad
-Request` if the session is `Active`/`Idle`/`Creating` (cannot be resumed — still
+Request` if the session is `Working`/`Waiting`/`Starting` (cannot be resumed — still
 running), `404` if not found. See [Resume Semantics](../operations/session-lifecycle.md#resume-semantics).
 
-`POST /api/v1/sessions/cleanup` — removes every `Stopped`/`Lost` session → `200 OK`,
+`POST /api/v1/sessions/cleanup` — removes every `Done`/`Lost` session → `200 OK`,
 `CleanupResponse`:
 
 | Field | Type | Description |
@@ -279,7 +280,7 @@ Removes a single session outright: purges the row, its intervention events, exit
 markers, session log, and git worktree/harness dir — the same purge helper
 `POST /api/v1/sessions/:id/stop?purge=true` and `POST /api/v1/sessions/cleanup` use.
 → `204 No Content`; `404` if the session doesn't exist; `409 Conflict` if it's
-currently `Active`/`Idle` — stop it first (`pulpo stop`). `pulpo rm <name-or-id>`
+currently `Working`/`Waiting` — stop it first (`pulpo stop`). `pulpo rm <name-or-id>`
 (alias `remove`) is the CLI equivalent.
 
 ### Output
@@ -327,7 +328,7 @@ notification channel.
 
 Status codes, checked in this order:
 - `404` if the session doesn't exist.
-- `204 No Content` (no-op) if the session is already `Stopped` or `Lost` — a hook can
+- `204 No Content` (no-op) if the session is already `Done` or `Lost` — a hook can
   fire after the harness process (and pulpo's own bookkeeping for it) is already done,
   which is expected and racy, not an error. This check runs *before* the harness-id
   check below, so a terminal session's events are never rejected just because
@@ -345,7 +346,7 @@ This endpoint isn't meant to be called directly — it's what `pulpo hook <harne
 
 ### Terminal Stream (`GET /api/v1/sessions/:id/stream`)
 
-WebSocket upgrade; `400 Bad Request` if the session isn't `Active`/`Idle`, `404` if it
+WebSocket upgrade; `400 Bad Request` if the session isn't `Working`/`Waiting`, `404` if it
 doesn't exist. Binary frames carry raw PTY I/O in both directions. A JSON text frame
 from the client can send a control message:
 
@@ -414,15 +415,16 @@ envelope described under [Webhooks](#webhooks) — SSE carries the raw internal 
 | Field | Type | Description |
 |-------|------|--------------|
 | `session_id` / `session_name` / `node_name` | string | — |
-| `status` | string | `creating` \| `active` \| `idle` \| `ready` \| `stopped` \| `lost` |
+| `status` | string | `starting` \| `working` \| `waiting` \| `done` \| `lost` |
 | `previous_status` | string \| null | — |
+| `status_reason` | string \| null | Why the session is in `status` — see the [Session object](#the-session-object) above; omitted (not just empty) when not set. Only set for `waiting`/`done` |
 | `output_snippet` | string \| null | — |
 | `timestamp` | RFC 3339 string | — |
 | `git_branch` / `git_commit` | string \| null | Omitted when absent |
 | `git_insertions` / `git_deletions` / `git_files_changed` | number \| null | Omitted when absent |
 | `pr_url` | string \| null | Omitted when absent |
 | `error_status` | string \| null | Omitted when absent |
-| `needs_input` | string \| null | The `needs_input` metadata reason (e.g. `permission`, `question`); omitted (not just empty) when not set |
+| `needs_input` | string \| null | **Deprecated, kept for one release.** The needs-input sub-reason (e.g. `permission`, `question`) when `status_reason` is `needs_input:<reason>`, populated from `status_reason` rather than written independently; omitted (not just empty) for a plain `waiting` (reason `idle`) session or any other status. New consumers should read `status_reason` instead |
 | `total_input_tokens` / `total_output_tokens` | number \| null | Omitted when absent |
 | `session_cost_usd` | number \| null | Omitted when absent |
 
@@ -468,14 +470,14 @@ to every endpoint whose filter admits it:
   "schema_version": 1,
   "event_id": "b6b6c7b0-...",
   "type": "lifecycle",
-  "subtype": "ready",
+  "subtype": "done",
   "severity": "info",
   "occurred_at": "2026-06-13T12:00:00Z",
   "node": "mac-mini",
   "session": {
     "id": "sess-1",
     "name": "fix-auth",
-    "status": "ready",
+    "status": "done",
     "git_branch": "feat/x",
     "pr_url": "https://github.com/org/repo/pull/9",
     "cost_usd": 2.5,
@@ -490,8 +492,8 @@ to every endpoint whose filter admits it:
 | `schema_version` | number | Always `1` |
 | `event_id` | UUID | Fresh per event; the idempotency key for at-least-once delivery (dedupe retries of the *same* event on it — there is no durable outbox, so an event that exhausts retries is simply dropped, not redelivered later) |
 | `type` | string | `lifecycle` \| `usage_alert` \| `intervention` (`fleet` is reserved from an earlier multi-node design; nothing emits it today) |
-| `subtype` | string | For `lifecycle`: the new session status. For `usage_alert`: `alert_kind`. For `intervention`: the `InterventionCode` string |
-| `severity` | string | `info` \| `warn` \| `critical` — the value `min_severity` filters on. Lifecycle: `lost`→critical, `stopped`/`idle`→warn, else info. Usage alert: always `warn`. Intervention: `budget_exceeded`/`memory_pressure`→critical, else warn |
+| `subtype` | string | For `lifecycle`: the new session status (`starting`/`working`/`waiting`/`done`/`lost`). For `usage_alert`: `alert_kind`. For `intervention`: the `InterventionCode` string |
+| `severity` | string | `info` \| `warn` \| `critical` — the value `min_severity` filters on. Lifecycle: `lost`→critical, `waiting`→warn, `done`→info if `status_reason` is `exited` (a clean end, same as the old `ready`'s severity) else warn (an explicit stop or an intervention code, same as the old `stopped`'s severity), else (`starting`/`working`) info. Usage alert: always `warn`. Intervention: `budget_exceeded`/`memory_pressure`→critical, else warn |
 | `occurred_at` | RFC 3339 string | — |
 | `node` | string | Emitting node's name |
 | `session` | object \| omitted | `{ id, name, status, ink?, git_branch?, pr_url?, cost_usd?, total_tokens? }` — present for session-scoped events |

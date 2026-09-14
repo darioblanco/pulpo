@@ -22,7 +22,7 @@ Typical outcomes:
 
 - a summary in session output
 - a generated branch or PR if the agent chooses to create one
-- a completed `ready` session you can inspect from the dashboard or CLI
+- a completed `done` session you can inspect from the dashboard or CLI
 
 ## When This Recipe Fits
 
@@ -83,7 +83,7 @@ pulpo logs nightly-review-20260331-0300
 In the web UI, you can:
 
 - open the sessions view
-- filter for `ready`, `idle`, or `lost`
+- filter for `done`, `waiting`, or `lost`
 - inspect output, branch badges, PR badges, and error indicators
 
 ## Variations
@@ -123,7 +123,7 @@ This recipe gets stronger when combined with:
 
 - [Private Infrastructure With Tailscale](private-infra-with-tailscale.md) for API keys and repo credentials
 - [Control Your Agents From Anywhere](remote-control.md) if you run more than one machine
-- notifications so you know when the overnight run is `ready`, `stopped`, or `lost`
+- notifications so you know when the overnight run is `done` or `lost`
 
 ## Related Commands
 

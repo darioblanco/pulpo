@@ -82,27 +82,40 @@ impl FromStr for InterventionCode {
     }
 }
 
+/// The five-state session model (ADR 0009): `starting` (spawn requested, backend
+/// not yet confirmed), `working` (the agent process is running and busy), `waiting`
+/// (the agent is at its prompt — `Session::status_reason` says why: `idle` or
+/// `needs_input:<reason>`), `done` (the process has exited and the backend is gone —
+/// `status_reason` says how: `exited`, `stopped`, or an intervention code — resumable),
+/// and `lost` (the backend died with no evidence of a clean end — resumable).
+///
+/// Replaces the old six-state model (`creating`, `active`, `idle`, `ready`, `stopped`,
+/// `lost`): `ready` and `stopped` both meant "not running, and resumable" and are
+/// merged into `done`, with the distinction moved to `status_reason`. `#[serde(alias)]`
+/// and the matching [`FromStr`] arms keep old JSON payloads and DB rows (pre-migration
+/// text, or a stale client) parseable.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     #[default]
-    Creating,
-    Active,
-    Idle,
-    Ready,
-    #[serde(alias = "killed")]
-    Stopped,
+    #[serde(alias = "creating")]
+    Starting,
+    #[serde(alias = "active")]
+    Working,
+    #[serde(alias = "idle")]
+    Waiting,
+    #[serde(alias = "ready", alias = "stopped", alias = "killed")]
+    Done,
     Lost,
 }
 
 impl fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Creating => write!(f, "creating"),
-            Self::Active => write!(f, "active"),
-            Self::Idle => write!(f, "idle"),
-            Self::Ready => write!(f, "ready"),
-            Self::Stopped => write!(f, "stopped"),
+            Self::Starting => write!(f, "starting"),
+            Self::Working => write!(f, "working"),
+            Self::Waiting => write!(f, "waiting"),
+            Self::Done => write!(f, "done"),
             Self::Lost => write!(f, "lost"),
         }
     }
@@ -113,14 +126,60 @@ impl FromStr for SessionStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "creating" => Ok(Self::Creating),
-            "active" => Ok(Self::Active),
-            "idle" => Ok(Self::Idle),
-            "ready" => Ok(Self::Ready),
-            "stopped" | "killed" => Ok(Self::Stopped),
+            "starting" | "creating" => Ok(Self::Starting),
+            "working" | "active" => Ok(Self::Working),
+            "waiting" | "idle" => Ok(Self::Waiting),
+            "done" | "ready" | "stopped" | "killed" => Ok(Self::Done),
             "lost" => Ok(Self::Lost),
             other => Err(format!("unknown session status: {other}")),
         }
+    }
+}
+
+/// Canonical `status_reason` values (ADR 0009). Stored as a plain TEXT column
+/// (`sessions.status_reason`, migration `0010_five_state_status.sql`) rather than a
+/// typed enum — the CLI/web/API format it for display, but nothing branches on it
+/// beyond string matching/prefixing, so a free-form string keeps the wire format and
+/// the DB schema simple. `None` on the [`Session`] for every status except `waiting`
+/// and `done`.
+pub mod status_reason {
+    /// `waiting`: the turn finished (or there's simply no new output) — not
+    /// specifically blocked on the user. Distinguished from [`NEEDS_INPUT_PREFIX`].
+    pub const IDLE: &str = "idle";
+    /// Prefix for a `waiting` session blocked on the user (a permission/question
+    /// prompt, from a harness hook or a scrollback waiting-pattern match). The suffix
+    /// is the harness's own reason label (`permission`, `question`, `idle`, or a
+    /// harness-specific string) — see [`needs_input`]/[`needs_input_reason`].
+    pub const NEEDS_INPUT_PREFIX: &str = "needs_input:";
+    /// `done`: the agent process exited on its own, or the session's shell ended
+    /// normally with no explicit `pulpo stop` — a clean end. `Session::exit_code`
+    /// carries the code when one was recorded.
+    pub const EXITED: &str = "exited";
+    /// `done`: the user ran `pulpo stop` (or the API/CLI equivalent).
+    pub const STOPPED: &str = "stopped";
+    /// `done`: watchdog idle-timeout kill. Mirrors `InterventionCode::IdleTimeout`'s
+    /// `Display` string.
+    pub const IDLE_TIMEOUT: &str = "idle_timeout";
+    /// `done`: budget breaker stop. Mirrors `InterventionCode::BudgetExceeded`'s
+    /// `Display` string.
+    pub const BUDGET_EXCEEDED: &str = "budget_exceeded";
+    /// `done`: memory-pressure breaker stop. Mirrors `InterventionCode::MemoryPressure`'s
+    /// `Display` string.
+    pub const MEMORY_PRESSURE: &str = "memory_pressure";
+
+    /// Build a `waiting` reason blocked on the user: `needs_input:<reason>` (e.g.
+    /// `needs_input:permission`).
+    #[must_use]
+    pub fn needs_input(reason: &str) -> String {
+        format!("{NEEDS_INPUT_PREFIX}{reason}")
+    }
+
+    /// Split a `needs_input:<reason>` status_reason into its inner reason. `None` for
+    /// anything else, including plain `idle` — callers that want to render "blocked on
+    /// me" vs. "just idle" branch on this.
+    #[must_use]
+    pub fn needs_input_reason(reason: &str) -> Option<&str> {
+        reason.strip_prefix(NEEDS_INPUT_PREFIX)
     }
 }
 
@@ -132,6 +191,11 @@ pub struct Session {
     pub command: String,
     pub description: Option<String>,
     pub status: SessionStatus,
+    /// Why the session is in its current status — see [`status_reason`]. Only ever
+    /// set for `waiting` (`idle` / `needs_input:<reason>`) and `done` (`exited` /
+    /// `stopped` / an intervention code); `None` for `starting`/`working`/`lost`.
+    #[serde(default)]
+    pub status_reason: Option<String>,
     pub exit_code: Option<i32>,
     pub backend_session_id: Option<String>,
     pub output_snapshot: Option<String>,
@@ -198,6 +262,7 @@ impl Default for Session {
             command: String::new(),
             description: None,
             status: SessionStatus::default(),
+            status_reason: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
@@ -290,7 +355,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             command: "claude -p 'Fix the bug'".into(),
             description: Some("Fix the bug".into()),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("test-session".into()),
             output_snapshot: Some("some output".into()),
             ..Default::default()
@@ -300,24 +365,20 @@ mod tests {
     #[test]
     fn test_session_status_serialize() {
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Creating).unwrap(),
-            "\"creating\""
+            serde_json::to_string(&SessionStatus::Starting).unwrap(),
+            "\"starting\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Active).unwrap(),
-            "\"active\""
+            serde_json::to_string(&SessionStatus::Working).unwrap(),
+            "\"working\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Idle).unwrap(),
-            "\"idle\""
+            serde_json::to_string(&SessionStatus::Waiting).unwrap(),
+            "\"waiting\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Ready).unwrap(),
-            "\"ready\""
-        );
-        assert_eq!(
-            serde_json::to_string(&SessionStatus::Stopped).unwrap(),
-            "\"stopped\""
+            serde_json::to_string(&SessionStatus::Done).unwrap(),
+            "\"done\""
         );
         assert_eq!(
             serde_json::to_string(&SessionStatus::Lost).unwrap(),
@@ -328,29 +389,44 @@ mod tests {
     #[test]
     fn test_session_status_deserialize() {
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"creating\"").unwrap(),
-            SessionStatus::Creating
+            serde_json::from_str::<SessionStatus>("\"starting\"").unwrap(),
+            SessionStatus::Starting
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"active\"").unwrap(),
-            SessionStatus::Active
+            serde_json::from_str::<SessionStatus>("\"working\"").unwrap(),
+            SessionStatus::Working
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"idle\"").unwrap(),
-            SessionStatus::Idle
+            serde_json::from_str::<SessionStatus>("\"waiting\"").unwrap(),
+            SessionStatus::Waiting
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"ready\"").unwrap(),
-            SessionStatus::Ready
-        );
-        assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"stopped\"").unwrap(),
-            SessionStatus::Stopped
+            serde_json::from_str::<SessionStatus>("\"done\"").unwrap(),
+            SessionStatus::Done
         );
         assert_eq!(
             serde_json::from_str::<SessionStatus>("\"lost\"").unwrap(),
             SessionStatus::Lost
         );
+    }
+
+    #[test]
+    fn test_session_status_deserialize_old_names_alias_to_new_states() {
+        // Old JSON payloads / DB text (pre-ADR-0009) must keep deserializing.
+        for (old, new) in [
+            ("creating", SessionStatus::Starting),
+            ("active", SessionStatus::Working),
+            ("idle", SessionStatus::Waiting),
+            ("ready", SessionStatus::Done),
+            ("stopped", SessionStatus::Done),
+            ("killed", SessionStatus::Done),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<SessionStatus>(&format!("\"{old}\"")).unwrap(),
+                new,
+                "alias {old}"
+            );
+        }
     }
 
     #[test]
@@ -360,35 +436,30 @@ mod tests {
 
     #[test]
     fn test_session_status_display() {
-        assert_eq!(SessionStatus::Creating.to_string(), "creating");
-        assert_eq!(SessionStatus::Active.to_string(), "active");
-        assert_eq!(SessionStatus::Idle.to_string(), "idle");
-        assert_eq!(SessionStatus::Ready.to_string(), "ready");
-        assert_eq!(SessionStatus::Stopped.to_string(), "stopped");
+        assert_eq!(SessionStatus::Starting.to_string(), "starting");
+        assert_eq!(SessionStatus::Working.to_string(), "working");
+        assert_eq!(SessionStatus::Waiting.to_string(), "waiting");
+        assert_eq!(SessionStatus::Done.to_string(), "done");
         assert_eq!(SessionStatus::Lost.to_string(), "lost");
     }
 
     #[test]
     fn test_session_status_from_str() {
         assert_eq!(
-            "creating".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Creating
+            "starting".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Starting
         );
         assert_eq!(
-            "active".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Active
+            "working".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Working
         );
         assert_eq!(
-            "idle".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Idle
+            "waiting".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Waiting
         );
         assert_eq!(
-            "ready".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Ready
-        );
-        assert_eq!(
-            "stopped".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Stopped
+            "done".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Done
         );
         assert_eq!(
             "lost".parse::<SessionStatus>().unwrap(),
@@ -397,9 +468,87 @@ mod tests {
     }
 
     #[test]
+    fn test_session_status_from_str_old_names_alias_to_new_states() {
+        // Old DB text (pre-migration, or a downgrade) must keep parsing via `FromStr`
+        // too — `store::rows::row_to_session` uses this, not serde.
+        for (old, new) in [
+            ("creating", SessionStatus::Starting),
+            ("active", SessionStatus::Working),
+            ("idle", SessionStatus::Waiting),
+            ("ready", SessionStatus::Done),
+            ("stopped", SessionStatus::Done),
+            ("killed", SessionStatus::Done),
+        ] {
+            assert_eq!(old.parse::<SessionStatus>().unwrap(), new, "alias {old}");
+        }
+    }
+
+    #[test]
     fn test_session_status_from_str_invalid() {
         let err = "invalid".parse::<SessionStatus>().unwrap_err();
         assert!(err.contains("unknown session status"));
+    }
+
+    #[test]
+    fn test_session_status_default_is_starting() {
+        assert_eq!(SessionStatus::default(), SessionStatus::Starting);
+    }
+
+    // -- status_reason helpers --
+
+    #[test]
+    fn test_status_reason_needs_input_builds_prefixed_string() {
+        assert_eq!(
+            status_reason::needs_input("permission"),
+            "needs_input:permission"
+        );
+    }
+
+    #[test]
+    fn test_status_reason_needs_input_reason_splits_prefix() {
+        assert_eq!(
+            status_reason::needs_input_reason("needs_input:permission"),
+            Some("permission")
+        );
+        assert_eq!(
+            status_reason::needs_input_reason("needs_input:custom label"),
+            Some("custom label")
+        );
+    }
+
+    #[test]
+    fn test_status_reason_needs_input_reason_none_for_non_needs_input() {
+        assert_eq!(status_reason::needs_input_reason("idle"), None);
+        assert_eq!(status_reason::needs_input_reason("exited"), None);
+        assert_eq!(status_reason::needs_input_reason(""), None);
+    }
+
+    #[test]
+    fn test_status_reason_constants() {
+        assert_eq!(status_reason::IDLE, "idle");
+        assert_eq!(status_reason::EXITED, "exited");
+        assert_eq!(status_reason::STOPPED, "stopped");
+        assert_eq!(status_reason::IDLE_TIMEOUT, "idle_timeout");
+        assert_eq!(status_reason::BUDGET_EXCEEDED, "budget_exceeded");
+        assert_eq!(status_reason::MEMORY_PRESSURE, "memory_pressure");
+    }
+
+    #[test]
+    fn test_session_status_reason_roundtrip() {
+        let mut session = make_session();
+        session.status = SessionStatus::Done;
+        session.status_reason = Some(status_reason::EXITED.to_owned());
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"status_reason\":\"exited\""));
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.status_reason.as_deref(), Some("exited"));
+    }
+
+    #[test]
+    fn test_session_status_reason_defaults_to_none_when_absent() {
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"test","workdir":"/tmp","command":"echo","status":"working","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.status_reason, None);
     }
 
     #[test]
@@ -422,7 +571,7 @@ mod tests {
             workdir: "/tmp".into(),
             command: "echo hello".into(),
             description: None,
-            status: SessionStatus::Creating,
+            status: SessionStatus::Starting,
             ..Default::default()
         };
 
@@ -433,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_session_status_clone_and_copy() {
-        let s = SessionStatus::Active;
+        let s = SessionStatus::Working;
         let s2 = s;
         #[allow(clippy::clone_on_copy)]
         let s3 = s.clone();
@@ -443,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_session_status_debug() {
-        assert_eq!(format!("{:?}", SessionStatus::Active), "Active");
+        assert_eq!(format!("{:?}", SessionStatus::Working), "Working");
     }
 
     #[test]
@@ -454,7 +603,7 @@ mod tests {
             workdir: "/tmp".into(),
             command: "echo test".into(),
             description: None,
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         };
         let debug = format!("{session:?}");
@@ -468,7 +617,7 @@ mod tests {
             name: "clone-test".into(),
             workdir: "/tmp".into(),
             command: "echo test".into(),
-            status: SessionStatus::Ready,
+            status: SessionStatus::Done,
             exit_code: Some(0),
             ..Default::default()
         };
@@ -487,7 +636,7 @@ mod tests {
             workdir: "/tmp".into(),
             command: "claude -p 'test'".into(),
             description: Some("Testing".into()),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             metadata: Some(meta),
             ink: Some("coder".into()),
             ..Default::default()

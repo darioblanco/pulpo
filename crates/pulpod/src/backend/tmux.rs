@@ -910,14 +910,17 @@ mod tests {
         // through tmux, just like pulpod does in production.
         let id = uuid::Uuid::new_v4();
         let data_dir = tempfile::tempdir().unwrap();
+        // ADR 0009: wrap_command no longer keeps a fallback shell alive after the
+        // wrapped command exits, so the command itself must linger briefly (like
+        // `test_tmux_session_runs_simple_command` above) for the polling capture
+        // below to have a chance to see the output before tmux tears the session
+        // down on its own.
         let wrapped = crate::session::manager::wrap_command_for_test(
-            "echo WRAPPED_OK",
+            "echo WRAPPED_OK && sleep 5",
             &id,
             "integ-wrapped",
             data_dir.path().to_str().unwrap(),
         );
-        // wrap_command runs a fallback shell (not exec'd) so the session stays alive
-        // and the wrapper can still write the `.clean` marker once it exits.
         let output = tmux_run_and_capture("pulpo-integ-wrapped", &wrapped, None);
         assert!(
             output.contains("WRAPPED_OK"),
@@ -935,8 +938,10 @@ mod tests {
         // common source of quoting bugs. Verify they survive the wrapping.
         let id = uuid::Uuid::new_v4();
         let data_dir = tempfile::tempdir().unwrap();
+        // See the comment in `test_tmux_session_runs_wrapped_command` above — the
+        // command must linger since there's no more fallback shell to do it for us.
         let wrapped = crate::session::manager::wrap_command_for_test(
-            "echo 'QUOTED_OK'",
+            "echo 'QUOTED_OK' && sleep 5",
             &id,
             "integ-quotes",
             data_dir.path().to_str().unwrap(),

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Session } from '@/api/types';
 import { getScheduleRuns } from '@/api/client';
-import { formatDuration, formatRelativeTime, isTerminal, statusColors } from '@/lib/utils';
+import { formatDuration, formatRelativeTime, isTerminal, sessionStatusColor } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
@@ -74,9 +74,7 @@ export function RunHistoryPanel({ scheduleId, expanded }: Props) {
                 <td className="px-2 py-1">
                   <span className="inline-flex items-center gap-1.5">
                     <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        statusColors[run.status] ?? 'bg-muted-foreground'
-                      }`}
+                      className={`inline-block h-2 w-2 rounded-full ${sessionStatusColor(run)}`}
                     />
                     <span className="capitalize">{run.status}</span>
                   </span>

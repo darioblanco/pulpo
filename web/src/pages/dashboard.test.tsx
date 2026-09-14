@@ -119,11 +119,11 @@ describe('DashboardPage', () => {
   it('renders status filter chips with defaults selected', async () => {
     renderDashboard();
     await waitFor(() => {
-      expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByTestId('status-chip-idle')).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByTestId('status-chip-ready')).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByTestId('status-chip-stopped')).toHaveAttribute('aria-pressed', 'false');
-      expect(screen.getByTestId('status-chip-lost')).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByTestId('status-chip-starting')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-working')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-waiting')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-lost')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-done')).toHaveAttribute('aria-pressed', 'false');
     });
   });
 
@@ -140,7 +140,8 @@ describe('DashboardPage', () => {
       {
         id: 'sess-1',
         name: 'running-task',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -154,9 +155,10 @@ describe('DashboardPage', () => {
       },
       {
         id: 'sess-2',
-        name: 'done-task',
-        status: 'ready',
-        command: 'Done',
+        name: 'lost-task',
+        status: 'lost',
+        status_reason: null,
+        command: 'Fix',
         description: null,
         workdir: '/repo',
         metadata: null,
@@ -169,8 +171,9 @@ describe('DashboardPage', () => {
       },
       {
         id: 'sess-3',
-        name: 'stopped-task',
-        status: 'stopped',
+        name: 'done-task',
+        status: 'done',
+        status_reason: 'exited',
         command: 'Old',
         description: null,
         workdir: '/repo',
@@ -225,15 +228,16 @@ describe('DashboardPage', () => {
     const es = MockEventSource.instances[0];
     es.onopen?.();
 
-    // Both active and ready sessions show (default filters include active, idle, ready)
+    // working and lost sessions show (default filters include starting, working,
+    // waiting, lost — hides only done)
     await waitFor(() => {
-      expect(screen.getByTestId('count-active').textContent).toBe('1');
-      expect(screen.getByTestId('count-ready').textContent).toBe('1');
+      expect(screen.getByTestId('count-working').textContent).toBe('1');
+      expect(screen.getByTestId('count-lost').textContent).toBe('1');
     });
-    // Active and ready sessions visible, stopped is hidden by default
+    // working and lost sessions visible, done is hidden by default
     expect(screen.getByText('running-task')).toBeInTheDocument();
-    expect(screen.getByText('done-task')).toBeInTheDocument();
-    expect(screen.queryByText('stopped-task')).not.toBeInTheDocument();
+    expect(screen.getByText('lost-task')).toBeInTheDocument();
+    expect(screen.queryByText('done-task')).not.toBeInTheDocument();
   });
 
   it('processes notifications when SSE delivers a status change', async () => {
@@ -241,7 +245,8 @@ describe('DashboardPage', () => {
       {
         id: 'sess-1',
         name: 'my-task',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -298,33 +303,35 @@ describe('DashboardPage', () => {
 
     // Wait for initial sessions to load
     await waitFor(() => {
-      expect(screen.getByTestId('count-active').textContent).toBe('1');
+      expect(screen.getByTestId('count-working').textContent).toBe('1');
     });
 
-    // Now send a session event changing status to ready
+    // Now send a session event changing status to done (clean exit)
     const sessionHandler = es.listeners['session']?.[0];
     expect(sessionHandler).toBeDefined();
     sessionHandler({
       data: JSON.stringify({
         session_id: 'sess-1',
         session_name: 'my-task',
-        status: 'ready',
+        status: 'done',
+        status_reason: 'exited',
         output_snippet: null,
       }),
     });
 
     // The notification processing should fire (previousRef has length > 0)
     await waitFor(() => {
-      expect(screen.getByTestId('count-ready').textContent).toBe('1');
+      expect(screen.getByTestId('count-done').textContent).toBe('1');
     });
   });
 
-  it('shows cleanup button when stopped sessions exist', async () => {
+  it('shows cleanup button when done sessions exist', async () => {
     const sessionData = [
       {
         id: 'sess-1',
-        name: 'stopped-task',
-        status: 'stopped',
+        name: 'done-task',
+        status: 'done',
+        status_reason: 'stopped',
         command: 'done',
         description: null,
         workdir: '/repo',
@@ -386,12 +393,13 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('does not show cleanup button when no stopped/lost sessions', async () => {
+  it('does not show cleanup button when no done/lost sessions', async () => {
     const sessionData = [
       {
         id: 'sess-1',
-        name: 'active-task',
-        status: 'active',
+        name: 'working-task',
+        status: 'working',
+        status_reason: null,
         command: 'run',
         description: null,
         workdir: '/repo',

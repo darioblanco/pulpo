@@ -11,8 +11,10 @@ interface SessionFilterProps {
 
 export function SessionFilter({
   onFilter,
-  statusOptions = ['active', 'idle', 'ready', 'stopped', 'lost'],
-  defaultStatuses = ['active', 'idle', 'ready'],
+  statusOptions = ['starting', 'working', 'waiting', 'done', 'lost'],
+  // Mirrors `pulpo ls`'s default: hide only `done`, show everything still "live"
+  // (including `lost`, which is resumable and worth surfacing, not `--all`-gated).
+  defaultStatuses = ['starting', 'working', 'waiting', 'lost'],
 }: SessionFilterProps) {
   const [searchParams, setSearchParams] = useSearchParams();
 

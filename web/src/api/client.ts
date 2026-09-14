@@ -120,7 +120,7 @@ export async function stopSession(id: string, purge?: boolean): Promise<void> {
 
 /**
  * Remove a single session outright (`DELETE /api/v1/sessions/{id}`). Only sessions
- * not currently active/idle may be removed — the daemon returns 409 otherwise
+ * not currently working/waiting may be removed — the daemon returns 409 otherwise
  * (stop it first). Purges the session row, its intervention events, exit markers,
  * session log, and harness dir.
  */

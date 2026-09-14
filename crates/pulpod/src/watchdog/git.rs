@@ -14,7 +14,7 @@ pub(super) async fn update_git_info(store: &Store) {
 
     let live: Vec<_> = sessions
         .into_iter()
-        .filter(|s| s.status == SessionStatus::Active || s.status == SessionStatus::Idle)
+        .filter(|s| s.status == SessionStatus::Working || s.status == SessionStatus::Waiting)
         .collect();
 
     for session in live {

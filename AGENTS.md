@@ -55,8 +55,8 @@ deliberately not planned. In priority order for live work:
 2. Nothing else is currently prioritized above what ROADMAP.md "Parked" lists — check
    there before proposing new scope, and check [docs/adr/](docs/adr/README.md) for
    whether a related decision has already been made (e.g. the five-state session model
-   in ADR [0009](docs/adr/0009-five-state-session-model.md) is accepted but its
-   implementation is still open work).
+   in ADR [0009](docs/adr/0009-five-state-session-model.md) is accepted and now
+   implemented — see PR_NUMBER_PLACEHOLDER).
 
 **Do NOT build:** mDNS/seed discovery, Tailscale peer discovery or a peer registry
 (`bind = "tailscale"` stays for transport only), an MCP server, a Kubernetes backend,
@@ -211,12 +211,12 @@ under a temp `bin/` dir named exactly like the real CLI it imitates (`claude`/
 `kill_tmux_server`/`cleanup`/`fake_bin(harness)` (plus `fake_claude_bin`/
 `fake_codex_bin`/`fake_pi_bin` shorthands).
 
-**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 20 `#[test]` functions across
-17 numbered scenarios — S7, S13, and S16 each cover two; numbering skips 17-18,
-reserved for the five-state session model work): S1 spawn
-reaches Active with harness metadata; S2 a permission prompt sets `needs_input` and
-`pulpo input` resolves it; S3 a clean exit resolves through Ready then Stopped and
-`pulpo resume` continues the same harness conversation (`--resume <id>`); S4 the
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 21 `#[test]` functions across
+18 numbered scenarios — S7, S13, and S16 each cover two): S1 spawn
+reaches Working with harness metadata; S2 a permission prompt sets `status_reason =
+needs_input:permission` and `pulpo input` resolves it; S3 a clean exit resolves
+straight to Done (reason `exited`, no more Ready in between) and `pulpo resume`
+continues the same harness conversation (`--resume <id>`); S4 the
 tmux server dying marks the session Lost and resume reactivates it; S5 a daemon
 restart preserves a live session and auto-resumes one whose tmux died while the
 daemon was down, named after the session (not a stale `$N` id); S6 the budget
@@ -225,7 +225,7 @@ kill intervention fires, and `--idle-threshold 0` disables the time-based
 transition for a generic command; S8 a due schedule fires a session; S9 two
 worktrees on one repo stay distinct, survive a plain stop, and are removed by
 `pulpo cleanup`; S10 hooks reach a non-default port (`PULPO_URL`); S11 a generic
-(harness-less) command uses the scrollback/exit-marker path and ends Stopped; S12 a
+(harness-less) command uses the scrollback/exit-marker path and ends Done; S12 a
 spawned command's quoted, multi-word `-p` prompt (and a later `--model` flag) reaches
 the harness as intact arguments — `fake-claude` records its own `argv` to
 `pulpo-fake-argv.json`, proving `shell_words::join`/`split` round-trip through the CLI,
@@ -241,9 +241,9 @@ unhelpful "pulpod did not start in time" from the CLI; it now quarantines the
 unusable file as `state.db.unusable-<UTC timestamp>` and starts fresh, proven by
 `pulpo ls --all` succeeding afterward (see
 [Release and Distribution](docs/operations/release-and-distribution.md) "Upgrading
-pulpod"). S14 drives `fake-codex` through spawn (Active, `harness ==
+pulpod"). S14 drives `fake-codex` through spawn (Working, `harness ==
 "codex"`), the first hook learning `harness_session_id`, a permission prompt
-(`needs_input`), a clean exit, and `pulpo resume` reaching the fake as `codex
+(`status_reason = needs_input:permission`), a clean exit, and `pulpo resume` reaching the fake as `codex
 resume <id> ...` inside the *same* isolated `CODEX_HOME` — and that `pulpo usage
 --scan` counts the fake's own rollout file. S15 is the pi equivalent, additionally
 proving `--session-id` idempotency: the resume command has the identical shape as
@@ -258,11 +258,17 @@ thread; the second additionally removes the session's worktree before resuming
 and proves the fallback still succeeds (not refused) — Codex's `resume --last` is
 keyed by an isolated `CODEX_HOME`, not by the directory it runs from, unlike
 Claude/pi's `--continue` (see "Resume fallback" below, and the
-`session::manager` unit tests covering the refusal for those two). S19 starts a
-second `pulpod` against the same data directory while the first is still
-running and asserts it exits non-zero without touching the first's `state.db` —
-the single-instance lock `store::lock` exists specifically because the database
-is opened well before the port is bound (see [Release and
+`session::manager` unit tests covering the refusal for those two). S17 proves
+the whole `done`-session story for `pulpo attach`/`resume` together: attaching a
+`done` session fails fast (no live backend to attach to at all — ADR 0009 removed
+the old `Ready`-with-alive-fallback-shell window `attach` used to be able to reach)
+with an error naming the status and hinting at `pulpo resume`/`pulpo logs`, and
+`pulpo resume` on that same session recreates the backend via the harness's own
+resume command (`claude --resume <id>`), continuing the same conversation. S19
+starts a second `pulpod` against the same data directory while the first is
+still running and asserts it exits non-zero without touching the first's
+`state.db` — the single-instance lock `store::lock` exists specifically because
+the database is opened well before the port is bound (see [Release and
 Distribution](docs/operations/release-and-distribution.md) "Single-instance
 lock").
 
@@ -456,11 +462,11 @@ describe('api', () => {
 - **Error handling**: Use `anyhow::Result` for application errors; API errors use hand-rolled response types (e.g. `ErrorResponse` in `pulpo-common`).
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
 - **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/utils.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
-- **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
+- **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally), then exits immediately — there is no more lingering fallback shell keeping the tmux session alive once the agent process is done, so tmux closes the session right away. A dead tmux session WITH a marker resolves to `Done` (`status_reason = exited`, unless an explicit `pulpo stop`/watchdog intervention already recorded a more specific reason); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
 - **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, exercised against fake harnesses in the e2e suite — see "Testing" above — but still unverified against a real Codex/pi process). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. `idle_timeout` and the budget-cap fields always apply regardless of harness ownership. **Resume fallback**: when a session has an adapter but no known `harness_session_id` (a legacy row, or a hook/rollout that never reported one), `resolve_resume_command` uses `HarnessAdapter::fallback_resume_command` — the harness's own "most recent conversation here" flag (`claude --continue`, `codex resume --last`, `pi -c`) — instead of silently replaying the original command as a fresh conversation. When that fallback is cwd-scoped (`HarnessAdapter::fallback_resume_is_cwd_scoped`, default `true` — true for Claude/pi, false for Codex since `resume --last` is keyed by an isolated `CODEX_HOME` instead) and the session's worktree is gone (`effective_resume_workdir` fell back to the plain `workdir`), `resolve_resume_command` refuses the resume outright rather than risk silently continuing an unrelated conversation in the wrong directory. See ADR [0001](docs/adr/0001-hook-driven-agent-state.md) and `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible. `store::open_and_migrate` quarantines (renames away) `state.db` only when the failure means the file itself is corrupt or on an incompatible schema (`store::core::is_quarantine_worthy`) — anything else (a lock, an I/O error, a failed pre-migration backup) refuses to start instead of risking a healthy database. `store::lock` acquires an exclusive advisory `flock` on `{data_dir}/pulpod.lock` before the database is even opened, so a second `pulpod` against the same data dir refuses to start rather than race the first. See [Release and Distribution](docs/operations/release-and-distribution.md).
-- **Config**: TOML config at `~/.pulpo/config.toml`, and is the **sole source of truth** — there is no config-editing API (see ADR [0005](docs/adr/0005-config-file-is-source-of-truth.md)). All fields have sensible defaults — pulpod runs with zero config. An unrecognized config key logs a startup warning and is otherwise ignored (see ADR [0008](docs/adr/0008-unknown-config-keys-warn-and-are-ignored.md)) rather than failing config load. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
+- **Config**: TOML config at `~/.pulpo/config.toml`, and is the **sole source of truth** — there is no config-editing API (see ADR [0005](docs/adr/0005-config-file-is-source-of-truth.md)). All fields have sensible defaults — pulpod runs with zero config. An unrecognized config key logs a startup warning and is otherwise ignored (see ADR [0008](docs/adr/0008-unknown-config-keys-warn-and-are-ignored.md)) rather than failing config load. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Working→Waiting, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
 - **Per-session idle**: Sessions accept `idle_threshold_secs: Option<u32>` — `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds. CLI: `pulpo spawn <name> --idle-threshold <secs>`.
 - **Logging**: Use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`). Set level via `RUST_LOG` env var.
 - **No `unsafe` code** — `forbid(unsafe_code)` is set workspace-wide.
@@ -628,7 +634,7 @@ pulpo/
 │       │   ├── bin/fake-codex.rs # Fake Codex CLI/hook/notify surface (isolated CODEX_HOME, rollout files)
 │       │   ├── bin/fake-pi.rs    # Fake pi CLI surface (--session-id idempotency, pulpo hook pi --event)
 │       │   └── lib.rs            # Scenario harness: boots an isolated pulpod + private tmux server
-│       └── tests/scenarios.rs    # S1-S13, S14-S16: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, db recovery, Codex/pi, resume fallbacks, ...
+│       └── tests/scenarios.rs    # S1-S13, S14-S16, S17: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, db recovery, Codex/pi, resume fallbacks, attach/resume on done, ...
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars

@@ -26,7 +26,7 @@ pub(super) async fn enforce_budgets(
 
     for session in sessions
         .into_iter()
-        .filter(|s| s.status == SessionStatus::Active)
+        .filter(|s| s.status == SessionStatus::Working)
     {
         let Some(budget) = session.meta_parsed::<f64>(meta::BUDGET_COST_USD) else {
             continue;
@@ -141,7 +141,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             runtime: Runtime::Tmux,
             backend_session_id: Some("$1".into()),
             metadata: Some(metadata),
@@ -168,7 +168,7 @@ mod tests {
         let s = insert(&store, "over", Some("1.0"), Some("1.5")).await;
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let updated = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
-        assert_eq!(updated.status, SessionStatus::Stopped);
+        assert_eq!(updated.status, SessionStatus::Done);
         assert_eq!(
             updated.intervention_code,
             Some(InterventionCode::BudgetExceeded)
@@ -182,7 +182,7 @@ mod tests {
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         // alerted, not stopped
-        assert_eq!(after.status, SessionStatus::Active);
+        assert_eq!(after.status, SessionStatus::Working);
         let alerted_at = after.meta_str(meta::BUDGET_ALERTED_AT).map(str::to_owned);
         assert!(alerted_at.is_some());
 
@@ -201,7 +201,7 @@ mod tests {
         let s = insert(&store, "ok", Some("10.0"), Some("1.0")).await;
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
-        assert_eq!(after.status, SessionStatus::Active);
+        assert_eq!(after.status, SessionStatus::Working);
         assert!(after.meta_str(meta::BUDGET_ALERTED_AT).is_none());
     }
 
@@ -211,7 +211,7 @@ mod tests {
         let s = insert(&store, "nob", None, Some("99.0")).await;
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
-        assert_eq!(after.status, SessionStatus::Active);
+        assert_eq!(after.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -220,7 +220,7 @@ mod tests {
         let s = insert(&store, "zero", Some("0"), Some("5.0")).await;
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
-        assert_eq!(after.status, SessionStatus::Active);
+        assert_eq!(after.status, SessionStatus::Working);
     }
 
     #[tokio::test]
@@ -229,7 +229,7 @@ mod tests {
         let s = insert(&store, "nocost", Some("1.0"), None).await;
         enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
-        assert_eq!(after.status, SessionStatus::Active);
+        assert_eq!(after.status, SessionStatus::Working);
     }
 
     #[tokio::test]

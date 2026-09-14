@@ -353,23 +353,31 @@ pub fn wrap_command_for_test(
     )
 }
 
-/// Wrap a command with env vars, exit markers, and (for agent commands) a fallback shell.
+/// Wrap a command with env vars and exit markers.
 ///
 /// Two exit markers are written under `{data_dir}/exit/`, read fresh from disk by the
 /// daemon whenever it next checks (race-free even across a daemon restart):
 ///   - `{id}.code`  — the wrapped agent command's exit code (`$?`), agent path only.
-///   - `{id}.clean` — written by the main/fallback shell as the very last thing it
-///     does before exiting normally, on **both** paths.
+///   - `{id}.clean` — written by the wrapper shell as the very last thing it does
+///     before exiting normally, on **both** paths.
 ///
 /// Presence of either marker is what lets the daemon tell "the session ended on its
-/// own" (`Stopped`) apart from "tmux disappeared out from under a live session"
-/// (`Lost`) — see `SessionManager::check_and_mark_stale`.
+/// own" (`Done`, reason `exited`) apart from "tmux disappeared out from under a live
+/// session" (`Lost`) — see `SessionManager::resolve_dead_backend_session`.
 ///
-/// `exec` is deliberately NOT used on either path (unlike the historical wrapper):
-/// exec'ing would replace the wrapper shell's process image, so nothing could run
-/// after the wrapped command / fallback shell exits. Running it as a plain (non-exec'd)
-/// command lets the wrapper shell regain control and write the `.clean` marker right
-/// before it terminates.
+/// ADR 0009 (the five-state session model) removed the fallback shell the agent path
+/// used to drop into after the wrapped command exited (the old `Ready` state, "agent
+/// done but the backend is still alive to poke at") — once the wrapped command exits
+/// and the markers are written, the wrapper shell itself exits immediately too, so
+/// tmux tears the session down right away instead of leaving it lingering. Both
+/// branches below are otherwise the same shape (env setup, run the command, write
+/// `.clean`, exit) — the agent branch additionally captures `$?` into `.code` before
+/// its `.clean` write.
+///
+/// `exec` is deliberately NOT used (unlike an even older wrapper): exec'ing would
+/// replace the wrapper shell's process image, so nothing could run after the wrapped
+/// command exits. Running it as a plain (non-exec'd) command lets the wrapper shell
+/// regain control and write the `.clean` marker right before it terminates.
 ///
 /// `daemon_port` (the daemon's own `[node].port`) is exported as `PULPO_URL=
 /// http://127.0.0.1:<port>` — the loopback address, never the tailscale one, since
@@ -409,7 +417,7 @@ pub fn wrap_command(
     }
     let escaped = command.replace('\'', "'\\''");
     format!(
-        "{shell} -l -c '{env}{escaped}; ec=$?; echo \"$ec\" > '\\''{code_path}'\\''; echo '\\''[pulpo] Agent exited (session: {safe_name}). Run: pulpo resume {safe_name}'\\''; {shell} -l; : > '\\''{clean_path}'\\'''"
+        "{shell} -l -c '{env}{escaped}; ec=$?; echo \"$ec\" > '\\''{code_path}'\\''; : > '\\''{clean_path}'\\'''"
     )
 }
 

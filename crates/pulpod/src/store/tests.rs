@@ -12,7 +12,7 @@ fn make_session(name: &str) -> Session {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("Fix the bug".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some(name.to_owned()),
         ..Default::default()
     }
@@ -51,7 +51,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
     // Web Push and the durable outbox were removed: both tables must be gone
     // after migrating.
@@ -254,6 +254,202 @@ async fn test_migrate_warns_before_dropping_push_subscriptions_noop_when_empty()
     assert_eq!(count_before, 0);
 
     store.migrate().await.unwrap();
+}
+
+/// Build a database at the pre-0010 schema (migrations 1-9 applied, six-state
+/// `status` values and no `status_reason` column) the same way
+/// [`store_at_migration_0008`] builds a pre-0009 one.
+async fn store_at_migration_0009() -> Store {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir = Box::leak(Box::new(tmpdir));
+    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+    let migrations_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let partial_dir = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(&migrations_src).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0010") {
+            continue;
+        }
+        std::fs::copy(entry.path(), partial_dir.path().join(name)).unwrap();
+    }
+    let partial = sqlx::migrate::Migrator::new(partial_dir.path())
+        .await
+        .unwrap();
+    partial.run(store.pool()).await.unwrap();
+
+    store
+}
+
+/// Insert a session row using the pre-0010 (six-state) schema directly — bypasses
+/// `Store::insert_session`, which assumes the post-migration `status_reason` column
+/// already exists.
+#[allow(clippy::too_many_arguments)]
+/// Insert a session row using the pre-0010 (six-state) schema, keyed by `name`
+/// (a real, random UUID is generated for `id` — `row_to_session` requires one).
+async fn insert_legacy_session(
+    store: &Store,
+    name: &str,
+    status: &str,
+    metadata: Option<&str>,
+    intervention_code: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, metadata, intervention_code, created_at, updated_at) \
+         VALUES (?, ?, '/tmp/repo', '', '', ?, '', ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(name)
+    .bind(status)
+    .bind(metadata)
+    .bind(intervention_code)
+    .execute(store.pool())
+    .await
+    .unwrap();
+}
+
+/// End-to-end proof of migration `0010_five_state_status.sql`'s mapping — every old
+/// status/metadata/intervention-code combination the migration's `CASE`
+/// expressions branch on, run through the real embedded migrator (not a
+/// reimplementation of the SQL in Rust).
+#[tokio::test]
+async fn test_migration_0010_rewrites_status_and_status_reason() {
+    let store = store_at_migration_0009().await;
+
+    insert_legacy_session(&store, "creating-sess", "creating", None, None).await;
+    insert_legacy_session(&store, "active-sess", "active", None, None).await;
+    insert_legacy_session(&store, "idle-plain-sess", "idle", None, None).await;
+    insert_legacy_session(
+        &store,
+        "idle-needs-input-sess",
+        "idle",
+        Some(r#"{"needs_input":"permission","other_key":"kept"}"#),
+        None,
+    )
+    .await;
+    insert_legacy_session(&store, "ready-sess", "ready", None, None).await;
+    insert_legacy_session(&store, "stopped-plain-sess", "stopped", None, None).await;
+    insert_legacy_session(
+        &store,
+        "stopped-budget-sess",
+        "stopped",
+        None,
+        Some("budget_exceeded"),
+    )
+    .await;
+    insert_legacy_session(
+        &store,
+        "stopped-idle-timeout-sess",
+        "stopped",
+        None,
+        Some("idle_timeout"),
+    )
+    .await;
+    insert_legacy_session(
+        &store,
+        "stopped-user-sess",
+        "stopped",
+        None,
+        Some("user_stop"),
+    )
+    .await;
+    insert_legacy_session(&store, "killed-sess", "killed", None, Some("user_kill")).await;
+    insert_legacy_session(&store, "lost-sess", "lost", None, None).await;
+
+    store.migrate().await.unwrap();
+
+    let get = |name: &'static str| {
+        let store = &store;
+        async move { store.get_session(name).await.unwrap().unwrap() }
+    };
+
+    let creating = get("creating-sess").await;
+    assert_eq!(creating.status, SessionStatus::Starting);
+    assert_eq!(creating.status_reason, None);
+
+    let active = get("active-sess").await;
+    assert_eq!(active.status, SessionStatus::Working);
+    assert_eq!(active.status_reason, None);
+
+    let idle_plain = get("idle-plain-sess").await;
+    assert_eq!(idle_plain.status, SessionStatus::Waiting);
+    assert_eq!(idle_plain.status_reason.as_deref(), Some("idle"));
+
+    let idle_needs_input = get("idle-needs-input-sess").await;
+    assert_eq!(idle_needs_input.status, SessionStatus::Waiting);
+    assert_eq!(
+        idle_needs_input.status_reason.as_deref(),
+        Some("needs_input:permission")
+    );
+    // The `needs_input` key is stripped from metadata; unrelated keys survive.
+    assert!(idle_needs_input.meta_str("needs_input").is_none());
+    assert_eq!(idle_needs_input.meta_str("other_key"), Some("kept"));
+
+    let ready = get("ready-sess").await;
+    assert_eq!(ready.status, SessionStatus::Done);
+    assert_eq!(ready.status_reason.as_deref(), Some("exited"));
+
+    let stopped_plain = get("stopped-plain-sess").await;
+    assert_eq!(stopped_plain.status, SessionStatus::Done);
+    assert_eq!(stopped_plain.status_reason.as_deref(), Some("stopped"));
+
+    let stopped_budget = get("stopped-budget-sess").await;
+    assert_eq!(stopped_budget.status, SessionStatus::Done);
+    assert_eq!(
+        stopped_budget.status_reason.as_deref(),
+        Some("budget_exceeded")
+    );
+
+    let stopped_idle_timeout = get("stopped-idle-timeout-sess").await;
+    assert_eq!(stopped_idle_timeout.status, SessionStatus::Done);
+    assert_eq!(
+        stopped_idle_timeout.status_reason.as_deref(),
+        Some("idle_timeout")
+    );
+
+    // `user_stop` isn't one of the reasons this model recognizes as a distinct
+    // `done` reason — it collapses to the generic `stopped`.
+    let stopped_user = get("stopped-user-sess").await;
+    assert_eq!(stopped_user.status, SessionStatus::Done);
+    assert_eq!(stopped_user.status_reason.as_deref(), Some("stopped"));
+
+    // The legacy `killed` alias for `stopped` maps the same way.
+    let killed = get("killed-sess").await;
+    assert_eq!(killed.status, SessionStatus::Done);
+    assert_eq!(killed.status_reason.as_deref(), Some("stopped"));
+
+    let lost = get("lost-sess").await;
+    assert_eq!(lost.status, SessionStatus::Lost);
+    assert_eq!(lost.status_reason, None);
+}
+
+/// The "one live session per name" unique index must only cover
+/// `starting`/`working`/`waiting` post-migration — a `done` row can share a name with
+/// a fresh session (see `test_has_active_session_by_name_done_does_not_block_reuse`).
+#[tokio::test]
+async fn test_migration_0010_rebuilds_live_name_index_for_new_statuses() {
+    let store = store_at_migration_0009().await;
+    insert_legacy_session(&store, "shared-name", "ready", None, None).await;
+    store.migrate().await.unwrap();
+
+    // A `done` row (migrated from `ready`) must not block a fresh same-named spawn.
+    assert!(
+        !store
+            .has_active_session_by_name("shared-name")
+            .await
+            .unwrap()
+    );
+
+    let mut fresh = make_session("shared-name");
+    fresh.id = uuid::Uuid::new_v4();
+    store.insert_session(&fresh).await.unwrap();
+    assert!(
+        store
+            .has_active_session_by_name("shared-name")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -466,7 +662,7 @@ async fn test_insert_and_get_session() {
     assert_eq!(fetched.name, "test-roundtrip");
     assert_eq!(fetched.workdir, "/tmp/repo");
 
-    assert_eq!(fetched.status, SessionStatus::Active);
+    assert_eq!(fetched.status, SessionStatus::Working);
 
     assert_eq!(fetched.exit_code, None);
     assert_eq!(fetched.backend_session_id, Some("test-roundtrip".into()));
@@ -504,26 +700,47 @@ async fn test_get_session_by_name_not_found() {
 async fn test_get_session_prefers_live_over_terminal() {
     let store = test_store().await;
 
-    // Insert a stopped session with name "dup"
-    let mut stopped = make_session("dup");
-    stopped.id = uuid::Uuid::new_v4();
-    stopped.status = SessionStatus::Stopped;
-    // Remove from unique index by marking stopped before insert
-    store.insert_session(&stopped).await.unwrap();
+    // Insert a `done` session with name "dup" — the unique live-name index
+    // (`starting`/`working`/`waiting` only) doesn't cover it, so a second row with
+    // the same name can coexist.
+    let mut done = make_session("dup");
+    done.id = uuid::Uuid::new_v4();
+    done.status = SessionStatus::Done;
+    store.insert_session(&done).await.unwrap();
 
-    // Insert a ready session with the same name "dup"
-    let mut ready = make_session("dup-ready");
-    ready.id = uuid::Uuid::new_v4();
-    ready.name = "dup".into();
-    ready.status = SessionStatus::Ready;
-    // The unique index only covers creating/active/idle/ready,
-    // and stopped is excluded, so this insert should work
-    store.insert_session(&ready).await.unwrap();
+    // Insert a still-`working` session with the same name "dup".
+    let mut working = make_session("dup-working");
+    working.id = uuid::Uuid::new_v4();
+    working.name = "dup".into();
+    working.status = SessionStatus::Working;
+    store.insert_session(&working).await.unwrap();
 
-    // get_session by name should return the ready one, not the stopped one
+    // get_session by name should return the live one, not the terminal one.
     let fetched = store.get_session("dup").await.unwrap().unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert_eq!(fetched.id, ready.id);
+    assert_eq!(fetched.status, SessionStatus::Working);
+    assert_eq!(fetched.id, working.id);
+}
+
+#[tokio::test]
+async fn test_get_session_prefers_lost_over_done() {
+    // Among two terminal statuses sharing a name, `lost` (something to look into)
+    // outranks `done` (an expected/clean finish) — see `get_session`'s `ORDER BY`.
+    let store = test_store().await;
+
+    let mut done = make_session("dup2");
+    done.id = uuid::Uuid::new_v4();
+    done.status = SessionStatus::Done;
+    store.insert_session(&done).await.unwrap();
+
+    let mut lost = make_session("dup2-lost");
+    lost.id = uuid::Uuid::new_v4();
+    lost.name = "dup2".into();
+    lost.status = SessionStatus::Lost;
+    store.insert_session(&lost).await.unwrap();
+
+    let fetched = store.get_session("dup2").await.unwrap().unwrap();
+    assert_eq!(fetched.status, SessionStatus::Lost);
+    assert_eq!(fetched.id, lost.id);
 }
 
 #[tokio::test]
@@ -555,7 +772,7 @@ async fn test_has_active_session_by_name_false_no_match() {
 async fn test_has_active_session_by_name_false_stopped() {
     let store = test_store().await;
     let mut session = make_session("stopped-session");
-    session.status = SessionStatus::Stopped;
+    session.status = SessionStatus::Done;
     store.insert_session(&session).await.unwrap();
 
     assert!(
@@ -570,7 +787,7 @@ async fn test_has_active_session_by_name_false_stopped() {
 async fn test_has_active_session_by_name_stale() {
     let store = test_store().await;
     let mut session = make_session("idle-session");
-    session.status = SessionStatus::Idle;
+    session.status = SessionStatus::Waiting;
     store.insert_session(&session).await.unwrap();
 
     assert!(
@@ -585,7 +802,7 @@ async fn test_has_active_session_by_name_stale() {
 async fn test_has_active_session_by_name_creating() {
     let store = test_store().await;
     let mut session = make_session("creating-session");
-    session.status = SessionStatus::Creating;
+    session.status = SessionStatus::Starting;
     store.insert_session(&session).await.unwrap();
 
     assert!(
@@ -597,15 +814,19 @@ async fn test_has_active_session_by_name_creating() {
 }
 
 #[tokio::test]
-async fn test_has_active_session_by_name_ready() {
+async fn test_has_active_session_by_name_done_does_not_block_reuse() {
+    // Unlike the old `ready` status (a real, alive tmux backend still bound to the
+    // session's name), `done` has no backend left at all — ADR 0009 removed the
+    // fallback shell that used to keep it alive. A `done` session's name is free to
+    // reuse for a brand-new spawn, same as `lost` already was pre-ADR-0009.
     let store = test_store().await;
-    let mut session = make_session("ready-session");
-    session.status = SessionStatus::Ready;
+    let mut session = make_session("done-session");
+    session.status = SessionStatus::Done;
     store.insert_session(&session).await.unwrap();
 
     assert!(
-        store
-            .has_active_session_by_name("ready-session")
+        !store
+            .has_active_session_by_name("done-session")
             .await
             .unwrap()
     );
@@ -615,7 +836,7 @@ async fn test_has_active_session_by_name_ready() {
 async fn test_has_active_session_by_name_excluding_self() {
     let store = test_store().await;
     let mut session = make_session("ready-session");
-    session.status = SessionStatus::Ready;
+    session.status = SessionStatus::Done;
     store.insert_session(&session).await.unwrap();
 
     // Excluding self should return false (no *other* active session with this name)
@@ -631,7 +852,7 @@ async fn test_has_active_session_by_name_excluding_self() {
 async fn test_has_active_session_by_name_excluding_different_id() {
     let store = test_store().await;
     let mut session = make_session("clash-session");
-    session.status = SessionStatus::Active;
+    session.status = SessionStatus::Working;
     store.insert_session(&session).await.unwrap();
 
     // Excluding a different ID should still find the active session
@@ -655,7 +876,7 @@ async fn test_find_live_sessions_by_worktree_finds_other_live_session() {
 
     let mut handoff = make_session("plan-auth-2");
     handoff.worktree_path = Some("/tmp/wt/plan-auth".into());
-    handoff.status = SessionStatus::Active;
+    handoff.status = SessionStatus::Working;
     store.insert_session(&handoff).await.unwrap();
 
     let others = store
@@ -675,7 +896,7 @@ async fn test_find_live_sessions_by_worktree_excludes_dead_sessions() {
 
     let mut dead = make_session("plan-auth-2");
     dead.worktree_path = Some("/tmp/wt/plan-auth".into());
-    dead.status = SessionStatus::Stopped;
+    dead.status = SessionStatus::Done;
     store.insert_session(&dead).await.unwrap();
 
     let others = store
@@ -721,7 +942,7 @@ async fn test_worktree_in_use_elsewhere_true_when_another_live_session_shares_it
 
     let mut handoff = make_session("plan-auth-2");
     handoff.worktree_path = Some("/tmp/wt/plan-auth".into());
-    handoff.status = SessionStatus::Active;
+    handoff.status = SessionStatus::Working;
     store.insert_session(&handoff).await.unwrap();
 
     assert!(
@@ -765,7 +986,7 @@ async fn test_unique_index_allows_reuse_after_stop() {
     let s1 = make_session("reuse-name");
     store.insert_session(&s1).await.unwrap();
     store
-        .update_session_status(&s1.id.to_string(), SessionStatus::Stopped)
+        .update_session_status(&s1.id.to_string(), SessionStatus::Done, None)
         .await
         .unwrap();
     // New session with same name should succeed — old one is stopped
@@ -801,7 +1022,7 @@ async fn test_update_session_status() {
     store.insert_session(&session).await.unwrap();
 
     store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
+        .update_session_status(&session.id.to_string(), SessionStatus::Done, None)
         .await
         .unwrap();
 
@@ -810,7 +1031,7 @@ async fn test_update_session_status() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.status, SessionStatus::Done);
 }
 
 #[tokio::test]
@@ -973,7 +1194,7 @@ async fn test_update_session_status_after_table_dropped() {
         .await
         .unwrap();
     let result = store
-        .update_session_status("test-id", SessionStatus::Stopped)
+        .update_session_status("test-id", SessionStatus::Done, None)
         .await;
     assert!(result.is_err());
 }
@@ -1009,36 +1230,36 @@ async fn test_data_dir_accessor() {
 async fn test_list_sessions_filtered_by_status() {
     let store = test_store().await;
     let mut s1 = make_session("running-1");
-    s1.status = SessionStatus::Active;
+    s1.status = SessionStatus::Working;
     let mut s2 = make_session("completed-1");
-    s2.status = SessionStatus::Ready;
+    s2.status = SessionStatus::Done;
     store.insert_session(&s1).await.unwrap();
     store.insert_session(&s2).await.unwrap();
 
     let query = ListSessionsQuery {
-        status: Some("active".into()),
+        status: Some("working".into()),
         ..Default::default()
     };
     let sessions = store.list_sessions_filtered(&query).await.unwrap();
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].status, SessionStatus::Active);
+    assert_eq!(sessions[0].status, SessionStatus::Working);
 }
 
 #[tokio::test]
 async fn test_list_sessions_filtered_by_multiple_statuses() {
     let store = test_store().await;
     let mut s1 = make_session("running-2");
-    s1.status = SessionStatus::Active;
+    s1.status = SessionStatus::Working;
     let mut s2 = make_session("completed-2");
-    s2.status = SessionStatus::Ready;
+    s2.status = SessionStatus::Done;
     let mut s3 = make_session("dead-1");
-    s3.status = SessionStatus::Stopped;
+    s3.status = SessionStatus::Lost;
     store.insert_session(&s1).await.unwrap();
     store.insert_session(&s2).await.unwrap();
     store.insert_session(&s3).await.unwrap();
 
     let query = ListSessionsQuery {
-        status: Some("active,ready".into()),
+        status: Some("working,done".into()),
         ..Default::default()
     };
     let sessions = store.list_sessions_filtered(&query).await.unwrap();
@@ -1134,20 +1355,20 @@ async fn test_list_sessions_filtered_empty_returns_all() {
 async fn test_list_sessions_filtered_combined_filters() {
     let store = test_store().await;
     let mut s1 = make_session("api-fix");
-    s1.status = SessionStatus::Active;
+    s1.status = SessionStatus::Working;
     s1.command = "Fix the API".into();
     let mut s2 = make_session("api-refactor");
-    s2.status = SessionStatus::Ready;
+    s2.status = SessionStatus::Done;
     s2.command = "Refactor the API".into();
     let mut s3 = make_session("ui-fix");
-    s3.status = SessionStatus::Active;
+    s3.status = SessionStatus::Working;
     s3.command = "Fix the UI".into();
     store.insert_session(&s1).await.unwrap();
     store.insert_session(&s2).await.unwrap();
     store.insert_session(&s3).await.unwrap();
 
     let query = ListSessionsQuery {
-        status: Some("active".into()),
+        status: Some("working".into()),
         search: Some("API".into()),
         ..Default::default()
     };
@@ -1160,9 +1381,9 @@ async fn test_list_sessions_filtered_combined_filters() {
 async fn test_list_sessions_filtered_sort_by_status() {
     let store = test_store().await;
     let mut s1 = make_session("first");
-    s1.status = SessionStatus::Active;
+    s1.status = SessionStatus::Working;
     let mut s2 = make_session("second");
-    s2.status = SessionStatus::Ready;
+    s2.status = SessionStatus::Done;
     store.insert_session(&s1).await.unwrap();
     store.insert_session(&s2).await.unwrap();
 
@@ -1213,7 +1434,7 @@ async fn test_update_session_intervention() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
+    assert_eq!(fetched.status, SessionStatus::Done);
     assert_eq!(
         fetched.intervention_code,
         Some(InterventionCode::MemoryPressure)
@@ -1953,7 +2174,7 @@ async fn test_idle_status_roundtrip() {
     store.insert_session(&session).await.unwrap();
 
     store
-        .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+        .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
         .await
         .unwrap();
 
@@ -1962,5 +2183,34 @@ async fn test_idle_status_roundtrip() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
+}
+
+/// Regression test for a `sqlx-sqlite` 0.8.6 defect `Store::migrate`'s
+/// `warm_up_after_migrating` works around (see its doc comment): on a connection
+/// that just ran an `ALTER TABLE ... ADD COLUMN` (as migration 0010 does), the
+/// *first* subsequent 2+-parameter `SELECT` against that table used to panic the
+/// connection's sqlx worker thread — reproduced independently of any of this
+/// crate's own queries with a bare `ALTER TABLE` immediately followed by a
+/// 2-parameter `SELECT`. `get_session`'s own query (`WHERE id = ? OR name = ?`) is
+/// exactly such a query, run here immediately after a real `migrate()` call that
+/// applies migration 0010 on top of an already-existing (pre-0010) database —
+/// the exact shape a real upgrade takes, unlike `test_store()`'s fresh-database
+/// tests (which apply every migration in one initial batch and never hit this).
+#[tokio::test]
+async fn test_migrate_then_get_session_survives_sqlx_alter_column_defect() {
+    let store = store_at_migration_0009().await;
+    insert_legacy_session(&store, "warmup-sess", "creating", None, None).await;
+
+    store.migrate().await.unwrap();
+
+    // Before the `warm_up_after_migrating` fix, this call's worker thread would
+    // panic and the query would come back as a silent `Ok(None)` instead of the
+    // row that's actually there.
+    let fetched = store.get_session("warmup-sess").await.unwrap();
+    assert!(
+        fetched.is_some(),
+        "session must still be readable after migrating"
+    );
+    assert_eq!(fetched.unwrap().status, SessionStatus::Starting);
 }

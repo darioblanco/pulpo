@@ -122,7 +122,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -151,7 +152,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -180,13 +182,14 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'ready',
+          status: 'done',
+          status_reason: 'exited',
           output_snippet: null,
         }),
       );
     });
 
-    expect(result.current.sessions[0].status).toBe('ready');
+    expect(result.current.sessions[0].status).toBe('done');
   });
 
   it('setSessions updates sessions', () => {
@@ -198,7 +201,8 @@ describe('useSSE', () => {
         {
           id: 'x',
           name: 'test',
-          status: 'active',
+          status: 'working',
+          status_reason: null,
           command: 'p',
           description: null,
           workdir: '/repo',
@@ -221,7 +225,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -250,13 +255,14 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'idle',
+          status: 'waiting',
+          status_reason: 'needs_input:permission',
           output_snippet: 'Do you trust this file? (Y/N)',
         }),
       );
     });
 
-    expect(result.current.sessions[0].status).toBe('idle');
+    expect(result.current.sessions[0].status).toBe('waiting');
     expect(result.current.sessions[0].output_snippet).toBe('Do you trust this file? (Y/N)');
   });
 
@@ -265,7 +271,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'idle',
+        status: 'waiting',
+        status_reason: 'idle',
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -295,22 +302,23 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'active',
+          status: 'working',
           output_snippet: null,
         }),
       );
     });
 
-    expect(result.current.sessions[0].status).toBe('active');
+    expect(result.current.sessions[0].status).toBe('working');
     expect(result.current.sessions[0].output_snippet).toBe('Existing snippet');
   });
 
-  it('sets metadata.needs_input from session events', async () => {
+  it('sets status_reason from session events', async () => {
     const sessions = [
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -339,26 +347,28 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'idle',
+          status: 'waiting',
+          status_reason: 'needs_input:permission',
           output_snippet: null,
           needs_input: 'permission',
         }),
       );
     });
 
-    expect(result.current.sessions[0].metadata?.needs_input).toBe('permission');
+    expect(result.current.sessions[0].status_reason).toBe('needs_input:permission');
   });
 
-  it('clears metadata.needs_input when the event carries none', async () => {
+  it('clears status_reason when the event carries none', async () => {
     const sessions = [
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'idle',
+        status: 'waiting',
+        status_reason: 'needs_input:permission',
         command: 'Fix',
         description: null,
         workdir: '/repo',
-        metadata: { needs_input: 'permission' },
+        metadata: null,
         ink: null,
         intervention_reason: null,
         intervention_at: null,
@@ -375,7 +385,7 @@ describe('useSSE', () => {
     await waitFor(() => {
       expect(result.current.sessions).toHaveLength(1);
     });
-    expect(result.current.sessions[0].metadata?.needs_input).toBe('permission');
+    expect(result.current.sessions[0].status_reason).toBe('needs_input:permission');
 
     const es = lastES();
     act(() => {
@@ -384,13 +394,13 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'active',
+          status: 'working',
           output_snippet: null,
         }),
       );
     });
 
-    expect(result.current.sessions[0].metadata?.needs_input).toBeUndefined();
+    expect(result.current.sessions[0].status_reason).toBeNull();
   });
 
   it('ignores malformed session events', async () => {
@@ -398,7 +408,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -470,7 +481,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'my-api',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',
@@ -498,7 +510,8 @@ describe('useSSE', () => {
       {
         id: 'sess-2',
         name: 'new-session',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'New',
         description: null,
         workdir: '/repo',
@@ -519,7 +532,7 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-unknown',
           session_name: 'unknown',
-          status: 'active',
+          status: 'working',
           output_snippet: null,
         }),
       );
@@ -535,7 +548,8 @@ describe('useSSE', () => {
       {
         id: 'sess-1',
         name: 'eager',
-        status: 'active',
+        status: 'working',
+        status_reason: null,
         command: 'Fix',
         description: null,
         workdir: '/repo',

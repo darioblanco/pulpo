@@ -54,18 +54,19 @@ The important design point is that the lifecycle model is decoupled from the bac
 Sessions move through explicit states:
 
 ```text
-creating -> active <-> idle -> ready
-                       \-> stopped
-active/idle ----------> lost
+starting -> working <-> waiting -> done
+working/waiting -------------------> lost
 ```
 
 The most important meanings:
 
-- `active`: the command is running and producing output
-- `idle`: the session appears to be waiting for input or has gone quiet long enough to be treated as waiting
-- `ready`: the command exited and the session is resumable
-- `lost`: the backend disappeared unexpectedly
-- `stopped`: the session was terminated (or exited cleanly) and is still resumable
+- `starting`: spawn requested, the backend isn't confirmed yet
+- `working`: the command is running and producing output
+- `waiting`: the session is at its prompt — `status_reason` says whether it's blocked on
+  you (`needs_input:<reason>`) or just idle (`idle`)
+- `done`: the command exited and the backend is gone; the session is resumable
+  (`status_reason` says how: `exited`, `stopped`, or an intervention code)
+- `lost`: the backend disappeared unexpectedly, with no evidence of a clean end
 
 See [Session Lifecycle](../operations/session-lifecycle.md) for exact transition rules.
 
@@ -83,7 +84,7 @@ It:
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), a **harness
 adapter** reports real events — turn finished, blocked on a permission prompt, session
 ended — instead of the watchdog guessing from scrollback text. A session blocked this
-way shows as `idle` with a `needs input (<reason>)` label, distinct from a plain idle
+way shows as `waiting (needs input: <reason>)`, distinct from a plain `waiting (idle)`
 prompt. See [Harness Adapters](harness-adapters.md).
 
 Without the watchdog, Pulpo would be a launcher. With it, Pulpo becomes runtime infrastructure.

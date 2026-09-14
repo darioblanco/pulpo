@@ -194,7 +194,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some(name.into()),
             worktree_path: Some(worktree_path.into()),
             ..Default::default()
@@ -274,7 +274,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some(name.into()),
             ..Default::default()
         }

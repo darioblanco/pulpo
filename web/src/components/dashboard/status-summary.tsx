@@ -5,22 +5,27 @@ interface StatusSummaryProps {
 }
 
 export function StatusSummary({ sessions }: StatusSummaryProps) {
-  const active = sessions.filter((s) => s.status === 'active' || s.status === 'creating').length;
-  const idle = sessions.filter((s) => s.status === 'idle').length;
+  const starting = sessions.filter((s) => s.status === 'starting').length;
+  const working = sessions.filter((s) => s.status === 'working').length;
+  const waiting = sessions.filter((s) => s.status === 'waiting').length;
+  const done = sessions.filter((s) => s.status === 'done').length;
   const lost = sessions.filter((s) => s.status === 'lost').length;
-  const ready = sessions.filter((s) => s.status === 'ready').length;
-  const stopped = sessions.filter((s) => s.status === 'stopped').length;
 
   return (
     <div
       data-testid="status-summary"
       className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm"
     >
-      <StatusDot color="bg-status-active" label="active" count={active} testId="count-active" />
-      <StatusDot color="bg-status-idle" label="idle" count={idle} testId="count-idle" />
+      <StatusDot
+        color="bg-status-creating"
+        label="starting"
+        count={starting}
+        testId="count-starting"
+      />
+      <StatusDot color="bg-status-active" label="working" count={working} testId="count-working" />
+      <StatusDot color="bg-status-idle" label="waiting" count={waiting} testId="count-waiting" />
+      <StatusDot color="bg-status-ready" label="done" count={done} testId="count-done" />
       <StatusDot color="bg-status-lost" label="lost" count={lost} testId="count-lost" />
-      <StatusDot color="bg-status-ready" label="done" count={ready} testId="count-ready" />
-      <StatusDot color="bg-status-stopped" label="stopped" count={stopped} testId="count-stopped" />
     </div>
   );
 }

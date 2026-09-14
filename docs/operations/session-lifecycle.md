@@ -8,102 +8,74 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
   spawn           agent working        agent exits
     │                   │                    │
     ▼                   ▼                    ▼
-┌────────┐       ┌──────────┐         ┌──────────┐
-│CREATING│──────▶│  ACTIVE  │────────▶│  READY   │
-└────────┘       └──────────┘         └──────────┘
-                   ▲      │                  │
-            output │      │ waiting for      │
-           changed │      │ input / idle     │
-                   │      ▼                  │
-                   │ ┌──────────┐            │
-                   └─│   IDLE   │            │
-                     └──────────┘            │
-                        │                    │
-                        └─────────┬──────────┘
-                                  │
-                   watchdog / user / dead backend + exit marker
-                                  ▼
-                           ┌──────────┐
-                           │ STOPPED  │
-                           └──────────┘
+┌──────────┐      ┌──────────┐         ┌──────────┐
+│ STARTING │──────▶│ WORKING  │────────▶│   DONE   │
+└──────────┘      └──────────┘         └──────────┘
+                    ▲      │                  ▲
+             output │      │ turn finished /  │
+            changed │      │ needs input      │
+                    │      ▼                  │
+                    │ ┌──────────┐            │
+                    └─│ WAITING  │────────────┘
+                      └──────────┘   watchdog / user /
+                                      dead backend + exit marker
 
-                   ┌──────────┐
-                   │   LOST   │◀── dead backend, no exit marker
-                   └──────────┘         (from Active, Idle, or Ready)
+                    ┌──────────┐
+                    │   LOST   │◀── dead backend, no exit marker
+                    └──────────┘         (from Working or Waiting)
 ```
 
 ## States
 
 | State | Meaning | Terminal? |
 |-------|---------|-----------|
-| **Creating** | tmux session is being set up | No |
-| **Active** | Agent is working — terminal output is changing | No |
-| **Idle** | Agent needs attention — waiting for input or at its prompt | No |
-| **Ready** | Agent process exited — task is done (exit code recorded); fallback shell still alive | Yes (resumable) |
-| **Stopped** | Session ended intentionally: `pulpo stop`, watchdog intervention, or the user exited the session's shell (exit markers present) | Yes (resumable) |
-| **Lost** | tmux process disappeared with no exit markers — crash, reboot, or external kill mid-run | Yes (resumable) |
+| **Starting** | Spawn requested — the backend (tmux session) hasn't been confirmed yet | No |
+| **Working** | The agent process is running and busy — terminal output is changing | No |
+| **Waiting** | The agent is at its prompt. `status_reason` says why: `needs_input:<reason>` when it's blocked on the user (a permission prompt, a question, an idle-prompt, or another harness-specific reason — from a hook or a scrollback waiting-pattern match), or plain `idle` when the turn simply finished (or there's no new output) with nothing specifically blocking on you | No |
+| **Done** | The agent process has exited **and** the backend (tmux session) is gone. `exit_code` is recorded when known; `status_reason` says how: `exited` (clean end), `stopped` (explicit `pulpo stop`), or an intervention code (`idle_timeout`, `budget_exceeded`, rarely `memory_pressure`). Replaces the old `ready` **and** `stopped` — both always meant "not running, and resumable"; the *how* moved from a distinguishable top-level status into `status_reason` | Yes (resumable) |
+| **Lost** | The backend died with no evidence of a clean end — crash, reboot, or external kill mid-run | Yes (resumable) |
 
 ## Transitions
 
-### Creating → Active
-- **Trigger**: Session creation succeeds.
-- **Detection**: After the backend creates the session successfully, Pulpo marks it Active immediately. Separate liveness checks handle later Active/Idle → Lost transitions.
+### Starting → Working
+- **Trigger**: The backend confirms the session is up and running. For a harness-driven command this lines up with the harness's own `SessionStarted`/`Working` hook event; for any other command it's simply the backend having been created successfully.
+- **Detection**: After the backend creates the session successfully, Pulpo marks it `working` immediately. Separate liveness checks handle later `working`/`waiting` → `lost` transitions.
 
-### Active → Idle
-- **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (configurable, default 60 seconds).
-- **Detection**: The watchdog compares `output_snapshot` on each tick. Two paths to Idle:
-  1. **Pattern match (immediate)**: If output is unchanged and the last 5 lines match known waiting patterns (permission prompts, "what's next?" prompts), transition happens on the first unchanged tick.
-  2. **Sustained silence (universal)**: If `last_output_at` exceeds `idle_threshold_secs` (default: 60, configurable in `[watchdog]`), transition happens regardless of terminal content. Per-session override via `idle_threshold_secs` on the session (`0` = never idle).
+### Working → Waiting
+- **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (configurable, default 60 seconds) — or, for a harness-driven session, a `TurnFinished`/`NeedsInput` hook event.
+- **Detection**: The watchdog compares `output_snapshot` on each tick. Two scrollback paths, both landing on `waiting`:
+  1. **Pattern match (immediate)**: If output is unchanged and the last 5 lines match known waiting patterns (permission prompts, "what's next?" prompts), the session moves to `waiting` with `status_reason = needs_input:permission` on the first unchanged tick — a matched pattern really is "blocked on the user," not just idle. See [Waiting Patterns](#waiting-patterns-idle-detection) below.
+  2. **Sustained silence (universal)**: If `last_output_at` exceeds `idle_threshold_secs` (default: 60, configurable in `[watchdog]`), the session moves to `waiting` with `status_reason = idle`, regardless of terminal content. Per-session override via `idle_threshold_secs` on the session (`0` = never idle).
 
-### Idle → Active
-- **Trigger**: Watchdog detects output changed since last tick.
-- **Detection**: New output in the terminal means the agent (or user) resumed work.
+  A harness with its own lifecycle hooks skips both scrollback paths once its events are flowing: `TurnFinished` sets `waiting`/`idle` directly, and `NeedsInput` sets `waiting`/`needs_input:<reason>` directly. See [Harness-Driven Transitions](#harness-driven-transitions-claude-code-codex-pi) below.
 
-### Active/Idle → Ready
-- **Trigger**: The wrapper's `{id}.code` exit-marker file appears (written the moment the
-  agent command finishes, containing its exit code), or — as a fallback when no marker is
-  available — the `[pulpo] Agent exited` text in captured output.
-- **Detection**: The watchdog checks the marker (deterministic) before any output
-  scraping or idle logic. The agent's exit code is persisted to the session. The fallback
-  shell keeps the tmux session alive for inspection.
+### Waiting → Working
+- **Trigger**: Watchdog detects output changed since last tick (for a session the watchdog still owns — see [Watchdog bypass](../architecture/harness-adapters.md#watchdog-bypass)), or a harness's `SessionStarted`/`Working` hook event.
+- **Detection**: New output in the terminal means the agent (or user) resumed work; a harness event clears any `needs_input:<reason>` reason immediately and sets `status_reason` back to `None`, regardless of what scrollback shows.
+
+### Working/Waiting → Done
+- **Trigger**: The wrapper's `{id}.code` exit-marker file appears (written the moment the agent command finishes, containing its exit code) and the wrapper shell then exits immediately — there is no more lingering fallback shell keeping the backend alive after the agent process ends (see [Exit Markers](#exit-markers) below) — or the session's shell otherwise exits normally (the user typed `exit` in a bare-shell session, or an explicit `pulpo stop`/watchdog intervention ended it).
+- **Detection**: The watchdog checks the exit markers (deterministic) before any output scraping or idle logic. Dead-backend classification is now simply: exit marker present → `done` (`status_reason = exited`, `exit_code` persisted from the marker) — unless an explicit stop or watchdog intervention already recorded a more specific reason (`stopped`, `idle_timeout`, `budget_exceeded`, `memory_pressure`) — no marker → `lost` (see below).
+- **Harness-driven sessions**: a `SessionEnded` hook event leaves the status alone — the agent process is typically still in the middle of exiting when the hook fires — **unless** the `.code` exit marker has already landed by the time the event is processed, in which case the session moves straight to `done`/`exited` immediately. Otherwise the ordinary dead-backend classification above catches it on the watchdog's next tick, and `exit_code` still ends up recorded the same way either way.
 - **Side effects**: SSE event emitted.
 
-### Active/Idle/Ready → Stopped
-- **Trigger**: User runs `pulpo stop`, a watchdog intervention (budget/idle
-  kill) — or the session's shell exits normally (the user typed `exit`, or closed tmux
-  after the agent finished). This applies to **Active**, **Idle**, and **Ready**
-  sessions alike: a `Ready` session's fallback shell dying counts the same as an
-  `Active`/`Idle` session's tmux disappearing.
-- **Detection**: Explicit stop and interventions act directly. The clean-shell-exit case
-  is classified by the exit markers the command wrapper writes under `{data_dir}/exit/`:
-  `{id}.code` (agent finished, exit code inside) and `{id}.clean` (shell ended normally).
-  When the tmux session is gone and either marker exists, the session resolves to
-  **Stopped** (exit code persisted) instead of Lost. Markers are removed on purge and
-  swept by `pulpo cleanup`.
+### Working/Waiting → Lost
+- **Trigger**: `is_alive()` returns false for a session that was `working` or `waiting` **and no exit marker exists** — the tmux process died without the wrapper running to completion (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
+- **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is gone the markers are consulted; with none present the session is marked `lost`. A 5-second grace period protects freshly spawned sessions from false positives.
 
-### Active/Idle/Ready → Lost
-- **Trigger**: `is_alive()` returns false for a session that was Active, Idle, or Ready
-  **and no exit marker exists** — the tmux process died without the wrapper running to
-  completion (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
-- **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is
-  gone the markers are consulted; with none present the session is marked Lost. A
-  5-second grace period protects freshly spawned sessions from false positives (in
-  practice irrelevant for `Ready`, since a session can only reach `Ready` well after
-  its grace window has passed).
-
-Sessions stay listed once they reach `Ready` — there is no TTL-based auto-purge. The
-tmux shell (and the session record) is only reclaimed by an explicit `pulpo stop
-[--purge]` or `pulpo cleanup`.
+Sessions stay listed once they reach `done` — there is no TTL-based auto-purge. The
+session record is only reclaimed by an explicit `pulpo stop [--purge]` or `pulpo
+cleanup`. (There is no more lingering fallback tmux shell to separately reclaim — see
+[Exit Markers](#exit-markers).)
 
 ## Resume Semantics
 
 | From State | Resume? | What happens |
 |-----------|---------|--------------|
 | **Lost** | Yes | Recreates tmux session, re-executes the session command |
-| **Ready** | Yes | Recreates the backend and re-executes the command, even if the fallback shell is still alive — the agent process has already exited, so resume never just flips the status back to Active |
-| **Stopped** | Yes | Recreates tmux session, re-executes the session command |
-| **Active/Idle** | No | Error: session is still running |
-| **Creating** | No | Error: session is still running |
+| **Done** | Yes | Recreates the backend and re-executes the command — the backend is already gone by the time a session reaches `done` (no fallback shell to reuse), so resume always starts a fresh backend rather than just flipping the status back to `working` |
+| **Working/Waiting** | No | Error: session is still running |
+| **Starting** | No | Error: session is still running |
 
 For a session whose harness has a resume mechanism (Claude Code, Codex, pi), "re-executes
 the session command" above means the harness's *own* resume command — `claude --resume <id>`,
@@ -111,30 +83,48 @@ the session command" above means the harness's *own* resume command — `claude 
 continues where it left off instead of starting fresh. See
 [Harness Adapters](../architecture/harness-adapters.md) for the exact rewrite per harness.
 
+`pulpo attach` on a `done`/`lost` session errors with a hint pointing at `pulpo resume`
+or `pulpo logs` instead — there's no live backend left to attach to.
+
 ## Harness-Driven Transitions (Claude Code, Codex, pi)
 
 Everything above describes scrollback-based detection — the default for any command.
 For a harness with its own lifecycle hooks, `pulpo hook <harness>` reports real events
 (`SessionStarted`, `Working`, `TurnFinished`, `NeedsInput`, `Failed`, `SessionEnded`) that
-drive the *same* `Active`/`Idle`/`Ready`/`Stopped` states directly, and — once a session's
+drive the *same* `working`/`waiting`/`done`/`lost` states directly, and — once a session's
 first event lands — the watchdog stops applying the waiting-for-input/rate-limit/error
 heuristics below for whatever signals that harness's events cover (an adapter missing a
 signal, like Codex's rate-limit/error detection, keeps the scrollback fallback for just
 that signal).
 
-The one additive piece: a `NeedsInput` event sets `Idle` plus a `needs_input` metadata
-reason (`permission`, `question`, `idle`, ...), rendered as `needs input (<reason>)` in
-`pulpo ls` and the web UI — distinguishing "blocked on me" from a plain idle prompt. The
-`SessionStatus` enum itself is unchanged. Full event mapping, per-harness spawn/resume
-rewrites, and the watchdog-bypass mechanism: [Harness Adapters](../architecture/harness-adapters.md).
+Event mapping:
 
-A hook-driven `SessionEnded` moves the session to `Ready`/`Stopped` immediately, ahead of
-any `.code` exit-marker read — the marker is written by the wrapper only once the agent
-process actually terminates, which can lag slightly behind the harness's own "I'm done"
-hook. `exit_code` still ends up recorded the same as the scrollback path: the hook handler
-tries the marker itself, best-effort, the moment `SessionEnded` arrives, and the watchdog's
-own marker sweep (which also revisits `Ready` sessions with no `exit_code` yet, not just
-Active/Idle ones) picks it up on a later tick if the marker wasn't there yet.
+- **`SessionStarted`/`Working`** → `working`, clearing any `needs_input:<reason>` status
+  reason.
+- **`TurnFinished`** → `waiting`, `status_reason = idle`.
+- **`NeedsInput`** → `waiting`, `status_reason = needs_input:<reason>` (`permission`,
+  `question`, `idle`, or a harness-specific label), rendered as `waiting (needs input:
+  <reason>)` in `pulpo ls` and the web UI — distinguishing "blocked on me" from a plain
+  idle prompt.
+- **`Failed`** → `waiting`, `status_reason = idle` — the error itself is still recorded
+  in metadata (`error_status`/`error_status_at`), same as before this model changed; only
+  the status/`status_reason` side of the transition was renamed.
+- **`SessionEnded`** → leaves the status alone (the agent process is typically still
+  exiting) unless the `.code` exit marker has already landed by the time the event is
+  processed, in which case the session moves straight to `done`/`exited` immediately —
+  the marker is written by the wrapper only once the agent process actually terminates,
+  which can lag slightly behind the harness's own "I'm done" hook. Otherwise the ordinary
+  dead-backend classification above (see
+  [Working/Waiting → Done](#workingwaiting--done)) catches it on the watchdog's next tick,
+  same as any other command.
+
+`status_reason` is a new, plain-string field on the session (and on the SSE
+`SessionEvent` payload) — not a nested type — that carries what used to be either a
+distinguishable top-level status (`ready` vs. `stopped`) or an ad hoc metadata key
+(`needs_input`). The SSE payload also still carries a legacy `needs_input: string | null`
+field for one release (deprecated), populated from `status_reason` whenever it's
+`needs_input:<reason>`. Full event mapping, per-harness spawn/resume rewrites, and the
+watchdog-bypass mechanism: [Harness Adapters](../architecture/harness-adapters.md).
 
 ## Waiting Patterns (Idle Detection)
 
@@ -148,7 +138,11 @@ The watchdog inspects the last 5 lines of terminal output for these patterns (ca
 - **Amazon Q**: `Allow this action?`, `Accept suggestion?`
 - **SSH/sudo**: `continue connecting (yes/no)`, `'s password:`, `[sudo] password`
 
-Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are appended to the built-in list.
+A match moves the session straight to `waiting` with `status_reason = needs_input:permission`
+— the same shape a harness's own `NeedsInput{Permission}` hook event produces — rather than
+plain `idle`, since a `(y/n)` prompt or a `sudo password:` line really is "blocked on the
+user." Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are
+appended to the built-in list and matched the same way.
 
 ## Configuration
 
@@ -160,21 +154,22 @@ enabled = true
 check_interval_secs = 10     # How often to check
 idle_timeout_secs = 600       # Seconds before idle action triggers
 idle_action = "alert"         # "alert" (mark idle_since) or "kill"
-idle_threshold_secs = 60      # Seconds of unchanged output before Active→Idle (default: 60)
+idle_threshold_secs = 60      # Seconds of unchanged output before Working→Waiting (default: 60)
 waiting_patterns = []         # Extra patterns for waiting-for-input detection
 ```
 
 ### Notification Events
 
 Webhook endpoints filter the universal event stream by `<type>.<subtype>` globs (empty
-means all). Session state changes are `lifecycle` events (`lifecycle.ready`,
-`lifecycle.stopped`, `lifecycle.lost`, ...):
+means all). Session state changes are `lifecycle` events, and the subtype is the session's
+new status directly (`lifecycle.starting`, `lifecycle.working`, `lifecycle.waiting`,
+`lifecycle.done`, `lifecycle.lost`):
 
 ```toml
 [[webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
-events = ["lifecycle.ready", "lifecycle.stopped", "lifecycle.lost"]
+events = ["lifecycle.done", "lifecycle.lost"]
 ```
 
 See the [config reference](../reference/config.md#webhooks) for `min_severity` and the full
@@ -189,41 +184,57 @@ under a still-running session:
 | Marker | Written by | Meaning |
 |--------|-----------|---------|
 | `{id}.code` | The wrapped agent command, immediately after it exits (`$?`) | The agent process finished; contains its exit code |
-| `{id}.clean` | The main/fallback shell, as the very last thing it does before exiting | The session's shell ended normally (covers both the agent-wrapper's fallback shell and bare-shell spawns) |
+| `{id}.clean` | The wrapper script (or a bare-shell spawn's own login shell), as the very last thing it does before exiting | The session's shell ended normally |
 
-Both are written directly by the wrapper shell script itself (not by the daemon), so
-their presence is race-free and daemon-uptime-independent — they're read fresh from
-disk every time the daemon checks, even hours after being written or across a daemon
-restart. Presence of *either* marker means the session ended on its own; absence of
-both means tmux vanished mid-run. Markers are removed when a session is purged or
-resumed (a resume reuses the same session id, so stale markers from a *previous* run
-are cleared first) and orphaned markers (no matching session row) are swept by `pulpo
-cleanup`.
+**No more lingering fallback shell.** Previously, once the wrapped agent process
+exited, the wrapper dropped into a fallback interactive shell so the tmux session stayed
+alive — an observable window where "the process is done but the backend is still alive"
+(the old `ready` state). That fallback shell is gone: the wrapper now writes `{id}.code`
+and then exits immediately once the agent command finishes, so `{id}.clean` lands right
+behind it and tmux closes the session right away, with no interval where a finished
+agent leaves a session sitting around still nominally "alive." A bare-shell session
+(`pulpo spawn <name>` with no command) is unaffected by this — it's a genuine
+interactive shell the user is typing into, not a fallback, and still only writes
+`{id}.clean` when the user exits it (or the shell dies unexpectedly).
+
+Both marker files are written directly by the wrapper shell script itself (not by the
+daemon), so their presence is race-free and daemon-uptime-independent — they're read
+fresh from disk every time the daemon checks, even hours after being written or across a
+daemon restart. Dead-backend classification is now simply: either marker present → `done`
+(`status_reason = exited`, `exit_code` from `{id}.code` when it exists) — unless an
+explicit `pulpo stop` or a watchdog intervention already recorded a more specific reason
+— no marker at all → `lost`. Markers are removed when a session is purged or resumed (a
+resume reuses the same session id, so stale markers from a *previous* run are cleared
+first) and orphaned markers (no matching session row) are swept by `pulpo cleanup`.
 
 ## Corner Cases
 
-- **User exits the lingering shell — no longer `Lost`**: Previously, typing `exit` in a
-  finished session's fallback shell (or in a bare-shell session) made the tmux process
-  disappear while the daemon still though the session was `Active`/`Idle`, so it was
-  classified `Lost` — indistinguishable from a crash. The wrapper now writes an exit
-  marker as the last thing it does before the shell process ends, so this case now
-  correctly resolves to `Stopped` (with `exit_code` recorded when available).
+- **User exits a bare-shell session — not `lost`**: A `pulpo spawn <name>` with no agent
+  command is a plain interactive shell; typing `exit` (or otherwise closing it) makes the
+  tmux process disappear. The wrapper writes the `{id}.clean` exit marker as the last
+  thing it does before the shell process ends, so this resolves to `done`
+  (`status_reason = exited`) rather than `lost` — the failure mode this fixed, before
+  exit markers existed at all, was exactly this case being indistinguishable from a crash.
 
-- **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (the `.code` marker appears, or — for sessions with no wrapper — the `[pulpo] Agent exited` text is detected), or Stopped by user/watchdog/clean shell exit.
+- **Long-running session never exits**: Some sessions cycle `working` ⇄ `waiting`
+  indefinitely. They only reach `done` when the command exits (the `.code` marker
+  appears) or the session is ended early by the user/watchdog (`pulpo stop`, an idle
+  timeout kill, a budget breaker stop).
 
-- **Lost on daemon restart**: When the daemon starts, Active/Idle/Ready sessions whose
+- **Lost on daemon restart**: When the daemon starts, `working`/`waiting` sessions whose
   tmux sessions are gone are checked against their exit markers just like any other
-  staleness check: with a marker present they resolve to `Stopped` retroactively (even
-  if the session ended while the daemon was down); with no marker they're marked Lost.
-  For `Ready` this check runs eagerly inside `resume_lost_sessions` itself (not lazily
-  on the next `get_session`/`list_sessions` call) — a dead `Ready` session is *never*
-  auto-resumed (re-launching the original command would make no sense for a session
-  whose agent already finished); it only ever resolves to `Stopped` or `Lost`. The user
-  can resume a resolved session with `pulpo resume` (which auto-attaches).
+  staleness check: with a marker present they resolve to `done` (`exited`) retroactively
+  (even if the session ended while the daemon was down); with no marker they're marked
+  `lost`. The user can resume a resolved session with `pulpo resume` (which
+  auto-attaches). Unlike the old `ready` state, a `done` session never has a live backend
+  to separately lose — the moment a session becomes `done` its backend is already gone —
+  so there's no equivalent of the old special-cased eager re-check that `ready` sessions
+  needed at daemon startup.
 
-- **Ready sessions never auto-purge**: A `Ready` session (and its lingering fallback
-  tmux shell) stays listed indefinitely — there is no TTL that stops it automatically.
-  It only leaves `Ready` via an explicit `pulpo stop [--purge]`/`pulpo cleanup`, or by
-  going through the same exit-marker sweep as `Active`/`Idle` sessions if its tmux
-  backend dies on its own (`Stopped` with a marker present, `Lost` without one) — so it
-  never gets stuck as `Ready` forever even without a TTL.
+- **Done sessions never auto-purge**: A `done` session stays listed indefinitely — there
+  is no TTL that removes it automatically. It only leaves `done` via an explicit
+  `pulpo stop [--purge]`/`pulpo cleanup`. Since a `done` session's backend is already
+  gone the moment it becomes `done` (no more lingering fallback shell that could itself
+  later die and need re-classifying), there's nothing further for it to transition to on
+  its own — unlike the old `ready` state, it can't quietly become `lost` out from under
+  you while it sits there.

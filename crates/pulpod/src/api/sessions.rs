@@ -177,15 +177,15 @@ pub async fn download_output(
         return Err(not_found(&format!("session not found: {id}")));
     };
 
-    let output = if session.status == SessionStatus::Active || session.status == SessionStatus::Lost
-    {
-        let backend_id = state.session_manager.resolve_backend_id(&session);
-        state
-            .session_manager
-            .capture_output(&id, &backend_id, 10_000)
-    } else {
-        session.output_snapshot.unwrap_or_default()
-    };
+    let output =
+        if session.status == SessionStatus::Working || session.status == SessionStatus::Lost {
+            let backend_id = state.session_manager.resolve_backend_id(&session);
+            state
+                .session_manager
+                .capture_output(&id, &backend_id, 10_000)
+        } else {
+            session.output_snapshot.unwrap_or_default()
+        };
 
     let filename = format!("{}.log", session.name);
     Ok((

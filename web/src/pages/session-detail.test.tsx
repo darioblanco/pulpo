@@ -70,7 +70,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-123',
     name: 'my-session',
-    status: 'active',
+    status: 'working',
+    status_reason: null,
     command: 'claude -p "fix bug"',
     description: null,
     workdir: '/home/user/project',
@@ -146,7 +147,7 @@ describe('SessionDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('session-name')).toHaveTextContent('my-session');
     });
-    expect(screen.getByTestId('session-status')).toHaveTextContent('active');
+    expect(screen.getByTestId('session-status')).toHaveTextContent('working');
     expect(screen.getByTestId('session-command')).toHaveTextContent('claude -p "fix bug"');
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('/home/user/project');
     expect(screen.getByTestId('session-ink')).toHaveTextContent('claude-code');
@@ -154,14 +155,16 @@ describe('SessionDetailPage', () => {
     expect(screen.getByTestId('session-id')).toHaveTextContent('sess-123');
   });
 
-  it('renders needs-input status distinctly from plain idle', async () => {
+  it('renders needs-input status distinctly from plain waiting', async () => {
     mockGetSession.mockResolvedValue(
-      makeSession({ status: 'idle', metadata: { needs_input: 'question' } }),
+      makeSession({ status: 'waiting', status_reason: 'needs_input:question' }),
     );
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByTestId('session-status')).toHaveTextContent('needs input (question)');
+      expect(screen.getByTestId('session-status')).toHaveTextContent(
+        'waiting (needs input: question)',
+      );
     });
   });
 
@@ -191,8 +194,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('session-worktree-path')).not.toBeInTheDocument();
   });
 
-  it('shows terminal for active sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+  it('shows terminal for working sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'working' }));
     renderDetail();
 
     await waitFor(() => {
@@ -202,8 +205,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('output-section')).not.toBeInTheDocument();
   });
 
-  it('shows terminal for idle sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'idle' }));
+  it('shows terminal for waiting sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'waiting', status_reason: 'idle' }));
     renderDetail();
 
     await waitFor(() => {
@@ -211,8 +214,8 @@ describe('SessionDetailPage', () => {
     });
   });
 
-  it('shows output view for ready sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+  it('shows output view for done sessions (clean exit)', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'done', status_reason: 'exited' }));
     renderDetail();
 
     await waitFor(() => {
@@ -222,8 +225,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('terminal-section')).not.toBeInTheDocument();
   });
 
-  it('shows output view for stopped sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'stopped' }));
+  it('shows output view for done sessions (forced stop)', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'done', status_reason: 'stopped' }));
     renderDetail();
 
     await waitFor(() => {
@@ -243,7 +246,8 @@ describe('SessionDetailPage', () => {
   it('shows intervention history when present', async () => {
     mockGetSession.mockResolvedValue(
       makeSession({
-        status: 'stopped',
+        status: 'done',
+        status_reason: 'stopped',
         intervention_reason: 'Memory threshold exceeded',
         intervention_at: '2025-01-01T01:00:00Z',
       }),
@@ -274,7 +278,7 @@ describe('SessionDetailPage', () => {
   });
 
   it('stop button calls stopSession', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+    mockGetSession.mockResolvedValue(makeSession({ status: 'working' }));
     mockStopSession.mockResolvedValue(undefined);
     renderDetail();
 
@@ -290,7 +294,7 @@ describe('SessionDetailPage', () => {
 
   it('resume button calls resumeSession', async () => {
     mockGetSession.mockResolvedValue(makeSession({ status: 'lost' }));
-    mockResumeSession.mockResolvedValue({ id: 'sess-123', status: 'active' });
+    mockResumeSession.mockResolvedValue({ id: 'sess-123', status: 'working' });
     renderDetail();
 
     await waitFor(() => {
@@ -304,7 +308,7 @@ describe('SessionDetailPage', () => {
   });
 
   it('purge button calls stopSession with purge and navigates', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'stopped' }));
+    mockGetSession.mockResolvedValue(makeSession({ status: 'done', status_reason: 'stopped' }));
     mockStopSession.mockResolvedValue(undefined);
     renderDetail();
 
@@ -342,8 +346,8 @@ describe('SessionDetailPage', () => {
     });
   });
 
-  it('does not show stop button for ready sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+  it('does not show stop button for done sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'done', status_reason: 'exited' }));
     renderDetail();
 
     await waitFor(() => {
@@ -352,8 +356,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('btn-stop')).not.toBeInTheDocument();
   });
 
-  it('does not show resume button for active sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+  it('does not show resume button for working sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'working' }));
     renderDetail();
 
     await waitFor(() => {
@@ -362,8 +366,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('btn-resume')).not.toBeInTheDocument();
   });
 
-  it('shows resume button for ready sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+  it('shows resume button for done sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'done', status_reason: 'exited' }));
     renderDetail();
 
     await waitFor(() => {

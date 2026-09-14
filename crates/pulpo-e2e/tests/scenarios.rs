@@ -39,7 +39,7 @@ fn set_scenario(workdir: &std::path::Path, scenario: &str) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn s1_spawn_reaches_active_with_harness_metadata() {
+fn s1_spawn_reaches_working_with_harness_metadata() {
     let daemon = Daemon::start(DaemonConfig::default());
     let (_dir, workdir) = temp_workdir();
     set_scenario(&workdir, "start,hang");
@@ -53,7 +53,7 @@ fn s1_spawn_reaches_active_with_harness_metadata() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let session = daemon.wait_status("s1-spawn", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s1-spawn", SessionStatus::Working, SHORT);
     assert_eq!(session.harness.as_deref(), Some("claude"));
 
     let session = daemon.wait_for("s1-spawn", SHORT, |s| s.harness_session_id.is_some());
@@ -91,34 +91,25 @@ fn s2_needs_input_then_input_resolves_it() {
     );
     assert!(output.status.success());
 
-    let session = daemon.wait_status("s2-needs-input", SessionStatus::Idle, SHORT);
+    let session = daemon.wait_status("s2-needs-input", SessionStatus::Waiting, SHORT);
     assert_eq!(
-        session
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("needs_input"))
-            .map(String::as_str),
-        Some("permission")
+        session.status_reason.as_deref(),
+        Some("needs_input:permission")
     );
 
     daemon.input("s2-needs-input", None);
 
-    // The fake resolves the prompt (Working) then finishes the turn (Stop): Idle,
-    // but no longer blocked on the human.
+    // The fake resolves the prompt (Working) then finishes the turn (Stop): Waiting
+    // again, but with reason `idle` — no longer blocked on the human.
     let session = daemon.wait_for("s2-needs-input", SHORT, |s| {
-        s.status == SessionStatus::Idle
-            && s.metadata
-                .as_ref()
-                .is_none_or(|m| !m.contains_key("needs_input"))
+        s.status == SessionStatus::Waiting && s.status_reason.as_deref() == Some("idle")
     });
-    assert_eq!(session.status, SessionStatus::Idle);
-    assert!(
-        session
-            .metadata
-            .as_ref()
-            .is_none_or(|m| !m.contains_key("needs_input")),
-        "needs_input should be cleared: {:?}",
-        session.metadata
+    assert_eq!(session.status, SessionStatus::Waiting);
+    assert_eq!(
+        session.status_reason.as_deref(),
+        Some("idle"),
+        "needs_input reason should be cleared once the turn finishes: {:?}",
+        session.status_reason
     );
 }
 
@@ -144,38 +135,31 @@ fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
     );
     assert!(output.status.success());
 
-    // The harness's own SessionEnded event (fired by the "exit" step, before the
-    // fake process actually exits) resolves the session to Ready first — the
-    // backend (fallback shell) is still alive, so this doesn't necessarily know an
-    // exit code straight away (`apply_harness_event` tries the `.code` marker
-    // best-effort on the same hook, but the wrapper may not have written it yet).
-    // The watchdog's own marker sweep (`watchdog::idle::check_idle_sessions`
-    // revisiting `Ready` sessions with no `exit_code` yet) is the durable path, so
-    // poll for it here rather than asserting it's already set the instant the
-    // session reaches Ready.
-    let session = daemon.wait_status("s3-clean-exit", SessionStatus::Ready, SHORT);
+    // The harness's own SessionEnded event fires (via the "exit" step) while the
+    // fake process is still blocked on that hook's HTTP round trip — i.e. strictly
+    // before the wrapped process actually exits and `wrap_command` writes the
+    // `.code` marker — so `apply_harness_event` leaves the status alone rather than
+    // fabricating a transition (see ADR 0009 / `harness::transition_for_event`'s doc
+    // comment). Once the fake process really does exit, the wrapper writes the exit
+    // markers and its own shell exits right behind it — no more lingering fallback
+    // shell — so tmux tears the session down immediately and the very next lazy
+    // dead-backend check (this `wait_status` poll) resolves it straight to `Done`
+    // with reason `exited`. There is no `Ready` in between anymore.
+    let session = daemon.wait_status("s3-clean-exit", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    assert_eq!(session.exit_code, Some(0));
     let harness_session_id = session
         .harness_session_id
         .clone()
         .expect("harness session id should be known before exit");
-    let session = daemon.wait_for("s3-clean-exit", SHORT, |s| s.exit_code == Some(0));
-    assert_eq!(session.status, SessionStatus::Ready);
-    assert_eq!(session.exit_code, Some(0));
-
-    // The user exits the lingering fallback shell: the backend dies and the
-    // session resolves the rest of the way to Stopped, keeping the exit code
-    // already recorded while it was Ready.
-    daemon.input("s3-clean-exit", Some("exit"));
-    let session = daemon.wait_status("s3-clean-exit", SessionStatus::Stopped, SHORT);
-    assert_eq!(session.exit_code, Some(0));
 
     // Regression: exact usage used to be refreshed only by the watchdog's idle
-    // sweep, which never revisits a session once it leaves Active/Idle — a session
-    // that reached Ready/Stopped before the next tick kept reporting no cost at
+    // sweep, which never revisits a session once it leaves Working/Waiting — a
+    // session that reached Done before the next tick kept reporting no cost at
     // all, even though its transcript (the `spend:0.25` step above) had the data
-    // the whole time. The `SessionEnded` hook handling now runs the exact reader
-    // itself (`watchdog::refresh_exact_usage`), so the cost should already be
-    // there — poll briefly rather than asserting instantly, since it's recorded
+    // the whole time. The dead-backend transition into `Done` now runs the exact
+    // reader itself (`watchdog::refresh_exact_usage`), so the cost should already
+    // be there — poll briefly rather than asserting instantly, since it's recorded
     // asynchronously relative to this test's own polling of `status`.
     let session = daemon.wait_for("s3-clean-exit", SHORT, |s| {
         s.metadata
@@ -184,24 +168,24 @@ fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
             .and_then(|v| v.parse::<f64>().ok())
             .is_some_and(|cost| cost > 0.0)
     });
-    assert_eq!(session.status, SessionStatus::Stopped);
+    assert_eq!(session.status, SessionStatus::Done);
     let cost: f64 = session
         .metadata
         .as_ref()
         .and_then(|m| m.get("session_cost_usd"))
         .and_then(|v| v.parse().ok())
-        .expect("session_cost_usd should be recorded for a stopped session with a transcript");
+        .expect("session_cost_usd should be recorded for a done session with a transcript");
     assert!(cost > 0.0, "expected session_cost_usd > 0, got {cost}");
 
     // Swap in a scenario that just stays up after starting, so the *resumed*
-    // process is reliably observable as Active before it does anything else.
+    // process is reliably observable as Working before it does anything else.
     set_scenario(&workdir, "start,hang");
     let before_resume_state = read_fake_state_or_panic(&workdir);
     let old_pid = before_resume_state["pid"].as_u64().expect("pid");
 
     daemon.resume("s3-clean-exit");
 
-    let session = daemon.wait_status("s3-clean-exit", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s3-clean-exit", SessionStatus::Working, SHORT);
     assert_eq!(
         session.harness_session_id.as_deref(),
         Some(harness_session_id.as_str()),
@@ -238,7 +222,7 @@ fn s4_tmux_server_lost_then_resume_reactivates() {
 
     let output = daemon.spawn("s4-lost", &workdir, &[], &[&claude_str, "-p", "hello"]);
     assert!(output.status.success());
-    let session = daemon.wait_status("s4-lost", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s4-lost", SessionStatus::Working, SHORT);
     let harness_session_id = session
         .harness_session_id
         .clone()
@@ -250,7 +234,7 @@ fn s4_tmux_server_lost_then_resume_reactivates() {
 
     daemon.resume("s4-lost");
 
-    let session = daemon.wait_status("s4-lost", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s4-lost", SessionStatus::Working, SHORT);
     assert_eq!(
         session.harness_session_id.as_deref(),
         Some(harness_session_id.as_str())
@@ -284,11 +268,11 @@ fn s5_daemon_restart_preserves_sessions_and_auto_resumes_lost_ones() {
         &[&claude_str, "-p", "hello"],
     );
     assert!(output.status.success());
-    daemon.wait_status("s5-restart-alive", SessionStatus::Active, SHORT);
+    daemon.wait_status("s5-restart-alive", SessionStatus::Working, SHORT);
 
     daemon.restart_daemon();
 
-    let session = daemon.wait_status("s5-restart-alive", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s5-restart-alive", SessionStatus::Working, SHORT);
     assert_eq!(session.name, "s5-restart-alive");
 
     // Part 2: kill tmux *then* restart — auto-resume-at-startup must recreate the
@@ -302,12 +286,12 @@ fn s5_daemon_restart_preserves_sessions_and_auto_resumes_lost_ones() {
         &[&claude_str, "-p", "hello"],
     );
     assert!(output.status.success());
-    daemon.wait_status("s5-restart-with-loss", SessionStatus::Active, SHORT);
+    daemon.wait_status("s5-restart-with-loss", SessionStatus::Working, SHORT);
 
     daemon.kill_tmux_server();
     daemon.restart_daemon();
 
-    daemon.wait_status("s5-restart-with-loss", SessionStatus::Active, SHORT);
+    daemon.wait_status("s5-restart-with-loss", SessionStatus::Working, SHORT);
     // `backend_session_id` itself gets upgraded from a plain name to tmux's own
     // `$N` id shortly after creation (see `AGENTS.md`'s "Session IDs" note) — the
     // durable proof of "named after the session, not a stale $N id" is the actual
@@ -343,11 +327,12 @@ fn s6_budget_breaker_stops_session_and_delivers_webhook() {
     );
     assert!(output.status.success());
 
-    let session = daemon.wait_status("s6-budget", SessionStatus::Stopped, MEDIUM);
+    let session = daemon.wait_status("s6-budget", SessionStatus::Done, MEDIUM);
     assert_eq!(
         session.intervention_code,
         Some(InterventionCode::BudgetExceeded)
     );
+    assert_eq!(session.status_reason.as_deref(), Some("budget_exceeded"));
 
     let delivered = webhook.wait_for_event(MEDIUM);
     let delivered_text = delivered.to_string();
@@ -373,7 +358,7 @@ fn s7_idle_timeout_kills_session_with_intervention() {
     });
     let (_dir, workdir) = temp_workdir();
     // Stays alive after Stop (an agent left sitting at its finished-turn prompt) —
-    // Idle, unchanging output, past the idle timeout.
+    // Waiting, unchanging output, past the idle timeout.
     set_scenario(&workdir, "start,prompt,stop,hang");
     let claude = daemon.fake_claude_bin();
     let claude_str = claude.to_string_lossy().into_owned();
@@ -381,11 +366,12 @@ fn s7_idle_timeout_kills_session_with_intervention() {
     let output = daemon.spawn("s7-idle-kill", &workdir, &[], &[&claude_str, "-p", "hello"]);
     assert!(output.status.success());
 
-    let session = daemon.wait_status("s7-idle-kill", SessionStatus::Stopped, LONG);
+    let session = daemon.wait_status("s7-idle-kill", SessionStatus::Done, LONG);
     assert_eq!(
         session.intervention_code,
         Some(InterventionCode::IdleTimeout)
     );
+    assert_eq!(session.status_reason.as_deref(), Some("idle_timeout"));
 }
 
 #[test]
@@ -413,12 +399,15 @@ fn s7_idle_threshold_zero_disables_time_based_idle_for_generic_command() {
         .expect("session should exist");
     assert_eq!(
         session.status,
-        SessionStatus::Active,
-        "idle_threshold_secs=0 must disable the time-based Active->Idle transition"
+        SessionStatus::Working,
+        "idle_threshold_secs=0 must disable the time-based Working->Waiting transition"
     );
 
-    // It still ends normally once the command exits.
-    daemon.wait_status("s7-idle-threshold-0", SessionStatus::Ready, SHORT);
+    // It still ends normally once the command exits — straight to Done, no
+    // intermediate Ready (there's no harness here at all, just the ordinary
+    // exit-marker/dead-backend classification).
+    let session = daemon.wait_status("s7-idle-threshold-0", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
 }
 
 // ---------------------------------------------------------------------------
@@ -483,13 +472,14 @@ fn s9_worktrees_distinct_survive_stop_and_removed_by_cleanup() {
     assert!(std::path::Path::new(&wt2).exists());
 
     daemon.stop("s9-wt-one", false);
-    daemon.wait_status("s9-wt-one", SessionStatus::Stopped, SHORT);
+    let s1_stopped = daemon.wait_status("s9-wt-one", SessionStatus::Done, SHORT);
+    assert_eq!(s1_stopped.status_reason.as_deref(), Some("stopped"));
     assert!(
         std::path::Path::new(&wt1).exists(),
         "stopping a session (without --purge) must not remove its worktree"
     );
 
-    // `pulpo rm` purges a single stopped session outright, worktree included —
+    // `pulpo rm` purges a single done session outright, worktree included —
     // without touching the still-alive `s9-wt-two` sharing nothing but the origin
     // repo.
     let rm_out = daemon.remove("s9-wt-one");
@@ -512,7 +502,7 @@ fn s9_worktrees_distinct_survive_stop_and_removed_by_cleanup() {
     );
 
     daemon.stop("s9-wt-two", false);
-    daemon.wait_status("s9-wt-two", SessionStatus::Stopped, SHORT);
+    daemon.wait_status("s9-wt-two", SessionStatus::Done, SHORT);
 
     let cleanup = daemon.cleanup();
     assert!(cleanup.status.success());
@@ -541,7 +531,7 @@ fn s10_pulpo_url_points_at_the_configured_port() {
 
     let output = daemon.spawn("s10-port", &workdir, &[], &[&claude_str, "-p", "hello"]);
     assert!(output.status.success());
-    daemon.wait_status("s10-port", SessionStatus::Active, SHORT);
+    daemon.wait_status("s10-port", SessionStatus::Working, SHORT);
 
     // Every scenario in this suite implicitly proves PULPO_URL works (S1 already
     // fails otherwise — the daemon is never on its default port 7433 here) — this
@@ -566,7 +556,7 @@ fn s10_pulpo_url_points_at_the_configured_port() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn s11_generic_command_has_no_harness_and_ends_stopped() {
+fn s11_generic_command_has_no_harness_and_ends_done() {
     let daemon = Daemon::start(DaemonConfig::default());
     let (_dir, workdir) = temp_workdir();
 
@@ -579,15 +569,18 @@ fn s11_generic_command_has_no_harness_and_ends_stopped() {
     // lifecycle-hook rewrite happened, and detection stays on scrollback
     // heuristics/exit markers the whole way, exactly as it did before harness
     // adapters existed.
-    let session = daemon.wait_status("s11-generic", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s11-generic", SessionStatus::Working, SHORT);
     assert_eq!(session.harness.as_deref(), Some("generic"));
     assert_eq!(session.harness_session_id, None);
 
-    let session = daemon.wait_status("s11-generic", SessionStatus::Ready, SHORT);
+    // No harness events at all for a generic command — once `sleep 3` exits,
+    // `wrap_command` writes the exit markers and its own shell exits right behind
+    // it (no more lingering fallback shell), so tmux tears the session down and the
+    // very next dead-backend check resolves straight to `Done` — no intermediate
+    // `Ready`, and no need to type `exit` into a shell that no longer exists.
+    let session = daemon.wait_status("s11-generic", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
     assert_eq!(session.exit_code, Some(0));
-
-    daemon.input("s11-generic", Some("exit"));
-    let session = daemon.wait_status("s11-generic", SessionStatus::Stopped, SHORT);
 
     // `sleep 3` exiting on its own wrote a real `.code` exit marker via
     // `wrap_command` — confirm it's actually there before proving `pulpo rm`
@@ -602,7 +595,7 @@ fn s11_generic_command_has_no_harness_and_ends_stopped() {
         "expected exit marker at {marker_path:?}"
     );
 
-    // `pulpo rm` on a Stopped session: purges the row and its exit markers (see
+    // `pulpo rm` on a Done session: purges the row and its exit markers (see
     // the same purge helper `pulpo stop --purge`/`pulpo cleanup` use).
     let rm_out = daemon.remove("s11-generic");
     assert!(
@@ -666,7 +659,7 @@ fn s12_spawn_quoted_prompt_reaches_harness_intact() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    daemon.wait_status("s12-quoted-spawn", SessionStatus::Active, SHORT);
+    daemon.wait_status("s12-quoted-spawn", SessionStatus::Working, SHORT);
     let argv = wait_for_fake_argv(&workdir, SHORT);
 
     // The daemon's Claude adapter splices `--session-id <uuid> --settings <path>`
@@ -832,7 +825,7 @@ fn s14_codex_spawn_needs_input_exit_then_resume_and_usage_counted() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let session = daemon.wait_status("s14-codex", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s14-codex", SessionStatus::Working, SHORT);
     assert_eq!(session.harness.as_deref(), Some("codex"));
 
     // Codex has no flag to preset its own thread id at launch — the FIRST hook
@@ -869,32 +862,27 @@ fn s14_codex_spawn_needs_input_exit_then_resume_and_usage_counted() {
         .expect("codex_home should be a string")
         .to_owned();
 
-    let session = daemon.wait_status("s14-codex", SessionStatus::Idle, SHORT);
+    let session = daemon.wait_status("s14-codex", SessionStatus::Waiting, SHORT);
     assert_eq!(
-        session
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("needs_input"))
-            .map(String::as_str),
-        Some("permission")
+        session.status_reason.as_deref(),
+        Some("needs_input:permission")
     );
 
     daemon.input("s14-codex", None);
 
     // The fake resolves the prompt (Working) then finishes the turn (Stop) before the
     // next scenario step ("exit") fires SessionEnd and the process exits cleanly.
-    daemon.wait_status("s14-codex", SessionStatus::Ready, SHORT);
-    let session = daemon.wait_for("s14-codex", SHORT, |s| s.exit_code == Some(0));
-    assert_eq!(session.status, SessionStatus::Ready);
+    // Same as S3: SessionEnded fires before the process actually exits, so the
+    // status stays put until the wrapper's markers land and tmux tears the session
+    // down on its own — straight to Done, no intermediate Ready.
+    let session = daemon.wait_status("s14-codex", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
     assert_eq!(session.exit_code, Some(0));
-
-    daemon.input("s14-codex", Some("exit"));
-    daemon.wait_status("s14-codex", SessionStatus::Stopped, SHORT);
 
     // Swap in a scenario that just stays up after starting (the tmux command line is
     // reused verbatim on resume, but this file is read fresh by every new
     // fake-codex process — see fake-claude's S3/S4/S5 precedent), so the *resumed*
-    // process is reliably observable as Active without also replaying
+    // process is reliably observable as Working without also replaying
     // needs_input/wait and getting stuck blocked on stdin again.
     set_scenario(&workdir, "start,hang");
     let before_resume_state = read_fake_state_or_panic(&workdir);
@@ -902,7 +890,7 @@ fn s14_codex_spawn_needs_input_exit_then_resume_and_usage_counted() {
 
     daemon.resume("s14-codex");
 
-    let session = daemon.wait_status("s14-codex", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s14-codex", SessionStatus::Working, SHORT);
     assert_eq!(
         session.harness_session_id.as_deref(),
         Some(harness_session_id.as_str()),
@@ -957,7 +945,7 @@ fn s15_pi_spawn_needs_input_exit_then_resume_is_idempotent_and_usage_counted() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let session = daemon.wait_status("s15-pi", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s15-pi", SessionStatus::Working, SHORT);
     assert_eq!(session.harness.as_deref(), Some("pi"));
     // Unlike Codex, pi's --session-id is preset up front (like Claude's) — known
     // immediately, no hook needed.
@@ -966,25 +954,24 @@ fn s15_pi_spawn_needs_input_exit_then_resume_is_idempotent_and_usage_counted() {
         .clone()
         .expect("pi harness session id should be known up front");
 
-    let session = daemon.wait_status("s15-pi", SessionStatus::Idle, SHORT);
+    let session = daemon.wait_status("s15-pi", SessionStatus::Waiting, SHORT);
     assert_eq!(
-        session
-            .metadata
-            .as_ref()
-            .and_then(|m| m.get("needs_input"))
-            .map(String::as_str),
-        Some("permission")
+        session.status_reason.as_deref(),
+        Some("needs_input:permission")
     );
 
     daemon.input("s15-pi", None);
-    daemon.wait_for("s15-pi", SHORT, |s| s.exit_code == Some(0));
 
-    daemon.input("s15-pi", Some("exit"));
-    daemon.wait_status("s15-pi", SessionStatus::Stopped, SHORT);
+    // Same as S3/S14: SessionEnded fires before the process actually exits, so the
+    // status stays put until the wrapper's markers land and tmux tears the session
+    // down on its own — straight to Done, no intermediate Ready.
+    let session = daemon.wait_status("s15-pi", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    assert_eq!(session.exit_code, Some(0));
 
     // Swap in a scenario that just stays up after starting (read fresh by every new
     // fake-pi process — see fake-claude's S3/S4/S5 precedent), so the resumed
-    // process is reliably observable as Active without also replaying
+    // process is reliably observable as Working without also replaying
     // needs_input/wait and getting stuck blocked on stdin again.
     set_scenario(&workdir, "start,hang");
     let before_resume_state = read_fake_state_or_panic(&workdir);
@@ -992,7 +979,7 @@ fn s15_pi_spawn_needs_input_exit_then_resume_is_idempotent_and_usage_counted() {
 
     daemon.resume("s15-pi");
 
-    let session = daemon.wait_status("s15-pi", SessionStatus::Active, SHORT);
+    let session = daemon.wait_status("s15-pi", SessionStatus::Working, SHORT);
     assert_eq!(
         session.harness_session_id.as_deref(),
         Some(harness_session_id.as_str())
@@ -1057,27 +1044,31 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Don't wait on the transient `Active` status here: the "stop,exit" scenario
+    // Don't wait on the transient `Working` status here: the "stop,exit" scenario
     // (no "start"/"wait" step) can run to completion in well under the ~150ms poll
-    // interval on a loaded CI runner, so `Active` may never be observed at all
-    // before the session moves on to `Ready` — a genuine intermittent race, not a
-    // platform difference (this exact pattern flaked on Linux CI; see the S16
-    // extension test below for the fuller writeup). Wait directly for the stable,
-    // terminal state this scenario actually settles into instead.
+    // interval on a loaded CI runner, so `Working` may never be observed at all
+    // before the session moves on to `Done` — a genuine intermittent race, not a
+    // platform difference (this exact pattern flaked on Linux CI). Wait directly
+    // for the stable, terminal state this scenario actually settles into instead.
+    //
+    // Same as S3/S14/S15: the `SessionEnded` hook fires before the fake process
+    // actually exits, so `apply_harness_event` leaves the status alone; once the
+    // process really does exit, the wrapper's markers land and its shell exits
+    // right behind it (no more lingering fallback shell), so the very next
+    // dead-backend check resolves straight to `Done` — no separate `Ready`/stop
+    // step needed.
     let session = daemon.wait_for("s16-codex-fallback", SHORT, |s| s.exit_code == Some(0));
     assert_eq!(session.harness.as_deref(), Some("codex"));
+    assert_eq!(session.status, SessionStatus::Done);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
     assert!(
         session.harness_session_id.is_none(),
         "still no id learned after a clean exit with hooks disabled"
     );
 
-    // `pulpo stop` (a direct `kill_session`) rather than typing "exit" into the
-    // lingering fallback shell — see the S16 extension test's doc comment for why.
-    daemon.stop("s16-codex-fallback", false);
-    daemon.wait_status("s16-codex-fallback", SessionStatus::Stopped, SHORT);
 
     // Swap in a scenario that just stays up after starting (read fresh by every new
-    // fake-codex process), so the resumed process is reliably observable as Active
+    // fake-codex process), so the resumed process is reliably observable as Working
     // rather than racing straight through "stop,exit" again before a poll catches it.
     set_scenario(&workdir, "start,hang");
     let before_resume_state = read_fake_state_or_panic(&workdir);
@@ -1085,7 +1076,7 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
 
     daemon.resume("s16-codex-fallback");
 
-    daemon.wait_status("s16-codex-fallback", SessionStatus::Active, SHORT);
+    daemon.wait_status("s16-codex-fallback", SessionStatus::Working, SHORT);
     wait_for_fake_state(&workdir, SHORT, |s| {
         s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
     });
@@ -1138,18 +1129,15 @@ fn commit_fake_scenario(repo_path: &std::path::Path, scenario: &str) {
 /// must not refuse it just because `effective_resume_workdir` fell back to the
 /// original repo path.
 ///
-/// Reaches `Stopped` via `pulpo stop` (a direct `kill_session`), and never waits on
-/// the transient `Active` status after the initial spawn — see the plain S16 test
-/// above for the full writeup of an intermittent CI-only (Linux) race this scenario
-/// shape exposed: with a "stop,exit"-only fake scenario (no "start"/"wait" step),
-/// the whole run can finish in well under this suite's ~150ms poll interval, so a
-/// `wait_status(..., Active, _)` right after spawn can time out having *never*
-/// observed `Active` at all — this is not deterministic (a rerun of the same commit
-/// passed), not specific to worktrees (the plain S16 test flaked the exact same way
-/// on a later run), and not about typed `"exit"` input either (that was this test's
-/// first, incorrect diagnosis — kept as `pulpo stop` regardless since it is still a
-/// strictly more robust teardown than typed input, matching S9's precedent for
-/// worktree sessions).
+/// Reaches `Done` directly (no more lingering fallback shell to separately stop —
+/// ADR 0009), and never waits on the transient `Working` status after the initial
+/// spawn — see the plain S16 test above for the full writeup of an intermittent
+/// CI-only (Linux) race this scenario shape exposed: with a "stop,exit"-only fake
+/// scenario (no "start"/"wait" step), the whole run can finish in well under this
+/// suite's ~150ms poll interval, so a `wait_status(..., Working, _)` right after
+/// spawn can time out having *never* observed `Working` at all — this is not
+/// deterministic (a rerun of the same commit passed) and not specific to
+/// worktrees (the plain S16 test flaked the exact same way on a later run).
 #[test]
 fn s16_codex_resume_still_works_when_worktree_removed() {
     let daemon = Daemon::start(DaemonConfig::default());
@@ -1181,24 +1169,22 @@ fn s16_codex_resume_still_works_when_worktree_removed() {
     let worktree_path = std::path::PathBuf::from(session.worktree_path.expect("worktree path"));
     assert!(worktree_path.exists(), "expected the worktree to exist");
 
-    // Don't wait on the transient `Active` status here — see the plain S16 test's
+    // Don't wait on the transient `Working` status here — see the plain S16 test's
     // comment above: "stop,exit" (no "start"/"wait" step) can complete in well
-    // under the test's ~150ms poll interval on a loaded CI runner, so `Active` may
-    // never actually be observed. Wait directly for the stable, terminal state.
-    daemon.wait_for("s16-codex-worktree-removed", SHORT, |s| {
+    // under the test's ~150ms poll interval on a loaded CI runner, so `Working` may
+    // never actually be observed. Wait directly for the stable, terminal state:
+    // once the exit code lands, the wrapper's markers are already there too, and
+    // (no more lingering fallback shell — ADR 0009) the very next dead-backend
+    // check resolves straight to `Done`, so no separate `pulpo stop` is needed.
+    let resolved = daemon.wait_for("s16-codex-worktree-removed", SHORT, |s| {
         s.exit_code == Some(0)
     });
+    assert_eq!(resolved.status, SessionStatus::Done);
+    assert_eq!(resolved.status_reason.as_deref(), Some("exited"));
     assert!(
-        daemon
-            .session("s16-codex-worktree-removed")
-            .unwrap()
-            .harness_session_id
-            .is_none(),
+        resolved.harness_session_id.is_none(),
         "SessionStart never fires in this scenario — no id should be learned"
     );
-
-    daemon.stop("s16-codex-worktree-removed", false);
-    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Stopped, SHORT);
 
     // Simulate the worktree being removed (branch merged and cleaned up, disk
     // wiped, ...) — `effective_resume_workdir` will now fall back to `repo_path`.
@@ -1212,7 +1198,7 @@ fn s16_codex_resume_still_works_when_worktree_removed() {
 
     daemon.resume("s16-codex-worktree-removed");
 
-    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Active, SHORT);
+    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Working, SHORT);
     wait_for_fake_state(&repo_path, SHORT, |s| s["pid"].as_u64().is_some());
 
     let argv = read_fake_argv(&repo_path).expect("resumed fake-codex should have recorded argv");
@@ -1282,5 +1268,98 @@ fn s19_second_daemon_on_same_data_dir_refuses_to_start() {
         output.status.success(),
         "pulpo ls --all failed after a blocked second instance: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S17 — attach on a done session errors with the resume hint; resume recreates
+// with the harness's own resume command
+// ---------------------------------------------------------------------------
+
+/// ADR 0009: once a session is `Done`, there's no live backend left to attach to at
+/// all (no more lingering fallback shell to reconnect to, unlike the old `Ready`
+/// state) — `pulpo attach` must refuse with a hint pointing at `pulpo resume`/`pulpo
+/// logs` instead of trying (and failing more confusingly) to attach tmux to a
+/// session that no longer exists. `pulpo resume` on that same session must still
+/// work, recreating the backend with the harness's own resume command
+/// (`claude --resume <id>`) — the same mechanism S3 proves in depth, checked here
+/// specifically in combination with the attach error to prove the *whole*
+/// done-session story (can't attach, can resume) rather than either half alone.
+#[test]
+fn s17_attach_on_done_errors_with_resume_hint_and_resume_recreates_with_harness_command() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "start,prompt,stop,exit");
+    let claude = daemon.fake_claude_bin();
+    let claude_str = claude.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s17-attach-done",
+        &workdir,
+        &[],
+        &[&claude_str, "-p", "hello"],
+    );
+    assert!(output.status.success());
+
+    // Same shape as S3: SessionEnded fires before the fake process actually exits,
+    // so the session only reaches Done once the wrapper's markers land and tmux
+    // tears itself down — no manual "exit" step, no intermediate Ready.
+    let session = daemon.wait_status("s17-attach-done", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    let harness_session_id = session
+        .harness_session_id
+        .clone()
+        .expect("harness session id should be known before exit");
+
+    let attach_output = daemon.pulpo(&["attach", "s17-attach-done"]);
+    assert!(
+        !attach_output.status.success(),
+        "pulpo attach on a done session should fail"
+    );
+    let attach_stderr = String::from_utf8_lossy(&attach_output.stderr);
+    assert!(
+        attach_stderr.contains("done"),
+        "expected the error to name the done status: {attach_stderr}"
+    );
+    assert!(
+        attach_stderr.contains("pulpo resume"),
+        "expected a resume hint: {attach_stderr}"
+    );
+    assert!(
+        attach_stderr.contains("pulpo logs"),
+        "expected a logs hint: {attach_stderr}"
+    );
+
+    // Swap in a scenario that just stays up after starting, so the *resumed*
+    // process is reliably observable as Working before it does anything else.
+    set_scenario(&workdir, "start,hang");
+    let before_resume_state = read_fake_state_or_panic(&workdir);
+    let old_pid = before_resume_state["pid"].as_u64().expect("pid");
+
+    daemon.resume("s17-attach-done");
+
+    let session = daemon.wait_status("s17-attach-done", SessionStatus::Working, SHORT);
+    assert_eq!(
+        session.harness_session_id.as_deref(),
+        Some(harness_session_id.as_str()),
+        "resume must continue the same harness conversation, not start a new one"
+    );
+
+    // Confirm the daemon actually rewrote the spawn into the harness's own resume
+    // command (`claude --resume <id> ...`), not a fresh `-p` invocation.
+    let state = wait_for_fake_state(&workdir, SHORT, |s| {
+        s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
+    });
+    assert_eq!(state["resumed"], serde_json::json!(true));
+    assert_eq!(state["source"], serde_json::json!("resume"));
+    assert_eq!(state["session_id"], serde_json::json!(harness_session_id));
+    let argv = read_fake_argv(&workdir).expect("resumed fake-claude should have recorded argv");
+    assert!(
+        argv.iter().any(|a| a == "--resume"),
+        "expected the harness's own --resume flag in argv: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == harness_session_id.as_str()),
+        "expected the exact harness session id in argv: {argv:?}"
     );
 }

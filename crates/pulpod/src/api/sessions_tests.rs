@@ -66,14 +66,14 @@ async fn test_list_with_status_filter() {
     let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
     let query = ListSessionsQuery {
-        status: Some("active".into()),
+        status: Some("working".into()),
         ..Default::default()
     };
     let Json(sessions) = list(State(state.clone()), Query(query)).await.unwrap();
     assert_eq!(sessions.len(), 1);
 
     let query = ListSessionsQuery {
-        status: Some("ready".into()),
+        status: Some("done".into()),
         ..Default::default()
     };
     let Json(sessions) = list(State(state), Query(query)).await.unwrap();
@@ -881,7 +881,7 @@ async fn test_download_output_dead_session_with_snapshot() {
         name: "snap-test".into(),
         workdir: "/tmp".into(),
         command: "echo test".into(),
-        status: SessionStatus::Stopped,
+        status: SessionStatus::Done,
         output_snapshot: Some("saved output from snapshot".into()),
         created_at: now,
         updated_at: now,
@@ -1151,7 +1151,10 @@ async fn test_resume_stale_session() {
     let result = resume(State(state), Path(session.id.to_string())).await;
     assert!(result.is_ok());
     let Json(resumed) = result.unwrap();
-    assert_eq!(resumed.status, pulpo_common::session::SessionStatus::Active);
+    assert_eq!(
+        resumed.status,
+        pulpo_common::session::SessionStatus::Working
+    );
 }
 
 #[tokio::test]
@@ -1535,7 +1538,8 @@ async fn test_harness_events_ignored_for_stopped_session() {
         .store()
         .update_session_status(
             &session.id.to_string(),
-            pulpo_common::session::SessionStatus::Stopped,
+            pulpo_common::session::SessionStatus::Done,
+            None,
         )
         .await
         .unwrap();
@@ -1556,10 +1560,7 @@ async fn test_harness_events_ignored_for_stopped_session() {
     let Json(fetched) = get(State(state), Path(session.id.to_string()))
         .await
         .unwrap();
-    assert_eq!(
-        fetched.status,
-        pulpo_common::session::SessionStatus::Stopped
-    );
+    assert_eq!(fetched.status, pulpo_common::session::SessionStatus::Done);
     assert!(fetched.harness_last_event_at.is_none());
 }
 

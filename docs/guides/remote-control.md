@@ -83,17 +83,20 @@ pulpo list
 ```
 
 ```
-ID        NAME   STATUS   USAGE     BRANCH   COMMAND
-a1b2c3d4  fix    active   1.2K tok  -        claude -p "Fix the failing auth tests"
+ID        NAME   STATUS    USAGE     BRANCH   COMMAND
+a1b2c3d4  fix    working   1.2K tok  -        claude -p "Fix the failing auth tests"
 ```
 
 The statuses that matter day to day:
 
-- `active` — the agent is working, output is still changing
-- `idle` — the agent is waiting on you, or has gone quiet past the idle threshold
-- `ready` — the command exited; the session is done but still resumable
+- `working` — the agent is working, output is still changing
+- `waiting (needs input: <reason>)` — the agent is waiting on you specifically (a
+  permission prompt, a question)
+- `waiting (idle)` — the agent finished its turn, or has gone quiet past the idle
+  threshold, with nothing specifically blocking on you
 - `lost` — the daemon's machine rebooted or tmux disappeared; resumable
-- `stopped` — terminated on purpose, or exited cleanly; resumable
+- `done (exit <code>)` / `done (stopped)` — the command exited, or was terminated on
+  purpose; either way, still resumable
 
 ## Sessions Survive Disconnects And Reboots
 
@@ -111,12 +114,12 @@ pulpo resume fix
 ```
 
 `pulpo resume` re-creates the `tmux` session, re-runs the command, and auto-attaches. It
-works on `lost` sessions (the backend disappeared), `ready` sessions (the agent already
-exited — resume still recreates the backend and reruns the command even if the fallback
-shell is still lingering, since the agent process itself is gone), and `stopped` sessions
-(terminated on purpose or exited cleanly). `pulpod` also auto-resumes sessions that were
-`active` when it shut down, the next time it starts — you often won't need to run `resume` by
-hand at all. See [Session Lifecycle](../operations/session-lifecycle.md) and
+works on `lost` sessions (the backend disappeared) and `done` sessions (the agent already
+exited, was stopped, or was ended by a watchdog intervention — resume always recreates
+the backend and reruns the command, since the backend is already gone by the time a
+session reaches `done`). `pulpod` also auto-resumes sessions that were `working` when it
+shut down, the next time it starts — you often won't need to run `resume` by hand at
+all. See [Session Lifecycle](../operations/session-lifecycle.md) and
 [Recovery](recovery.md) for the exact state machine and detection rules.
 
 ## Related Docs

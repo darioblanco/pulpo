@@ -6,6 +6,12 @@ use super::{InterventionEvent, Store};
 use crate::store::rows::row_to_intervention_event;
 
 impl Store {
+    /// Record a watchdog intervention (budget/idle-timeout breaker): the audit-trail
+    /// row in `intervention_events`, plus the session itself moving to `done` with
+    /// `status_reason` set to the intervention code's own `Display` string
+    /// (`idle_timeout`/`budget_exceeded`/`memory_pressure`) — see ADR 0009's
+    /// five-state model. `pulpo ls`/the web UI render this as e.g. `done (budget
+    /// exceeded)`.
     pub async fn update_session_intervention(
         &self,
         id: &str,
@@ -15,11 +21,12 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let code_str = code.to_string();
         sqlx::query(
-            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'stopped', updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'done', status_reason = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&code_str)
         .bind(reason)
         .bind(&now)
+        .bind(&code_str)
         .bind(&now)
         .bind(id)
         .execute(&self.pool)

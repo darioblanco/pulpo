@@ -83,11 +83,11 @@ The lifecycle model is decoupled from the backend behind the `Backend` trait. Th
 
 Sessions move through explicit states:
 
-`creating -> active <-> idle -> ready`
+`starting -> working <-> waiting -> done`
 
-with failure or intervention paths to:
+with failure paths to:
 
-`stopped` or `lost`
+`lost`
 
 This is the most important behavior in the system. See [Session Lifecycle](../operations/session-lifecycle.md) for exact transitions.
 
@@ -106,9 +106,9 @@ For a harness with its own lifecycle hooks (Claude Code, Codex, pi), a **harness
 adapter** rewrites the spawn to wire those hooks to `pulpo hook <harness>` and the
 resulting events drive the same transitions directly — the watchdog stops guessing from
 scrollback for whatever signals that harness's events cover. A session blocked on the
-harness (a permission prompt, a question) shows as `idle` with a `needs input
-(<reason>)` label rather than plain `idle`. See
-[Harness Adapters](harness-adapters.md).
+harness (a permission prompt, a question) shows as `waiting` with a `status_reason =
+needs_input:<reason>`, rendered as `waiting (needs input: <reason>)` rather than plain
+`waiting (idle)`. See [Harness Adapters](harness-adapters.md).
 
 ## Control Surfaces
 
@@ -229,7 +229,7 @@ Session spawn → resolve_command → build_command → tmux create
        ↓                                                                           ↓
    Watchdog ←── check output ──────────────────────────────────────────── terminal output
        ↓
-  State transitions (active ⇄ idle → ready/stopped/lost)
+  State transitions (working ⇄ waiting → done/lost)
        ↓
   SSE events → web UI / webhooks
 ```

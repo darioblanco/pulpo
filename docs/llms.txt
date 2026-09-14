@@ -45,19 +45,22 @@ Primary docs:
 - /docs/adr/0009-five-state-session-model.md
 
 Canonical runtime concepts:
-- Session states: creating, active, idle, ready, stopped, lost. A five-state model
-  (starting/working/waiting/done/lost) was accepted 2026-09-14 (ADR 0009) but is NOT
-  implemented yet — the six states above remain the accurate description of shipped
-  behavior until that migration lands.
-- Resume applies to lost, ready, AND stopped sessions (recreates the backend, re-executes
-  the command). Only active/idle/creating sessions cannot be resumed (still running).
+- Session states (five-state model, ADR 0009, implemented): starting, working, waiting,
+  done, lost. Replaces the old six-state model (creating, active, idle, ready, stopped,
+  lost) — `ready` and `stopped` both meant "not running, and resumable" and merge into
+  `done`, with the *how* (`exited`, `stopped`, or an intervention code) moved into a new
+  `status_reason` field. `waiting` similarly carries `status_reason` (`idle`, or
+  `needs_input:<reason>` when blocked on the user). Old JSON/DB text still deserializes
+  via aliases for back-compat.
+- Resume applies to done AND lost sessions (recreates the backend, re-executes the
+  command). Only working/waiting/starting sessions cannot be resumed (still running).
 - Sessions run arbitrary shell commands — no built-in provider abstraction.
 - Harness adapters (Claude Code, Codex, pi) wire each harness's own lifecycle hooks to
   `pulpo hook <harness>` so status comes from the harness, not scrollback text; resume
   replays the harness's own resume command instead of the bare original one. A session
-  blocked on the harness shows `idle` with a `needs input (<reason>)` label. Any other
-  command keeps the scrollback-heuristic watchdog. See
-  /docs/architecture/harness-adapters.md.
+  blocked on the harness shows `waiting` with a `status_reason = needs_input:<reason>`,
+  rendered as `waiting (needs input: <reason>)`. Any other command keeps the
+  scrollback-heuristic watchdog. See /docs/architecture/harness-adapters.md.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
 - There is no config-editing API or UI (removed September 2026) — config.toml is the sole

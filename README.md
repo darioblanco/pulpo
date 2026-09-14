@@ -98,7 +98,7 @@ table), enforces budgets, and forwards alerts and events to whatever observabili
 
 For Claude Code, Codex, and pi — harnesses with their own lifecycle hooks — Pulpo wires
 those hooks at spawn time so session status comes from the harness itself: a real
-`needs input (<reason>)` label instead of a scrollback guess, a real exit code when the
+`waiting (needs input: <reason>)` label instead of a scrollback guess, a real exit code when the
 harness ends the process, and `pulpo resume` replays the harness's own conversation
 (`claude --resume`, `codex resume`, pi's `--session-id`) rather than starting fresh —
 surviving a reboot with context intact. Any other command (Gemini CLI, Aider, a shell
@@ -195,9 +195,9 @@ single point of failure and integrates with your existing observability.
 - **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, Codex quota; pi in `--scan` only for now), per-repo/worktree and cross-agent rollups, `[rates.<model>]` config — no output-scraping fallback; an unsupported agent simply shows no usage.
 - **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%), recorded as an intervention.
 - **Monitoring backbone**: canonical events delivered as a plain POST to multiple webhooks (in-memory queue, fixed retry schedule); SSE stream.
-- **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
+- **Durable sessions**: explicit lifecycle (`starting`, `working`, `waiting`, `done`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
-- **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `needs input (<reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
+- **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `waiting (needs input: <reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support.
 - **Sovereign access**: single binary with embedded web UI, CLI, REST API; Tailscale transport for private remote access.

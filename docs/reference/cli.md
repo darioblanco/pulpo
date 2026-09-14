@@ -6,17 +6,19 @@
 pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches; alias: s)
 pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]  Hand off a finished
                                           session's context to a new session (alias: h)
-pulpo list [--all]                        List sessions: Active, Idle, Ready, and Lost by default —
-                                          Stopped is hidden, with a trailing hint reporting how many
-                                          were hidden (alias: ls; -a/--all also shows Stopped)
+pulpo list [--all]                        List sessions: Starting, Working, Waiting, and Lost by
+                                          default — Done is hidden, with a trailing hint reporting
+                                          how many were hidden (alias: ls; -a/--all also shows Done)
 pulpo logs <NAME> [--lines N] [--follow]  Show session output (alias: l; default 100 lines; -f to tail)
-pulpo attach <NAME>                       Attach to a session terminal (alias: a)
+pulpo attach <NAME>                       Attach to a session terminal (alias: a; errors with a
+                                          `pulpo resume`/`pulpo logs` hint on a done or lost
+                                          session — there's no live backend left to attach to)
 pulpo input <NAME> [TEXT]                 Send text input to a session (alias: i, send)
 pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, kill; -p/--purge also removes from history)
 pulpo rm <NAME>                           Remove a single session outright (alias: remove; must not
-                                          be active or idle — stop it first)
-pulpo cleanup                             Remove all stopped and lost sessions
-pulpo resume <NAME>                       Resume a lost, ready, or stopped session (alias: r; auto-attaches)
+                                          be working or waiting — stop it first)
+pulpo cleanup                             Remove all done and lost sessions
+pulpo resume <NAME>                       Resume a done or lost session (alias: r; auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions (alias: iv)
 pulpo usage                               Show exact per-session token/cost usage + repo rollups
 pulpo usage --scan                        Scan ALL local agent history (Claude + Codex + pi):
@@ -160,7 +162,7 @@ argument. It posts the raw payload, unmodified, to the daemon as harness `"codex
 (mapped to a single `TurnFinished` event on `agent-turn-complete`) — never a synthetic
 `SessionStart` alongside it (an earlier version tried that to learn the harness session id
 even when the real `SessionStart` hook never fired, but it flapped the session
-Active→Idle on every turn and was removed; a lost session whose `SessionStart` hook never
+`working`→`waiting` on every turn and was removed; a lost session whose `SessionStart` hook never
 fired is instead recovered by Codex's rollout-discovery fallback on its next spawn/resume
 — see [Harness Adapters](../architecture/harness-adapters.md#shipped-the-codex-adapter)). Same
 always-exit-0/2s-timeout/silent contract as the general form.
@@ -183,22 +185,24 @@ pulpo --url mac-mini:7433 spawn my-task -- claude -p "fix bug"
 
 ## Scripting Recipes
 
-### Approve all idle sessions
+### Approve all sessions blocked on you
 
 ```bash
-pulpo list | grep idle | awk '{print $2}' | xargs -I{} pulpo input {} "y"
+pulpo list | grep 'needs input' | awk '{print $2}' | xargs -I{} pulpo input {} "y"
 ```
 
 (Column 1 is only an 8-char ID prefix — `pulpo input`/`stop`/`logs` need the full ID or
 the name, so use column 2, the session name, instead. Since session names are always a
 single kebab-case token, `$2` gives you the bare name even for a session whose NAME
 column also carries a `[wt]`/`[PR]`/`[!]` badge — awk splits those into their own,
-later fields.)
+later fields. `grep 'needs input'` targets `waiting (needs input: <reason>)` rows
+specifically — a plain `waiting (idle)` session finished its turn but isn't blocked on
+you, so answering "y" into it wouldn't do anything useful.)
 
-### Stop all active sessions
+### Stop all working sessions
 
 ```bash
-pulpo list | grep active | awk '{print $2}' | xargs -I{} pulpo stop {}
+pulpo list | grep working | awk '{print $2}' | xargs -I{} pulpo stop {}
 ```
 
 ### Spawn agents across multiple repos

@@ -58,7 +58,7 @@ enabled = true                # Enable watchdog (default: true)
 check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
-idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
+idle_threshold_secs = 60       # Seconds of unchanged output before Working→Waiting (default: 60)
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
 

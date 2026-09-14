@@ -94,9 +94,9 @@ describe('getSessions', () => {
     const sessions = [{ id: '1', name: 'test' }];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    const result = await getSessions({ status: 'active', search: 'claude' });
+    const result = await getSessions({ status: 'working', search: 'claude' });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=active&search=claude', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=working&search=claude', {
       headers: {},
     });
     expect(result).toEqual(sessions);
@@ -106,9 +106,9 @@ describe('getSessions', () => {
     const sessions: unknown[] = [];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    await getSessions({ status: 'ready', search: undefined });
+    await getSessions({ status: 'done', search: undefined });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=ready', { headers: {} });
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=done', { headers: {} });
   });
 
   it('uses absolute URL when base is set', async () => {
@@ -116,9 +116,9 @@ describe('getSessions', () => {
     const sessions = [{ id: '1', name: 'test' }];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    const result = await getSessions({ status: 'active' });
+    const result = await getSessions({ status: 'working' });
 
-    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/sessions?status=active', {
+    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/sessions?status=working', {
       headers: {},
     });
     expect(result).toEqual(sessions);
@@ -394,7 +394,7 @@ describe('sendInput', () => {
 
 describe('resumeSession', () => {
   it('posts to /api/v1/sessions/:id/resume', async () => {
-    const resumed = { id: 'abc', status: 'active' };
+    const resumed = { id: 'abc', status: 'working' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resumed) });
 
     const result = await resumeSession('abc');

@@ -12,18 +12,16 @@ use crate::api::error::{ApiError, internal_error};
 use crate::store::Store;
 use crate::usage::rollup::{build_repo_rollups, session_usage};
 
-/// For a `Stopped` session with no `session_cost_usd` metadata yet, compute its
+/// For a `Done` session with no `session_cost_usd` metadata yet, compute its
 /// exact usage on demand (and persist it) instead of leaving it to a watchdog tick
 /// that will never revisit a terminal session — `check_idle_sessions` only ever
-/// visits `Active`/`Idle` sessions, so a session that reached `Stopped` before
+/// visits `Working`/`Waiting` sessions, so a session that reached `Done` before
 /// `watchdog::metadata::refresh_exact_usage` ran for it (an old session from
 /// before that fix, or a race the watchdog missed) would otherwise report no cost
 /// forever. Best-effort: a session still missing cost afterward (no structured
 /// usage reader matched, e.g. a non-agent command) is returned unchanged.
 async fn session_with_on_demand_usage(store: &Store, session: Session) -> Session {
-    if session.status != SessionStatus::Stopped
-        || session.meta_str(meta::SESSION_COST_USD).is_some()
-    {
+    if session.status != SessionStatus::Done || session.meta_str(meta::SESSION_COST_USD).is_some() {
         return session;
     }
     crate::watchdog::refresh_exact_usage(store, &session).await;
@@ -133,7 +131,7 @@ mod tests {
             name: name.into(),
             workdir: workdir.into(),
             command: "claude -p x".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             runtime: Runtime::Tmux,
             metadata: Some(metadata),
             ..Default::default()
@@ -156,7 +154,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "cargo build".into(),
-            status: SessionStatus::Stopped,
+            status: SessionStatus::Done,
             runtime: Runtime::Tmux,
             metadata: Some(metadata),
             ..Default::default()

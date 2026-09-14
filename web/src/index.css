@@ -10,6 +10,13 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-display: 'Space Grotesk', sans-serif;
 
+  /* Five-state session model (ADR 0009): these tokens keep their pre-ADR-0009
+     names (active/creating/ready/stopped/idle) as internal color identifiers —
+     `sessionStatusColor()` in `@/lib/utils` maps the new `starting`/`working`/
+     `waiting`/`done`/`lost` status vocabulary onto them. Renaming the tokens
+     themselves would be a cosmetic, unrelated churn (they're also reused
+     elsewhere for unrelated "online"/"connected" indicators, e.g. the sidebar
+     and node card), so only the vocabulary mapped onto them changed. */
   --color-status-active: oklch(0.623 0.214 259.815);
   --color-status-creating: oklch(0.795 0.184 86.047);
   --color-status-ready: oklch(0.765 0.177 163.223);

@@ -108,7 +108,7 @@ async fn create_running_session(store: &Store, name: &str) -> Session {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some(name.to_owned()),
         ..Default::default()
     };
@@ -234,7 +234,7 @@ async fn test_idle_detection_marks_idle() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("idle-session".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -260,7 +260,7 @@ async fn test_idle_detection_marks_idle() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -276,7 +276,7 @@ async fn test_idle_threshold_override_honored() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("override-session".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -300,7 +300,7 @@ async fn test_idle_threshold_override_honored() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -316,7 +316,7 @@ async fn test_idle_threshold_zero_disables_transition() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("never-idle-session".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -340,7 +340,7 @@ async fn test_idle_threshold_zero_disables_transition() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Active);
+    assert_eq!(fetched.status, SessionStatus::Working);
     assert!(fetched.idle_since.is_none());
 }
 
@@ -356,7 +356,7 @@ async fn test_idle_threshold_none_falls_back_to_global() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("global-threshold-session".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -380,7 +380,7 @@ async fn test_idle_threshold_none_falls_back_to_global() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -396,7 +396,7 @@ async fn test_idle_detection_kill_action() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("kill-idle".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -422,7 +422,7 @@ async fn test_idle_detection_kill_action() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
+    assert_eq!(fetched.status, SessionStatus::Done);
     assert!(fetched.intervention_reason.unwrap().contains("Idle"));
 
     // Kill should have been called
@@ -449,7 +449,7 @@ async fn test_idle_kill_records_output_snapshot() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("kill-snap".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
         idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -483,7 +483,7 @@ async fn test_idle_kill_records_output_snapshot() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
+    assert_eq!(fetched.status, SessionStatus::Done);
     assert_eq!(
         fetched.intervention_code,
         Some(pulpo_common::session::InterventionCode::IdleTimeout)
@@ -507,7 +507,7 @@ async fn test_idle_detection_clears_when_active() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("active-again".into()),
         output_snapshot: Some("old output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -533,7 +533,7 @@ async fn test_idle_detection_clears_when_active() {
         .unwrap()
         .unwrap();
     assert!(fetched.idle_since.is_none());
-    assert_eq!(fetched.status, SessionStatus::Active);
+    assert_eq!(fetched.status, SessionStatus::Working);
 }
 
 #[tokio::test]
@@ -548,7 +548,7 @@ async fn test_idle_detection_skips_non_running() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Ready,
+        status: SessionStatus::Done,
         exit_code: Some(0),
         ..Default::default()
     };
@@ -570,7 +570,7 @@ async fn test_idle_detection_skips_non_running() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.status, SessionStatus::Done);
 }
 
 #[tokio::test]
@@ -591,7 +591,7 @@ async fn test_idle_detection_capture_failure() {
 
     // Session should remain running — capture failed so idle check skipped
     let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions[0].status, SessionStatus::Active);
+    assert_eq!(sessions[0].status, SessionStatus::Working);
 }
 
 #[tokio::test]
@@ -606,7 +606,7 @@ async fn test_idle_detection_not_yet_timed_out() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("recent-session".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now()), // very recent
@@ -633,54 +633,13 @@ async fn test_idle_detection_not_yet_timed_out() {
     assert!(fetched.idle_since.is_none());
 }
 
-#[tokio::test]
-async fn test_code_marker_transitions_active_session_to_ready_with_exit_code() {
-    // Matrix cells 1/2: the `.code` marker (not output scraping) deterministically
-    // moves a still-alive session to Ready and records the agent's exit code.
-    let backend = Arc::new(MockBackend::new().with_output("agent output, no exit hint"));
-    let store = test_store().await;
-
-    let session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "marker-ready".into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        status: SessionStatus::Active,
-        backend_session_id: Some("marker-ready".into()),
-        ..Default::default()
-    };
-    store.insert_session(&session).await.unwrap();
-    let exit_dir = crate::session::utils::exit_dir(store.data_dir());
-    std::fs::create_dir_all(&exit_dir).unwrap();
-    std::fs::write(
-        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string()),
-        "3",
-    )
-    .unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-    check_idle_sessions(
-        &(backend as Arc<dyn Backend>),
-        &store,
-        &idle_config,
-        &test_ready_ctx(),
-        &[],
-    )
-    .await;
-
-    let updated = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(updated.status, SessionStatus::Ready);
-    assert_eq!(updated.exit_code, Some(3));
-}
+// The former `test_code_marker_transitions_active_session_to_ready_with_exit_code`
+// tested `check_session_idle`'s own marker check, which ADR 0009 removed along with
+// the rest of the `Ready` mechanism: `wrap_command` no longer keeps a fallback shell
+// alive after the agent exits, so a session's backend is never "still alive with a
+// marker already written" as a persistent, watchdog-visible state — that transition
+// is now `SessionManager::resolve_dead_backend_session`'s job (backend confirmed
+// dead), covered in `session/manager.rs`'s tests.
 
 #[tokio::test]
 async fn test_idle_detection_already_marked_stays() {
@@ -695,7 +654,7 @@ async fn test_idle_detection_already_marked_stays() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("already-idle".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -721,7 +680,7 @@ async fn test_idle_detection_already_marked_stays() {
         .unwrap()
         .unwrap();
     assert!(fetched.idle_since.is_some());
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -737,7 +696,7 @@ async fn test_idle_detection_kill_failure() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("kill-fail-idle".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -762,7 +721,7 @@ async fn test_idle_detection_kill_failure() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -800,7 +759,7 @@ async fn test_idle_detection_uses_created_at_when_no_last_output() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("no-output-ts".into()),
         output_snapshot: Some("test output".into()),
         created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
@@ -824,7 +783,7 @@ async fn test_idle_detection_uses_created_at_when_no_last_output() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -864,7 +823,7 @@ async fn test_idle_detection_in_watchdog_loop() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("loop-idle".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -922,7 +881,7 @@ async fn test_handle_active_session_clear_fails() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("clear-fail".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -950,7 +909,7 @@ async fn test_handle_active_session_not_idle() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("not-idle".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -974,7 +933,7 @@ async fn test_handle_active_session_skips_when_lifecycle_owned() {
         name: "lifecycle-owned".into(),
         workdir: "/tmp/repo".into(),
         command: "claude -p fix".into(),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("lifecycle-owned".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -992,7 +951,7 @@ async fn test_handle_active_session_skips_when_lifecycle_owned() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
     assert!(fetched.idle_since.is_some());
 }
 
@@ -1006,7 +965,7 @@ async fn test_handle_active_session_status_update_failure_emits_no_event() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("idle-update-fail".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -1062,20 +1021,27 @@ async fn test_idle_transition_emits_sse_event() {
     let dyn_backend: Arc<dyn Backend> = backend;
     check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
 
-    // Session should be idle (waiting pattern detected immediately)
+    // Session should be waiting (waiting pattern detected immediately)
     let updated = store
         .get_session(&session.id.to_string())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(updated.status, SessionStatus::Idle);
+    assert_eq!(updated.status, SessionStatus::Waiting);
+    // A matched waiting-for-input pattern implies "blocked on the user".
+    assert_eq!(
+        updated.status_reason.as_deref(),
+        Some("needs_input:permission")
+    );
 
     // SSE event should have been emitted
     let event = rx.try_recv().expect("should receive idle SSE event");
     match event {
         PulpoEvent::Session(se) => {
-            assert_eq!(se.status, "idle");
-            assert_eq!(se.previous_status, Some("active".into()));
+            assert_eq!(se.status, "waiting");
+            assert_eq!(se.status_reason.as_deref(), Some("needs_input:permission"));
+            assert_eq!(se.needs_input.as_deref(), Some("permission"));
+            assert_eq!(se.previous_status, Some("working".into()));
             assert_eq!(se.session_name, "idle-sse");
             assert!(se.output_snippet.is_some());
         }
@@ -1097,10 +1063,10 @@ async fn test_active_transition_emits_sse_event() {
     let mut session = create_running_session(&store, "active-sse").await;
     // Mark as Idle with stale snapshot
     store
-        .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+        .update_session_status(&session.id.to_string(), SessionStatus::Waiting, None)
         .await
         .unwrap();
-    session.status = SessionStatus::Idle;
+    session.status = SessionStatus::Waiting;
     session.output_snapshot = Some("Old output".into());
     session.idle_since = Some(chrono::Utc::now());
 
@@ -1126,14 +1092,15 @@ async fn test_active_transition_emits_sse_event() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(updated.status, SessionStatus::Active);
+    assert_eq!(updated.status, SessionStatus::Working);
 
     // SSE event should have been emitted
     let event = rx.try_recv().expect("should receive active SSE event");
     match event {
         PulpoEvent::Session(se) => {
-            assert_eq!(se.status, "active");
-            assert_eq!(se.previous_status, Some("idle".into()));
+            assert_eq!(se.status, "working");
+            assert_eq!(se.status_reason, None);
+            assert_eq!(se.previous_status, Some("waiting".into()));
             assert_eq!(se.session_name, "active-sse");
         }
         PulpoEvent::SessionDeleted(_)
@@ -1156,7 +1123,7 @@ async fn test_handle_idle_session_alert_update_fails() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("alert-fail".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1203,7 +1170,7 @@ async fn test_handle_idle_session_kill_intervention_record_fails() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("kill-record-fail".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1251,7 +1218,7 @@ async fn test_check_session_idle_without_backend_session_id() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
         ..Default::default()
@@ -1287,7 +1254,7 @@ async fn test_check_session_idle_without_backend_session_id() {
         .unwrap()
         .unwrap();
     // Active session with unchanged output > threshold_secs transitions to Idle
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 // ───────────────────────────────────────────────────────────
@@ -1321,7 +1288,7 @@ async fn test_check_session_idle_bypasses_waiting_pattern_and_time_based_idle() 
         name: "harness-bypass".into(),
         workdir: "/tmp/repo".into(),
         command: "claude -p fix".into(),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("harness-bypass".into()),
         output_snapshot: Some("Do you want to proceed?".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1360,7 +1327,7 @@ async fn test_check_session_idle_bypasses_waiting_pattern_and_time_based_idle() 
         .unwrap();
     assert_eq!(
         fetched.status,
-        SessionStatus::Active,
+        SessionStatus::Working,
         "harness-owned session must not idle via scrollback heuristics"
     );
 }
@@ -1374,7 +1341,7 @@ async fn test_check_session_idle_bypasses_rate_limit_and_error_scraping() {
         name: "harness-bypass-scrape".into(),
         workdir: "/tmp/repo".into(),
         command: "claude -p fix".into(),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("harness-bypass-scrape".into()),
         harness: Some("claude".into()),
         harness_last_event_at: Some(chrono::Utc::now()),
@@ -1432,7 +1399,7 @@ async fn test_check_session_idle_output_change_does_not_revert_owned_idle_status
         name: "harness-idle-repaint".into(),
         workdir: "/tmp/repo".into(),
         command: "claude -p fix".into(),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("harness-idle-repaint".into()),
         output_snapshot: Some("stale prompt".into()),
         harness: Some("claude".into()),
@@ -1471,7 +1438,7 @@ async fn test_check_session_idle_output_change_does_not_revert_owned_idle_status
         .unwrap();
     assert_eq!(
         fetched.status,
-        SessionStatus::Idle,
+        SessionStatus::Waiting,
         "harness-owned Idle session must stay Idle across an output-only change"
     );
     assert!(
@@ -1494,7 +1461,7 @@ async fn test_check_session_idle_codex_harness_keeps_rate_limit_scraping() {
         name: "codex-harness-rate-limit".into(),
         workdir: "/tmp/repo".into(),
         command: "codex".into(),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("codex-harness-rate-limit".into()),
         harness: Some("codex".into()),
         harness_last_event_at: Some(chrono::Utc::now()),
@@ -1548,7 +1515,7 @@ async fn test_check_session_idle_without_harness_events_keeps_scraping() {
         name: "no-harness-events".into(),
         workdir: "/tmp/repo".into(),
         command: "claude -p fix".into(),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("no-harness-events".into()),
         ..Default::default()
     };
@@ -1606,7 +1573,7 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("vanishing".into()),
         output_snapshot: Some("test output".into()),
         last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1770,7 +1737,7 @@ async fn test_idle_transition_active_to_idle() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Active,
+        status: SessionStatus::Working,
         backend_session_id: Some("active-to-idle".into()),
         output_snapshot: Some("Building...\nDo you trust this file?".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -1793,7 +1760,7 @@ async fn test_idle_transition_active_to_idle() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert_eq!(fetched.status, SessionStatus::Waiting);
 }
 
 #[tokio::test]
@@ -1809,7 +1776,7 @@ async fn test_idle_transition_idle_to_active() {
         workdir: "/tmp/repo".into(),
         command: "echo hello".into(),
         description: Some("test".into()),
-        status: SessionStatus::Idle,
+        status: SessionStatus::Waiting,
         backend_session_id: Some("idle-to-active".into()),
         output_snapshot: Some("old stale output".into()),
         last_output_at: Some(chrono::Utc::now()),
@@ -1833,7 +1800,7 @@ async fn test_idle_transition_idle_to_active() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Active);
+    assert_eq!(fetched.status, SessionStatus::Working);
     assert!(fetched.idle_since.is_none());
 }
 
@@ -1861,10 +1828,10 @@ async fn test_idle_check_includes_idle_sessions() {
     let backend = Arc::new(MockBackend::new().with_output("unchanged output"));
     let store = test_store().await;
 
-    let active_session = make_idle_test_session("active-one", SessionStatus::Active, None);
+    let active_session = make_idle_test_session("active-one", SessionStatus::Working, None);
     let idle_since = Some(chrono::Utc::now() - chrono::Duration::seconds(100));
-    let idle_session = make_idle_test_session("idle-one", SessionStatus::Idle, idle_since);
-    let dead_session = make_idle_test_session("dead-one", SessionStatus::Stopped, None);
+    let idle_session = make_idle_test_session("idle-one", SessionStatus::Waiting, idle_since);
+    let dead_session = make_idle_test_session("dead-one", SessionStatus::Done, None);
 
     store.insert_session(&active_session).await.unwrap();
     store.insert_session(&idle_session).await.unwrap();
@@ -1890,14 +1857,14 @@ async fn test_idle_check_includes_idle_sessions() {
         .unwrap()
         .unwrap();
     // Active session with unchanged output > 20s transitions to Idle
-    assert_eq!(fetched_active.status, SessionStatus::Idle);
+    assert_eq!(fetched_active.status, SessionStatus::Waiting);
 
     let fetched_idle = store
         .get_session(&idle_session.id.to_string())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched_idle.status, SessionStatus::Idle);
+    assert_eq!(fetched_idle.status, SessionStatus::Waiting);
 
     // Dead session should NOT have been processed
     assert!(
@@ -1909,421 +1876,13 @@ async fn test_idle_check_includes_idle_sessions() {
     );
 }
 
-// --- S3: Agent exit / Ready detection tests ---
-
-#[test]
-fn test_detect_agent_exited_present() {
-    let output = "doing work...\n[pulpo] Agent exited\n$ ";
-    assert!(detect_agent_exited(output));
-}
-
-#[test]
-fn test_detect_agent_exited_absent() {
-    let output = "doing work...\nsome other output\n$ ";
-    assert!(!detect_agent_exited(output));
-}
-
-#[test]
-fn test_detect_agent_exited_empty() {
-    assert!(!detect_agent_exited(""));
-}
-
-#[test]
-fn test_detect_agent_exited_partial() {
-    // Should NOT match partial marker
-    assert!(!detect_agent_exited("[pulpo] Agent"));
-    assert!(!detect_agent_exited("Agent exited"));
-}
-
-#[tokio::test]
-async fn test_ready_transition_via_exit_code_marker_zero() {
-    // No `[pulpo] Agent exited` text in captured output at all — the deterministic
-    // `.code` exit marker (written by `wrap_command`) is what triggers Ready here.
-    let backend = Arc::new(MockBackend::new().with_output("still working...\n$ "));
-    let store = test_store().await;
-    let session = create_running_session(&store, "marker-finish").await;
-    let marker_path =
-        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-    std::fs::write(&marker_path, "0").unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert_eq!(fetched.exit_code, Some(0));
-}
-
-#[tokio::test]
-async fn test_ready_transition_via_exit_code_marker_nonzero_persists_value() {
-    let backend = Arc::new(MockBackend::new().with_output("still working...\n$ "));
-    let store = test_store().await;
-    let session = create_running_session(&store, "marker-fail").await;
-    let marker_path =
-        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-    std::fs::write(&marker_path, "127").unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert_eq!(fetched.exit_code, Some(127));
-}
-
-/// Build a `Ready` session with no `exit_code` recorded yet — the state a
-/// hook-driven `SessionEnded` event leaves a session in (see
-/// `session::manager::apply_harness_event`), which never reads the `.code`
-/// marker itself.
-fn ready_session_pending_exit_code(name: &str) -> Session {
-    Session {
-        id: uuid::Uuid::new_v4(),
-        name: name.into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        description: Some("test".into()),
-        status: SessionStatus::Ready,
-        backend_session_id: Some(name.to_owned()),
-        exit_code: None,
-        ..Default::default()
-    }
-}
-
-#[tokio::test]
-async fn test_ready_session_exit_code_recorded_via_watchdog_sweep() {
-    // A hook-driven `SessionEnded` event moves a session straight to `Ready`
-    // without ever reading the `.code` exit marker — only the watchdog's own
-    // marker sweep does that (see `check_idle_sessions`). Use a backend whose
-    // `capture_output` always fails to prove the sweep is marker-only and never
-    // touches the backend for a `Ready` session, unlike the full Active/Idle
-    // `check_session_idle` path.
-    let backend = Arc::new(MockBackend::failing_capture());
-    let store = test_store().await;
-    let session = ready_session_pending_exit_code("hook-ended");
-    store.insert_session(&session).await.unwrap();
-
-    let marker_path =
-        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-    std::fs::write(&marker_path, "0").unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert_eq!(fetched.exit_code, Some(0));
-}
-
-#[tokio::test]
-async fn test_ready_session_without_marker_yet_stays_pending() {
-    // The marker hasn't been written yet (a race between the hook firing and
-    // `wrap_command` observing the agent process exit) — the sweep must do
-    // nothing and try again on the next tick, not error out or fake a code.
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = ready_session_pending_exit_code("hook-ended-no-marker-yet");
-    store.insert_session(&session).await.unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert!(fetched.exit_code.is_none());
-}
-
-#[tokio::test]
-async fn test_sweep_ready_exit_code_direct_unit() {
-    // Direct unit coverage of `sweep_ready_exit_code` itself, isolated from the
-    // `check_idle_sessions` loop above it.
-    let store = test_store().await;
-    let session = ready_session_pending_exit_code("direct-sweep");
-    store.insert_session(&session).await.unwrap();
-
-    let marker_path =
-        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
-    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
-    std::fs::write(&marker_path, "42").unwrap();
-
-    sweep_ready_exit_code(&store, &session).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.exit_code, Some(42));
-}
-
-#[tokio::test]
-async fn test_ready_transition_text_pattern_still_works_without_marker() {
-    // Regression lock: the historical text-scrape path must keep working unchanged
-    // for sessions with no exit marker at all.
-    let backend = Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
-    let store = test_store().await;
-    let session = create_running_session(&store, "text-pattern-only").await;
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    // No `.code` marker was ever written, so exit_code stays unset.
-    assert!(fetched.exit_code.is_none());
-}
-
-#[tokio::test]
-async fn test_ready_transition_on_agent_exit() {
-    // Backend returns output containing agent exit marker
-    let backend = Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
-    let store = test_store().await;
-    let session = create_running_session(&store, "finish-me").await;
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    // Session should now be Ready
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-}
-
-#[tokio::test]
-async fn test_ready_transition_emits_event() {
-    let backend = Arc::new(MockBackend::new().with_output("done\n[pulpo] Agent exited\n$ "));
-    let store = test_store().await;
-    let session = create_running_session(&store, "event-me").await;
-
-    let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
-    let ctx = ReadyContext {
-        event_tx: Some(event_tx),
-        node_name: "test-node".into(),
-    };
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
-
-    // Should have received a Ready event
-    let event = event_rx.try_recv().unwrap();
-    match event {
-        PulpoEvent::Session(se) => {
-            assert_eq!(se.session_id, session.id.to_string());
-            assert_eq!(se.status, "ready");
-            assert_eq!(se.previous_status, Some("active".into()));
-            assert_eq!(se.node_name, "test-node");
-        }
-        PulpoEvent::SessionDeleted(_)
-        | PulpoEvent::UsageAlert(_)
-        | PulpoEvent::Intervention(_)
-        | PulpoEvent::Daemon(_) => {
-            panic!("expected session event")
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_handle_session_ready_store_failure_emits_no_event() {
-    let store = test_store().await;
-    let session = create_running_session(&store, "ready-store-fail").await;
-
-    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
-    let ctx = ReadyContext {
-        event_tx: Some(tx),
-        node_name: "test-node".into(),
-    };
-
-    sqlx::query("DROP TABLE sessions")
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-    handle_session_ready(&store, &session, &ctx, None).await;
-    assert!(matches!(
-        rx.try_recv(),
-        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
-    ));
-}
-
-#[tokio::test]
-async fn test_ready_skips_idle_logic() {
-    // If agent exited, session should NOT go through idle detection
-    let backend = Arc::new(MockBackend::new().with_output("[pulpo] Agent exited"));
-    let store = test_store().await;
-    let session = create_running_session(&store, "skip-idle").await;
-    // Set old last_output_at so it would normally trigger idle
-    store
-        .update_session_idle_since(&session.id.to_string())
-        .await
-        .unwrap();
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 1, // very short, would trigger idle action
-        action: IdleAction::Kill,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
-
-    // Should be Ready, NOT Stopped
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-}
-
-#[tokio::test]
-async fn test_ready_from_idle_state() {
-    // An Idle session should also transition to Ready if agent exits
-    let backend = Arc::new(MockBackend::new().with_output("waiting...\n[pulpo] Agent exited\n$ "));
-    let store = test_store().await;
-    let mut session = create_running_session(&store, "idle-to-finish").await;
-    // Mark as Idle first
-    store
-        .update_session_status(&session.id.to_string(), SessionStatus::Idle)
-        .await
-        .unwrap();
-    session.status = SessionStatus::Idle;
-
-    let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
-    let ctx = ReadyContext {
-        event_tx: Some(event_tx),
-        node_name: "n".into(),
-    };
-
-    let idle_config = IdleConfig {
-        enabled: true,
-        timeout_secs: 600,
-        action: IdleAction::Alert,
-        threshold_secs: 60,
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-
-    // Event should say previous was "idle"
-    let event = event_rx.try_recv().unwrap();
-    match event {
-        PulpoEvent::Session(se) => {
-            assert_eq!(se.previous_status, Some("idle".into()));
-        }
-        PulpoEvent::SessionDeleted(_)
-        | PulpoEvent::UsageAlert(_)
-        | PulpoEvent::Intervention(_)
-        | PulpoEvent::Daemon(_) => {
-            panic!("expected session event")
-        }
-    }
-}
-
-#[test]
-fn test_agent_exit_marker_constant() {
-    assert_eq!(AGENT_EXIT_MARKER, "[pulpo] Agent exited");
-}
-
-#[tokio::test]
-async fn test_ready_transitions_to_ready() {
-    let store = test_store().await;
-    let session = create_running_session(&store, "finish-test").await;
-
-    let ctx = ReadyContext {
-        event_tx: None,
-        node_name: "n".into(),
-    };
-    handle_session_ready(&store, &session, &ctx, None).await;
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-}
+// ADR 0009 removed the Ready-specific mechanism this block used to test
+// (`detect_agent_exited`, `handle_session_ready`, `sweep_ready_exit_code`) —
+// `wrap_command` no longer keeps a fallback shell alive after the agent exits,
+// so there is no more scrollback-detectable/backend-still-alive "done" window to
+// sweep. The marker-driven exit-code recording and Done/Lost classification this
+// used to cover are now tested against `SessionManager::resolve_dead_backend_session`
+// / `apply_harness_event` in `session/manager.rs`.
 
 // -- detect_and_store_output_metadata tests --
 

@@ -15,7 +15,7 @@ import {
   resumeSession,
   downloadSessionOutput,
 } from '@/api/client';
-import { formatRelativeTime, formatSessionStatus, statusColors } from '@/lib/utils';
+import { formatRelativeTime, formatSessionStatus, sessionStatusColor } from '@/lib/utils';
 import type { Session, InterventionEvent } from '@/api/types';
 
 export function SessionDetailPage() {
@@ -103,12 +103,16 @@ export function SessionDetailPage() {
   }
 
   const canStop =
-    session?.status === 'active' || session?.status === 'idle' || session?.status === 'lost';
-  const canResume = session?.status === 'ready' || session?.status === 'lost';
-  const canPurge = session?.status === 'stopped' || session?.status === 'lost';
-  const showTerminal = session?.status === 'active' || session?.status === 'idle';
-  const showOutput =
-    session?.status === 'ready' || session?.status === 'stopped' || session?.status === 'lost';
+    session?.status === 'working' || session?.status === 'waiting' || session?.status === 'lost';
+  const canResume = session?.status === 'done' || session?.status === 'lost';
+  // `done` merges the old `ready` (clean exit — not directly purgeable, only
+  // resumable) and `stopped` (already forced/explicit — purgeable) statuses;
+  // recover the old distinction from `status_reason`.
+  const canPurge =
+    (session?.status === 'done' && session?.status_reason !== 'exited') ||
+    session?.status === 'lost';
+  const showTerminal = session?.status === 'working' || session?.status === 'waiting';
+  const showOutput = session?.status === 'done' || session?.status === 'lost';
 
   return (
     <div data-testid="session-detail-page">
@@ -134,9 +138,7 @@ export function SessionDetailPage() {
                 {session.name}
               </h2>
               <div className="flex items-center gap-1.5">
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${statusColors[session.status] ?? 'bg-muted'}`}
-                />
+                <span className={`h-2.5 w-2.5 rounded-full ${sessionStatusColor(session)}`} />
                 <Badge variant="outline" className="uppercase" data-testid="session-status">
                   {formatSessionStatus(session)}
                 </Badge>

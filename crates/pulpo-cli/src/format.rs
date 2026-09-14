@@ -30,18 +30,51 @@ fn format_branch(session: &Session) -> String {
     format!("{branch}{suffix}")
 }
 
-/// Status label: `needs input (<reason>)` when the session is idle because a harness
-/// hook reported it's blocked on the human, distinct from plain `idle` (done with the
-/// turn, nothing pending). Anything else renders as the plain status string.
+/// Status label, reason-qualified per ADR 0009's five-state model:
+///   - `waiting` + `needs_input:<reason>` → `waiting (needs input: <reason>)`
+///     (blocked on the human — a harness hook, or a matched scrollback pattern).
+///   - `waiting` + `idle` → `waiting (idle)` (turn finished, nothing pending).
+///   - `done` + `exited` → `done (exit N)` when `exit_code` is known, else
+///     `done (exited)`.
+///   - `done` + `stopped` → `done (stopped)` (explicit `pulpo stop`).
+///   - `done` + an intervention code → `done (idle timeout)` / `done (budget
+///     exceeded)` / `done (memory pressure)`.
+///   - `starting`/`working`/`lost`, or any status with no reason: the bare status
+///     word.
 fn format_status(session: &Session) -> String {
-    use pulpo_common::session::{SessionStatus, meta};
+    use pulpo_common::session::{SessionStatus, status_reason};
 
-    if session.status == SessionStatus::Idle
-        && let Some(reason) = session.meta_str(meta::NEEDS_INPUT)
-    {
-        return format!("needs input ({reason})");
+    let Some(reason) = session.status_reason.as_deref() else {
+        return session.status.to_string();
+    };
+
+    match session.status {
+        SessionStatus::Waiting => {
+            if let Some(sub) = status_reason::needs_input_reason(reason) {
+                format!("waiting (needs input: {sub})")
+            } else {
+                format!("waiting ({reason})")
+            }
+        }
+        SessionStatus::Done => {
+            let label = match reason {
+                status_reason::EXITED => session
+                    .exit_code
+                    .map_or_else(|| "exited".to_owned(), |code| format!("exit {code}")),
+                status_reason::STOPPED => "stopped".to_owned(),
+                status_reason::IDLE_TIMEOUT => "idle timeout".to_owned(),
+                status_reason::BUDGET_EXCEEDED => "budget exceeded".to_owned(),
+                status_reason::MEMORY_PRESSURE => "memory pressure".to_owned(),
+                // Forward-compat: an unrecognized `done` reason still needs a label
+                // (mirrors the web UI's identical fallback).
+                _ => "stopped".to_owned(),
+            };
+            format!("done ({label})")
+        }
+        SessionStatus::Starting | SessionStatus::Working | SessionStatus::Lost => {
+            session.status.to_string()
+        }
     }
-    session.status.to_string()
 }
 
 /// Build a display name with badges: [wt] [PR] [!]
@@ -145,16 +178,14 @@ pub fn format_sessions(sessions: &[Session]) -> String {
     lines.join("\n")
 }
 
-/// Trailing hint line for `pulpo ls` when stopped sessions are hidden by default
+/// Trailing hint line for `pulpo ls` when `done` sessions are hidden by default
 /// (see `Commands::List`): reports how many were hidden and how to see them.
 /// `None` when nothing was hidden — no hint line needed.
 pub fn format_hidden_sessions_hint(hidden_count: usize) -> Option<String> {
     if hidden_count == 0 {
         None
     } else {
-        Some(format!(
-            "{hidden_count} stopped session(s) hidden — use --all"
-        ))
+        Some(format!("{hidden_count} done session(s) hidden — use --all"))
     }
 }
 
@@ -371,7 +402,7 @@ mod tests {
             name: "test".into(),
             workdir: workdir.into(),
             command: "echo".into(),
-            status: pulpo_common::session::SessionStatus::Active,
+            status: pulpo_common::session::SessionStatus::Working,
             git_branch: branch.map(Into::into),
             ..Default::default()
         }
@@ -391,7 +422,7 @@ mod tests {
             name: "fix-auth".into(),
             workdir: "/tmp/repo".into(),
             command: "claude -p 'fix auth'".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             worktree_path: Some("/home/user/.pulpo/worktrees/fix-auth".into()),
             worktree_branch: Some("fix-auth".into()),
             ..Default::default()
@@ -399,7 +430,7 @@ mod tests {
         let sessions = vec![&session];
         let output = format_worktree_sessions(&sessions);
         assert!(output.contains("fix-auth"), "should show name: {output}");
-        assert!(output.contains("active"), "should show status: {output}");
+        assert!(output.contains("working"), "should show status: {output}");
         assert!(
             output.contains("/home/user/.pulpo/worktrees/fix-auth"),
             "should show path: {output}"
@@ -415,7 +446,7 @@ mod tests {
             name: "old-session".into(),
             workdir: "/tmp".into(),
             command: "echo".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             worktree_path: Some("/home/user/.pulpo/worktrees/old-session".into()),
             ..Default::default()
         };
@@ -431,22 +462,20 @@ mod tests {
     fn test_format_worktree_sessions_renders_needs_input_badge() {
         use pulpo_common::session::SessionStatus;
 
-        let mut meta = std::collections::HashMap::new();
-        meta.insert("needs_input".into(), "permission".into());
         let session = Session {
             name: "blocked-wt".into(),
             workdir: "/tmp/repo".into(),
             command: "claude -p fix".into(),
-            status: SessionStatus::Idle,
+            status: SessionStatus::Waiting,
+            status_reason: Some("needs_input:permission".into()),
             worktree_path: Some("/home/user/.pulpo/worktrees/blocked-wt".into()),
             worktree_branch: Some("blocked-wt".into()),
-            metadata: Some(meta),
             ..Default::default()
         };
         let sessions = vec![&session];
         let output = format_worktree_sessions(&sessions);
         assert!(
-            output.contains("needs input (permission)"),
+            output.contains("waiting (needs input: permission)"),
             "should render needs-input badge like `pulpo ls`: {output}"
         );
     }
@@ -465,7 +494,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             command: "claude -p 'Fix the bug'".into(),
             description: Some("Fix the bug".into()),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
@@ -475,7 +504,7 @@ mod tests {
         assert!(output.contains("COMMAND"));
         assert!(output.contains("00000000"));
         assert!(output.contains("my-api"));
-        assert!(output.contains("active"));
+        assert!(output.contains("working"));
         assert!(output.contains("claude -p 'Fix the bug'"));
     }
 
@@ -533,7 +562,7 @@ mod tests {
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             git_branch: Some("main".into()),
             git_commit: Some("abc1234".into()),
             ..Default::default()
@@ -552,7 +581,7 @@ mod tests {
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
             command: "echo hello".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             metadata: Some(meta),
             ..Default::default()
         }];
@@ -564,54 +593,95 @@ mod tests {
     fn test_format_status_needs_input_distinct_from_plain_idle() {
         use pulpo_common::session::SessionStatus;
 
-        let mut meta = std::collections::HashMap::new();
-        meta.insert("needs_input".into(), "permission".into());
         let blocked = Session {
-            status: SessionStatus::Idle,
-            metadata: Some(meta),
+            status: SessionStatus::Waiting,
+            status_reason: Some("needs_input:permission".into()),
             ..Default::default()
         };
-        assert_eq!(format_status(&blocked), "needs input (permission)");
+        assert_eq!(format_status(&blocked), "waiting (needs input: permission)");
 
         let plain_idle = Session {
-            status: SessionStatus::Idle,
+            status: SessionStatus::Waiting,
+            status_reason: Some("idle".into()),
             ..Default::default()
         };
-        assert_eq!(format_status(&plain_idle), "idle");
+        assert_eq!(format_status(&plain_idle), "waiting (idle)");
     }
 
     #[test]
-    fn test_format_status_needs_input_only_applies_to_idle() {
-        // needs_input metadata lingering on a non-idle session (shouldn't happen in
-        // practice — Working/SessionStarted clear it — but format defensively) must
-        // not override an Active/other status label.
-        let mut meta = std::collections::HashMap::new();
-        meta.insert("needs_input".into(), "permission".into());
+    fn test_format_status_no_reason_is_bare_word() {
+        // `starting`/`working`/`lost` never carry a `status_reason` in practice, but
+        // format defensively either way: with none set, just the bare status word.
         let session = Session {
-            status: pulpo_common::session::SessionStatus::Active,
-            metadata: Some(meta),
+            status: pulpo_common::session::SessionStatus::Working,
             ..Default::default()
         };
-        assert_eq!(format_status(&session), "active");
+        assert_eq!(format_status(&session), "working");
+    }
+
+    #[test]
+    fn test_format_status_done_variants() {
+        use pulpo_common::session::SessionStatus;
+
+        let exited_with_code = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("exited".into()),
+            exit_code: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&exited_with_code), "done (exit 0)");
+
+        let exited_no_code = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("exited".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&exited_no_code), "done (exited)");
+
+        let stopped = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("stopped".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&stopped), "done (stopped)");
+
+        let idle_timeout = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("idle_timeout".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&idle_timeout), "done (idle timeout)");
+
+        let budget_exceeded = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("budget_exceeded".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&budget_exceeded), "done (budget exceeded)");
+
+        let memory_pressure = Session {
+            status: SessionStatus::Done,
+            status_reason: Some("memory_pressure".into()),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&memory_pressure), "done (memory pressure)");
     }
 
     #[test]
     fn test_format_sessions_renders_needs_input_badge() {
         use pulpo_common::session::SessionStatus;
 
-        let mut meta = std::collections::HashMap::new();
-        meta.insert("needs_input".into(), "question".into());
         let sessions = vec![Session {
             name: "blocked-sess".into(),
             workdir: "/tmp/repo".into(),
             command: "claude -p fix".into(),
-            status: SessionStatus::Idle,
-            metadata: Some(meta),
+            status: SessionStatus::Waiting,
+            status_reason: Some("needs_input:question".into()),
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
-            output.contains("needs input (question)"),
+            output.contains("waiting (needs input: question)"),
             "should render needs-input badge: {output}"
         );
     }
@@ -624,7 +694,7 @@ mod tests {
             name: "sandbox-test".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             backend_session_id: Some("docker:pulpo-sandbox-test".into()),
             runtime: Runtime::Docker,
             ..Default::default()
@@ -650,7 +720,7 @@ mod tests {
             command:
                 "claude -p 'A very long command that exceeds fifty characters in total length here'"
                     .into(),
-            status: SessionStatus::Ready,
+            status: SessionStatus::Done,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
@@ -665,7 +735,7 @@ mod tests {
             name: "wt-task".into(),
             workdir: "/repo".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             worktree_path: Some("/home/user/.pulpo/worktrees/wt-task".into()),
             worktree_branch: Some("wt-task".into()),
             ..Default::default()
@@ -689,7 +759,7 @@ mod tests {
             name: "pr-task".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             metadata: Some(meta),
             ..Default::default()
         }];
@@ -712,7 +782,7 @@ mod tests {
             name: "both-task".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             metadata: Some(meta),
             worktree_path: Some("/home/user/.pulpo/worktrees/both-task".into()),
             worktree_branch: Some("both-task".into()),
@@ -733,7 +803,7 @@ mod tests {
             name: "no-pr".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
@@ -897,7 +967,7 @@ mod tests {
     fn test_format_hidden_sessions_hint_singular() {
         assert_eq!(
             format_hidden_sessions_hint(1),
-            Some("1 stopped session(s) hidden — use --all".to_owned())
+            Some("1 done session(s) hidden — use --all".to_owned())
         );
     }
 
@@ -905,7 +975,7 @@ mod tests {
     fn test_format_hidden_sessions_hint_plural() {
         assert_eq!(
             format_hidden_sessions_hint(3),
-            Some("3 stopped session(s) hidden — use --all".to_owned())
+            Some("3 done session(s) hidden — use --all".to_owned())
         );
     }
 
@@ -955,7 +1025,7 @@ mod tests {
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "echo '\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}'".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
@@ -1054,7 +1124,7 @@ mod tests {
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Working,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);

@@ -1,6 +1,6 @@
 # 0009. Five-state session model: starting / working / waiting / done / lost
 
-- **Status:** Accepted — implementation pending
+- **Status:** Accepted — Implemented (PR_NUMBER_PLACEHOLDER)
 - **Date:** 2026-09-14
 
 ## Context
@@ -29,28 +29,31 @@ mapping from today's six states:
 | `stopped` | `done` | Both `ready` and `stopped` mean "not running, and resumable" — the *how it got there* becomes metadata under `done`, not a separate top-level state |
 | `lost` | `lost` | Unchanged |
 
-**This ADR records the decision; implementation is pending.** The enum rename, the
-`sessions.status` DB migration, and every consumer of `SessionStatus` (CLI output
-formatting, web UI badges, the `lifecycle.<subtype>` webhook event naming, the API
-reference, and every doc that currently enumerates six states) are a separate body of
-work, to be scheduled and landed on their own, not as part of this documentation
-consolidation batch.
+**Implemented.** The enum rename, the `sessions.status` DB migration, and every
+consumer of `SessionStatus` (CLI output formatting, web UI badges, the
+`lifecycle.<subtype>` webhook event naming, the API reference, and every doc that used
+to enumerate six states) have landed together — see "Implementation notes" under
+Consequences below for the specifics.
 
 ## Consequences
 
-- Once implemented, the mental model for both users and docs gets simpler: five states
-  instead of six, with a cleaner one-to-one match to "what is this session doing right
-  now."
-- Until implemented, every current doc, API reference, and CLI output continues to
-  describe the six-state model faithfully — that is the *correct*, accurate
-  description of shipped behavior today. This ADR is forward-looking and must not be
-  read as describing current behavior; docs should not be rewritten to the five-state
-  model until the code is.
-- The migration touches a wide surface once it starts: the `status` column and its
-  historical values, every CLI/API/web consumer, and the webhook event taxonomy
-  (`lifecycle.{creating,active,idle,ready,stopped,error,rate_limited,lost}` today) all
-  need a compatibility story for existing integrations reading the old state names.
+- The mental model for both users and docs is simpler now: five states instead of six,
+  with a cleaner one-to-one match to "what is this session doing right now."
+- **Implementation notes**: the migration is
+  `crates/pulpod/migrations/0010_five_state_status.sql`. `status_reason` is a new plain
+  TEXT column/field (not a separate top-level enum) added to `sessions`/`Session`/the SSE
+  `SessionEvent`, carrying the "how"/"why" that used to be either a distinguishable
+  top-level status (`ready` vs. `stopped`) or an ad hoc metadata key (`needs_input`). Old
+  JSON/DB text (`creating`, `active`, `idle`, `ready`, `stopped`, `killed`) keeps
+  deserializing via `#[serde(alias = ...)]` on `SessionStatus` and the matching
+  [`FromStr`] arms, so external tooling reading old data before it's migrated (or a stale
+  client) isn't broken by the rename.
+- The migration touched a wide surface: the `status` column and its historical values,
+  every CLI/API/web consumer, and the webhook event taxonomy
+  (`lifecycle.{starting,working,waiting,done,lost}` now, replacing
+  `lifecycle.{creating,active,idle,ready,stopped,error,rate_limited,lost}`) all needed a
+  compatibility story for existing integrations reading the old state names — the
+  `status_reason`/alias approach above is that story.
 - Collapsing `ready`/`stopped` into `done` means the two are no longer top-level-state
-  distinguishable without inspecting metadata — any tooling that currently branches on
-  `ready` vs. `stopped` specifically will need to read the underlying reason instead
-  once this ships.
+  distinguishable without inspecting `status_reason` — any tooling that used to branch on
+  `ready` vs. `stopped` specifically now needs to read `status_reason` instead.

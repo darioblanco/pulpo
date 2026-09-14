@@ -55,13 +55,13 @@ Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on f
 | `check_interval_secs` | u64 | `10` | Check interval in seconds |
 | `idle_timeout_secs` | u64 | `600` | Seconds idle before action triggers |
 | `idle_action` | string | `"alert"` | `"alert"` (mark idle) or `"kill"` |
-| `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
+| `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Working→Waiting |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to the built-in patterns) |
 
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), once a session's
 events start flowing, the watchdog stops applying its own scrollback-based *detection*
 heuristics for that session: waiting-for-input pattern matching, the time-based
-Active→Idle transition (`idle_threshold_secs`), and — for a harness whose adapter doesn't
+Working→Waiting transition (`idle_threshold_secs`), and — for a harness whose adapter doesn't
 own it (Codex has no error/rate-limit hook) — error/rate-limit scraping. The harness's own
 events drive those transitions instead. Everything else still applies unconditionally,
 including to harness-managed sessions: `idle_timeout_secs`/`idle_action` (alert/kill after
@@ -132,7 +132,7 @@ the full envelope shape and these bounds.
 
 `events` patterns are matched against the event's `"<type>.<subtype>"` key:
 
-- exact — `lifecycle.idle`
+- exact — `lifecycle.waiting`
 - prefix glob — `lifecycle.*` (any subtype of `lifecycle`)
 - bare type — `lifecycle` (also any subtype of `lifecycle`)
 - `*` — everything

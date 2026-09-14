@@ -80,7 +80,8 @@ function makeRun(overrides: Partial<Session> = {}): Session {
   return {
     id: 'run-1',
     name: 'nightly-review-001',
-    status: 'stopped',
+    status: 'done',
+    status_reason: 'stopped',
     command: 'claude -p "review code"',
     description: null,
     workdir: '/repo',
@@ -648,9 +649,11 @@ describe('SchedulesPage', () => {
     });
   });
 
-  it('shows run with active status without duration end', async () => {
+  it('shows run with working status without duration end', async () => {
     mockGetSchedules.mockResolvedValue([makeSchedule()]);
-    mockGetScheduleRuns.mockResolvedValue([makeRun({ status: 'active', updated_at: undefined })]);
+    mockGetScheduleRuns.mockResolvedValue([
+      makeRun({ status: 'working', status_reason: null, updated_at: undefined }),
+    ]);
     renderPage();
     await waitFor(() => {
       expect(screen.getByTestId('schedule-row-nightly-review')).toBeInTheDocument();
