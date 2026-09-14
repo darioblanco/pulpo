@@ -5042,7 +5042,7 @@ mod tests {
         backend.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        assert_eq!(resumed.status, SessionStatus::Working);
 
         let calls = backend.calls.lock().unwrap();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
