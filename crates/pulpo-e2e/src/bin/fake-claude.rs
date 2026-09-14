@@ -18,8 +18,9 @@
 //!
 //! Designed so a `fake-codex`/`fake-pi` sibling is one more `src/bin/*.rs` file later:
 //! everything below the flag-parsing block (`Settings`, `run_step`, `run_hook`,
-//! `write_env_dump`, `append_transcript_spend`) only cares about the *harness id*
-//! ("claude") and payload shapes, not anything Claude-specific in its control flow.
+//! `write_env_dump`, `write_argv_dump`, `append_transcript_spend`) only cares about the
+//! *harness id* ("claude") and payload shapes, not anything Claude-specific in its
+//! control flow.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -149,6 +150,17 @@ fn write_env_dump(cwd: &std::path::Path) {
         .map(|(k, v)| format!("{k}={v}\n"))
         .collect::<String>();
     let _ = std::fs::write(cwd.join("pulpo-fake-env.txt"), content);
+}
+
+/// Dump this process's full argv (`argv[0]` included) as a JSON array to
+/// `<cwd>/pulpo-fake-argv.json`. This is what a scenario test reads to prove the
+/// spawn/handoff/schedule quoting fix: the shell(s) between `pulpo spawn -- claude -p
+/// "..."` and this binary's `main` must hand back the exact original arguments, not a
+/// word-split, shell-metacharacter-mangled approximation of them (see S12).
+fn write_argv_dump(cwd: &std::path::Path) {
+    let argv: Vec<String> = std::env::args().collect();
+    let content = serde_json::to_string_pretty(&argv).unwrap_or_default();
+    let _ = std::fs::write(cwd.join("pulpo-fake-argv.json"), content);
 }
 
 /// Overwrite `<cwd>/pulpo-fake-state.json` with the current run's identity and
@@ -354,6 +366,7 @@ fn main() {
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     write_env_dump(&cwd);
+    write_argv_dump(&cwd);
 
     let resumed = args.resume_id.is_some();
     let session_id = args

@@ -123,6 +123,35 @@ pub fn read_fake_env(workdir: &Path) -> HashMap<String, String> {
         .collect()
 }
 
+/// Read `<workdir>/pulpo-fake-argv.json` (written by `fake-claude` at startup, right
+/// alongside the env dump) as the fake harness's own `std::env::args()` — `argv[0]`
+/// included. `None` when the file doesn't exist yet (the process hasn't started, or
+/// hasn't gotten past its own startup code).
+///
+/// Proves quoting survived every shell hop between `pulpo spawn/handoff/schedule add
+/// -- claude ...` and the harness process actually exec'd: the CLI's
+/// `shell_words::join`, the harness adapter's `shell_words::split`/rewrite/
+/// `shell_words::join`, and `pulpod`'s own `wrap_command` embedding — see S12.
+#[must_use]
+pub fn read_fake_argv(workdir: &Path) -> Option<Vec<String>> {
+    let content = std::fs::read_to_string(workdir.join("pulpo-fake-argv.json")).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Poll `read_fake_argv` until it appears, or panic after `timeout`.
+pub fn wait_for_fake_argv(workdir: &Path, timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+    loop {
+        if let Some(argv) = read_fake_argv(workdir) {
+            return argv;
+        }
+        if start.elapsed() > timeout {
+            panic!("timed out after {timeout:?} waiting for pulpo-fake-argv.json at {workdir:?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Read `<workdir>/pulpo-fake-state.json` (written by `fake-claude` after every
 /// scenario step) as a JSON value. `None` when the file doesn't exist yet.
 #[must_use]

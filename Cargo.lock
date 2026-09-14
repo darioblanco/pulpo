@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "pulpo-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1699,13 +1699,14 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "shell-words",
  "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "pulpo-common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1716,7 +1717,7 @@ dependencies = [
 
 [[package]]
 name = "pulpo-e2e"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "pulpo-common",
@@ -1728,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "pulpod"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
