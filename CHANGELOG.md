@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/darioblanco/pulpo/compare/v0.3.1...v0.4.0) (2026-09-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **session:** five-state model — starting, working, waiting, done, lost ([#129](https://github.com/darioblanco/pulpo/issues/129))
+* **config:** warn and ignore unknown keys; drop all retired-key shims ([#123](https://github.com/darioblanco/pulpo/issues/123))
+
+### Features
+
+* **config:** warn and ignore unknown keys; drop all retired-key shims ([#123](https://github.com/darioblanco/pulpo/issues/123)) ([e36103c](https://github.com/darioblanco/pulpo/commit/e36103cb5ded4bb4fa2663ae9f8a9f5be80893b5))
+* **session:** five-state model — starting, working, waiting, done, lost ([#129](https://github.com/darioblanco/pulpo/issues/129)) ([7d36e74](https://github.com/darioblanco/pulpo/commit/7d36e74da2d3a3745948b130f7e3dc02639fb405))
+
+
+### Bug Fixes
+
+* final usage reconciliation, pulpo rm, and ls shows lost sessions by default ([#127](https://github.com/darioblanco/pulpo/issues/127)) ([c75fc28](https://github.com/darioblanco/pulpo/commit/c75fc28eba05cfa2e93a01e14309147296ec935f))
+* **store,harness:** quarantine only corrupt/incompatible databases, single-instance lock, refuse cwd-based resume fallback when the worktree is gone ([#130](https://github.com/darioblanco/pulpo/issues/130)) ([cb61b1a](https://github.com/darioblanco/pulpo/commit/cb61b1a874ce237f16f7bdd548b422453fe591ea))
+* **store:** never crash-loop on an unusable database; back up before migrating ([#126](https://github.com/darioblanco/pulpo/issues/126)) ([046a3d3](https://github.com/darioblanco/pulpo/commit/046a3d3afdc5d66ca56c1e3229e7d9ad8f438142))
+
 ## [0.3.1](https://github.com/darioblanco/pulpo/compare/v0.3.0...v0.3.1) (2026-09-14)
 
 
