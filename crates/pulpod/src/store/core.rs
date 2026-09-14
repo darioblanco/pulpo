@@ -3,8 +3,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use pulpo_common::session::InterventionCode;
-use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
+use sqlx::{ConnectOptions, Connection, SqlitePool};
 use tracing::{error, info, warn};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -33,48 +34,81 @@ impl Store {
     pub async fn new(data_dir: &str) -> Result<Self> {
         std::fs::create_dir_all(data_dir)?;
         let db_path = format!("{data_dir}/state.db");
-        let url = format!("sqlite:{db_path}?mode=rwc");
-        let pool = SqlitePool::connect(&url).await?;
+        // Statement caching disabled: see `migrate()`'s doc comment for the
+        // `sqlx-sqlite` 0.8.6 defect this works around — a cached prepared
+        // statement's column-count metadata can go stale relative to the
+        // table's actual current shape after a column is added elsewhere in
+        // the database's lifetime, on *any* connection (not only the one that
+        // ran the `ALTER TABLE`), causing a `SqliteRow::current` panic on the
+        // next query using that stale cache entry. Forcing sqlx to re-prepare
+        // every statement removes the stale-cache path entirely. This is a
+        // low-throughput local daemon (one caller at a time, no hot query
+        // loop), so the re-prepare cost is not a meaningful concern.
+        let options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true)
+            .statement_cache_capacity(0);
+        let pool = SqlitePool::connect_with(options).await?;
         Ok(Self {
             pool,
             data_dir: data_dir.to_owned(),
         })
     }
 
+    /// Run every migration-time statement — the pre-migration checks, the
+    /// backup query, and [`MIGRATOR::run_direct`] itself — on a single,
+    /// dedicated `SqliteConnection` that is never part of `self.pool`, and
+    /// close it before returning.
+    ///
+    /// Why a separate connection: `sqlx-sqlite` 0.8.6 has a defect where, on a
+    /// connection that has just executed `ALTER TABLE ... ADD COLUMN` (several
+    /// migrations here do), the *first* subsequent query bound with 2+
+    /// parameters against that table mis-sizes its cached column metadata and
+    /// panics the connection's worker thread (`index out of bounds` in
+    /// `SqliteRow::current`) — silently poisoning that connection for the rest
+    /// of its life (later queries on it return no rows instead of erroring).
+    /// Reproduced independently of this crate's own SQL — a bare `ALTER TABLE t
+    /// ADD COLUMN x` followed directly by any 2-parameter `SELECT` on `t`
+    /// triggers it. A `SqlitePool`'s connections are reused across every
+    /// runtime query the app makes afterward; if migration SQL ever ran on a
+    /// connection that's (or becomes) part of the pool, a later 2+-param app
+    /// query landing on that same poisoned connection would panic or silently
+    /// return no rows — exactly what an earlier revision's `warm_up_after_migrating`
+    /// (a same-connection warm-up query, removed here) only papered over: it
+    /// reduced the odds of the *specific* connection that ran `ALTER TABLE`
+    /// being reused before a 2+-param query landed on it, but did nothing once
+    /// the pool had more than one connection in play, which is exactly the
+    /// intermittent Linux CI failures this fixes. Isolating every
+    /// migration-time statement to a connection opened here and dropped before
+    /// this function returns means the pool's own connections never execute an
+    /// `ALTER TABLE` at all, so they can never be poisoned by it — regardless
+    /// of pool size or connection-reuse timing.
     pub async fn migrate(&self) -> Result<()> {
-        self.reject_unsupported_legacy_schema().await?;
-        self.warn_before_dropping_secrets().await?;
-        self.warn_before_dropping_push_subscriptions().await?;
-        if self.has_pending_migrations().await? {
-            self.backup_before_migrating().await?;
+        let db_path = format!("{}/state.db", self.data_dir);
+        let mut conn = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .statement_cache_capacity(0)
+            .connect()
+            .await
+            .with_context(|| {
+                format!("failed to open a dedicated migration connection to {db_path}")
+            })?;
+
+        self.reject_unsupported_legacy_schema(&mut conn).await?;
+        self.warn_before_dropping_secrets(&mut conn).await?;
+        self.warn_before_dropping_push_subscriptions(&mut conn)
+            .await?;
+        if self.has_pending_migrations(&mut conn).await? {
+            self.backup_before_migrating(&mut conn).await?;
         }
-        MIGRATOR.run(&self.pool).await?;
-        self.warm_up_after_migrating().await;
+        MIGRATOR.run_direct(&mut conn).await?;
+        conn.close()
+            .await
+            .context("failed to close the dedicated migration connection")?;
+
         self.enforce_db_permissions();
 
         Ok(())
-    }
-
-    /// Work around a `sqlx-sqlite` 0.8.6 defect: on a connection that has just
-    /// executed an `ALTER TABLE ... ADD COLUMN` (as several migrations here do),
-    /// the *first* subsequent query bound with 2+ parameters against that table
-    /// mis-sizes its cached column metadata and panics the connection's worker
-    /// thread (`index out of bounds` in `SqliteRow::current`) — which silently
-    /// kills that connection for the rest of the pool's life (later queries on it
-    /// return no rows instead of erroring). Reproduced independently of this
-    /// crate's own SQL — a bare `ALTER TABLE t ADD COLUMN x` followed directly by
-    /// any 2-parameter `SELECT` on `t` triggers it. A single zero-bind query
-    /// against the *same table* on the connection in between avoids it (a
-    /// zero-bind query against an unrelated table/expression, e.g. plain `SELECT
-    /// 1`, was not reliably enough in testing with many prior statements on the
-    /// connection — `SELECT * FROM sessions LIMIT 0` is). Run it right after
-    /// migrating (a no-op if nothing was pending) so every migration that adds a
-    /// column is protected without each one needing to know about this itself.
-    /// Best-effort: failure here must never block startup.
-    async fn warm_up_after_migrating(&self) {
-        let _ = sqlx::query("SELECT * FROM sessions LIMIT 0")
-            .fetch_optional(&self.pool)
-            .await;
     }
 
     /// Whether this database already has migration history (i.e. isn't a
@@ -82,25 +116,25 @@ impl Store {
     /// not yet applied to it. Used to decide whether an in-place migration
     /// run is about to modify pre-existing data worth backing up first — a
     /// freshly-created, never-migrated database has nothing to protect.
-    async fn has_pending_migrations(&self) -> Result<bool> {
+    async fn has_pending_migrations(&self, conn: &mut SqliteConnection) -> Result<bool> {
         let has_sqlx_migrations: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         if has_sqlx_migrations == 0 {
             return Ok(false);
         }
 
         let applied_versions: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *conn)
             .await?;
         let applied: std::collections::HashSet<i64> = applied_versions.into_iter().collect();
         Ok(MIGRATOR.iter().any(|m| !applied.contains(&m.version)))
     }
 
     /// Copy `state.db` to `state.db.pre-m<highest applied migration>` before
-    /// [`MIGRATOR::run`] modifies it in place — migrations can be
+    /// [`MIGRATOR::run_direct`] modifies it in place — migrations can be
     /// irreversible (0008 drops `secrets`, 0009 drops `push_subscriptions`),
     /// so an operator upgrading across several releases at once always has a
     /// pre-migration snapshot to fall back to.
@@ -114,11 +148,11 @@ impl Store {
     /// rewritten, regardless of release cadence. Overwrites a same-named
     /// backup from a previous run at the same migration level, and prunes
     /// down to the [`MAX_PRE_MIGRATION_BACKUPS`] most recent backups afterward.
-    async fn backup_before_migrating(&self) -> Result<()> {
+    async fn backup_before_migrating(&self, conn: &mut SqliteConnection) -> Result<()> {
         let db_path = format!("{}/state.db", self.data_dir);
         let highest_applied: i64 =
             sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *conn)
                 .await
                 .unwrap_or(0);
         let backup_path = format!("{db_path}.pre-m{highest_applied}");
@@ -156,18 +190,18 @@ impl Store {
     /// runs, if a pre-0008 database still has rows in `secrets`. This never blocks
     /// startup; it only gives the operator a chance to notice before the data is
     /// gone (downgrading to pulpo 0.1.1 is the only way to read it back out).
-    async fn warn_before_dropping_secrets(&self) -> Result<()> {
+    async fn warn_before_dropping_secrets(&self, conn: &mut SqliteConnection) -> Result<()> {
         let has_secrets_table: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secrets'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         if has_secrets_table == 0 {
             return Ok(());
         }
 
         let secret_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *conn)
             .await?;
         if secret_count > 0 {
             warn!(
@@ -188,18 +222,21 @@ impl Store {
     /// stale browser push endpoints a client would recreate by re-subscribing),
     /// but warn loudly here, before the drop runs, so an operator relying on
     /// push notifications isn't surprised when they silently stop working.
-    async fn warn_before_dropping_push_subscriptions(&self) -> Result<()> {
+    async fn warn_before_dropping_push_subscriptions(
+        &self,
+        conn: &mut SqliteConnection,
+    ) -> Result<()> {
         let has_table: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'push_subscriptions'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
         if has_table == 0 {
             return Ok(());
         }
 
         let subscription_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *conn)
             .await?;
         if subscription_count > 0 {
             warn!(
@@ -213,11 +250,11 @@ impl Store {
         Ok(())
     }
 
-    async fn reject_unsupported_legacy_schema(&self) -> Result<()> {
+    async fn reject_unsupported_legacy_schema(&self, conn: &mut SqliteConnection) -> Result<()> {
         let has_sqlx_migrations: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
 
         if has_sqlx_migrations > 0 {
@@ -227,7 +264,7 @@ impl Store {
         let has_sessions_table: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await?;
 
         if has_sessions_table > 0 {
@@ -495,8 +532,13 @@ mod tests {
         // `MIGRATOR` (currently through 0010) — bump the expected suffix here
         // when a new migration file is added.
         let store = test_store().await;
+        let mut conn = SqliteConnectOptions::new()
+            .filename(format!("{}/state.db", store.data_dir))
+            .connect()
+            .await
+            .unwrap();
 
-        store.backup_before_migrating().await.unwrap();
+        store.backup_before_migrating(&mut conn).await.unwrap();
 
         let backup_path = format!("{}/state.db.pre-m10", store.data_dir);
         assert!(

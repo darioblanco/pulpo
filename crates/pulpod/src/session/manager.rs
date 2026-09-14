@@ -767,15 +767,29 @@ impl SessionManager {
     /// Transition a session to `done` with reason `stopped` — an explicit `pulpo
     /// stop` (as opposed to a clean agent exit, reason `exited`, or a watchdog
     /// intervention, reason = the intervention code).
+    /// Atomic (compare-and-set) counterpart to the plain `mark_session_stopped`
+    /// name: only transitions — and only emits the `lifecycle` event — if the
+    /// session was still live at the moment of the write. Without this, the
+    /// caller's earlier `already_terminal` check (in `stop_session`) leaves a
+    /// window between that read and this write where a concurrent
+    /// `resolve_dead_backend_session`/intervention could have already resolved
+    /// the session, and an unconditional `UPDATE` here would both emit a
+    /// duplicate event and overwrite whatever more specific `status_reason`
+    /// that concurrent caller had just set with the generic `stopped`.
     async fn mark_session_stopped(&self, session: &mut Session) -> Result<()> {
         let previous = session.status;
-        self.store
-            .update_session_status(
+        let transitioned = self
+            .store
+            .transition_to_terminal_if_live(
                 &session.id.to_string(),
                 SessionStatus::Done,
                 Some(status_reason::STOPPED),
+                None,
             )
             .await?;
+        if !transitioned {
+            return Ok(());
+        }
         session.status = SessionStatus::Done;
         session.status_reason = Some(status_reason::STOPPED.to_owned());
         self.emit_event(session, Some(previous));
@@ -957,9 +971,10 @@ impl SessionManager {
             return Ok(None);
         }
         let previous = session.status;
-        resolve_dead_backend_session(&self.store, self.backend.as_ref(), &backend_id, session)
-            .await?;
-        Ok(Some(previous))
+        let transitioned =
+            resolve_dead_backend_session(&self.store, self.backend.as_ref(), &backend_id, session)
+                .await?;
+        Ok(transitioned.then_some(previous))
     }
 
     /// Stop a session (`POST /api/v1/sessions/{id}/stop`, `pulpo stop`). Returns
@@ -1449,12 +1464,20 @@ impl SessionManager {
 /// `capture_session_output` is enabled) — the reliable source once the live
 /// capture above has (as it almost always does for a session that closed
 /// cleanly) come back empty.
+/// Returns `Ok(true)` only when this call is the one that actually transitioned
+/// the session (a concurrent caller — the watchdog's own eager `is_alive()`
+/// check racing a `GET`/`list_sessions` call, or vice versa — may have already
+/// resolved it first). Callers must treat `Ok(false)` as "skip emitting a
+/// lifecycle event for this call, it would be a duplicate," not as a no-op to
+/// retry. `session` is mutated to reflect the new state only when this
+/// returns `Ok(true)`; on `Ok(false)` it's left as passed in (the DB is the
+/// source of truth for what the concurrent winner actually set).
 pub(crate) async fn resolve_dead_backend_session(
     store: &Store,
     backend: &dyn Backend,
     backend_id: &str,
     session: &mut Session,
-) -> Result<()> {
+) -> Result<bool> {
     let id = session.id.to_string();
     let data_dir = store.data_dir();
 
@@ -1466,10 +1489,7 @@ pub(crate) async fn resolve_dead_backend_session(
     }
 
     if has_exit_marker(data_dir, &id) {
-        if let Some(code) = read_exit_code_marker(data_dir, &id) {
-            store.update_session_exit_code(&id, code).await?;
-            session.exit_code = Some(code);
-        }
+        let exit_code = read_exit_code_marker(data_dir, &id);
         // The live capture above almost never has anything for a session that
         // ended cleanly — tmux tears the pane down the instant the wrapped
         // command exits. The pipe-pane log is the reliable fallback here.
@@ -1478,20 +1498,34 @@ pub(crate) async fn resolve_dead_backend_session(
             let _ = store.update_session_output_snapshot(&id, &tail).await;
             session.output_snapshot = Some(tail);
         }
-        crate::watchdog::refresh_exact_usage(store, session).await;
-        store
-            .update_session_status(&id, SessionStatus::Done, Some(status_reason::EXITED))
+        let transitioned = store
+            .transition_to_terminal_if_live(
+                &id,
+                SessionStatus::Done,
+                Some(status_reason::EXITED),
+                exit_code,
+            )
             .await?;
+        if !transitioned {
+            return Ok(false);
+        }
+        if let Some(code) = exit_code {
+            session.exit_code = Some(code);
+        }
         session.status = SessionStatus::Done;
         session.status_reason = Some(status_reason::EXITED.to_owned());
+        crate::watchdog::refresh_exact_usage(store, session).await;
     } else {
-        store
-            .update_session_status(&id, SessionStatus::Lost, None)
+        let transitioned = store
+            .transition_to_terminal_if_live(&id, SessionStatus::Lost, None, None)
             .await?;
+        if !transitioned {
+            return Ok(false);
+        }
         session.status = SessionStatus::Lost;
         session.status_reason = None;
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -4249,6 +4283,51 @@ mod tests {
             fetched.output_snapshot.as_deref(),
             Some("line one\nfinal output line")
         );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_resolve_dead_backend_session_transitions_exactly_once() {
+        // Regression test for a Fable review finding on PR #129: the watchdog's
+        // eager `is_alive()` check and a concurrent `GET`/`list_sessions` call
+        // (or another watchdog tick) could both observe the backend dead and both
+        // transition + emit a `lifecycle.done` event for the very same session —
+        // a duplicate. `transition_to_terminal_if_live`'s compare-and-set
+        // (`WHERE status IN (...)`) must ensure only one of two concurrent
+        // `resolve_dead_backend_session` calls actually performs the transition;
+        // the loser must report `false` so its caller knows to skip emitting.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("concurrent-resolve"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        let store = mgr.store().clone();
+        let backend = mgr.backend();
+        let mut session_a = session.clone();
+        let mut session_b = session.clone();
+
+        let (result_a, result_b) = tokio::join!(
+            resolve_dead_backend_session(&store, backend.as_ref(), &id, &mut session_a),
+            resolve_dead_backend_session(&store, backend.as_ref(), &id, &mut session_b),
+        );
+
+        let transitioned = [result_a.unwrap(), result_b.unwrap()];
+        assert_eq!(
+            transitioned.iter().filter(|t| **t).count(),
+            1,
+            "exactly one of two concurrent resolves must report having transitioned \
+             the session, got: {transitioned:?}"
+        );
+
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Done);
+        assert_eq!(fetched.exit_code, Some(0));
     }
 
     #[tokio::test]

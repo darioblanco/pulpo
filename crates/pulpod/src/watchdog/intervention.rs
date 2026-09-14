@@ -87,18 +87,35 @@ pub(super) async fn stop_and_record(
         return false;
     }
 
+    // `update_session_intervention` is a compare-and-set — it only actually
+    // transitions (and returns `true`) if the session was still live at the
+    // moment of the write. A concurrent caller (the watchdog's own eager
+    // dead-backend check, racing the fact that `kill_session` above just made
+    // `is_alive()` false, or a concurrent `pulpo stop`) may have already
+    // resolved this session first; emitting the intervention event in that
+    // case would be a duplicate lifecycle event for a transition this call
+    // didn't actually make.
     #[allow(unused_variables)]
-    if let Err(error) = store
+    match store
         .update_session_intervention(&session.id.to_string(), code, reason)
         .await
     {
-        coverage_warn!(
-            session_id = %session.id,
-            session_name = %session.name,
-            "{record_fail_msg}: {error}"
-        );
+        Ok(true) => emit_intervention(ready_ctx, session, code, reason),
+        Ok(false) => {
+            tracing::debug!(
+                session_id = %session.id,
+                session_name = %session.name,
+                "Skipping intervention event — session was no longer live (already resolved concurrently)"
+            );
+        }
+        Err(error) => {
+            coverage_warn!(
+                session_id = %session.id,
+                session_name = %session.name,
+                "{record_fail_msg}: {error}"
+            );
+        }
     }
-    emit_intervention(ready_ctx, session, code, reason);
     if let Some(ref wt_path) = session.worktree_path {
         // Mirror `session::manager`'s own guard on the normal stop/purge/cleanup
         // paths: a worktree `pulpo handoff` made two sessions share must survive a

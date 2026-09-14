@@ -236,6 +236,43 @@ impl Store {
         Ok(())
     }
 
+    /// Transition a session from a *live* status (`starting`/`working`/`waiting`)
+    /// into a terminal one (`done`/`lost`), atomically via a compare-and-set
+    /// `UPDATE ... WHERE status IN (...)`. `exit_code` is written via
+    /// `COALESCE(?, exit_code)` so passing `None` leaves any existing value
+    /// untouched rather than clobbering it with `NULL`.
+    ///
+    /// Returns `true` only when this call is the one that actually performed the
+    /// transition (a row was affected); `false` means the session was no longer
+    /// live by the time this ran — a concurrent caller already resolved it first
+    /// (the watchdog's own eager `is_alive()` check racing a `GET`/`list_sessions`
+    /// call, or an intervention kill racing either — see
+    /// `session::manager::resolve_dead_backend_session`, `mark_session_stopped`,
+    /// and `update_session_intervention`, the three callers of this). Every
+    /// caller must treat `false` as "skip emitting a lifecycle event for this
+    /// call — it would be a duplicate," not as an error.
+    pub async fn transition_to_terminal_if_live(
+        &self,
+        id: &str,
+        status: SessionStatus,
+        reason: Option<&str>,
+        exit_code: Option<i32>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE sessions \
+             SET status = ?, status_reason = ?, exit_code = COALESCE(?, exit_code), updated_at = ? \
+             WHERE id = ? AND status IN ('starting', 'working', 'waiting')",
+        )
+        .bind(status.to_string())
+        .bind(reason)
+        .bind(exit_code)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Record a session's exit code (from its `.code` exit marker) once its backend
     /// has been found dead and the session resolved to `Done` (clean end) rather
     /// than `Lost`. See `SessionManager::check_and_mark_stale`.

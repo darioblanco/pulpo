@@ -452,11 +452,20 @@ async fn test_remove_purges_intervention_events() {
     )
     .await
     .unwrap();
-    state
-        .store
-        .update_session_intervention(&sid, InterventionCode::IdleTimeout, "idle for 10m")
-        .await
-        .unwrap();
+    // `update_session_intervention` is a compare-and-set that only records an
+    // intervention against a still-live session (see its doc comment) — this
+    // test only cares that `remove` purges whatever intervention history
+    // exists, so insert the audit row directly rather than going through it.
+    sqlx::query(
+        "INSERT INTO intervention_events (session_id, code, reason, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&sid)
+    .bind(InterventionCode::IdleTimeout.to_string())
+    .bind("idle for 10m")
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(state.store.pool())
+    .await
+    .unwrap();
     assert_eq!(
         state
             .store

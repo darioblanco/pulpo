@@ -12,16 +12,27 @@ impl Store {
     /// (`idle_timeout`/`budget_exceeded`/`memory_pressure`) — see ADR 0009's
     /// five-state model. `pulpo ls`/the web UI render this as e.g. `done (budget
     /// exceeded)`.
+    ///
+    /// The session-row update is a compare-and-set (`WHERE status IN (...)`), same
+    /// as `session::manager::resolve_dead_backend_session`/`mark_session_stopped`:
+    /// an intervention kill can race the watchdog's own eager dead-backend check
+    /// (killing the backend makes `is_alive()` false right as this runs) or a
+    /// concurrent `pulpo stop`. Returns `true` only when this call actually made
+    /// the transition — callers must skip emitting the intervention event on
+    /// `false`, and the audit-trail row is only inserted when it's `true` (an
+    /// intervention that lost the race shouldn't leave an orphaned audit record
+    /// for a status change that never happened).
     pub async fn update_session_intervention(
         &self,
         id: &str,
         code: InterventionCode,
         reason: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let code_str = code.to_string();
-        sqlx::query(
-            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'done', status_reason = ?, updated_at = ? WHERE id = ?",
+        let result = sqlx::query(
+            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'done', status_reason = ?, updated_at = ? \
+             WHERE id = ? AND status IN ('starting', 'working', 'waiting')",
         )
         .bind(&code_str)
         .bind(reason)
@@ -31,16 +42,19 @@ impl Store {
         .bind(id)
         .execute(&self.pool)
         .await?;
-        sqlx::query(
-            "INSERT INTO intervention_events (session_id, code, reason, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(id)
-        .bind(&code_str)
-        .bind(reason)
-        .bind(&now)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        let transitioned = result.rows_affected() > 0;
+        if transitioned {
+            sqlx::query(
+                "INSERT INTO intervention_events (session_id, code, reason, created_at) VALUES (?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(&code_str)
+            .bind(reason)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(transitioned)
     }
 
     pub async fn list_intervention_events(

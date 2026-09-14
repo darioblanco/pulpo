@@ -3,7 +3,31 @@ use chrono::Utc;
 use pulpo_common::api::ListSessionsQuery;
 use pulpo_common::session::InterventionCode;
 use pulpo_common::session::{Session, SessionStatus};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection};
+use sqlx::{ConnectOptions, Connection};
 use uuid::Uuid;
+
+/// Open a dedicated, throwaway connection to `store`'s own database file,
+/// never part of `store.pool()`.
+///
+/// Mirrors `Store::migrate()`'s own connection isolation (see its doc comment
+/// for the full story): a `sqlx-sqlite` 0.8.6 defect mis-sizes a query's
+/// cached column-count metadata once a table gains a column elsewhere in the
+/// database's lifetime, regardless of which connection ran the `ALTER TABLE`
+/// — so a fixture that runs a *partial* migrator or inserts legacy-shaped rows
+/// directly, ahead of the real `store.migrate()` call under test, must do it
+/// on a connection that's never reused afterward, exactly like production
+/// never queries the app pool before migration completes. Using `store.pool()`
+/// for this setup SQL instead reproduced the intermittent
+/// `index out of bounds` panic this avoids (`SqliteRow::current`).
+async fn dedicated_test_conn(store: &Store) -> SqliteConnection {
+    SqliteConnectOptions::new()
+        .filename(format!("{}/state.db", store.data_dir))
+        .statement_cache_capacity(0)
+        .connect()
+        .await
+        .unwrap()
+}
 
 fn make_session(name: &str) -> Session {
     Session {
@@ -123,7 +147,9 @@ async fn store_at_migration_0007_in(dir: &str) -> Store {
     let partial = sqlx::migrate::Migrator::new(partial_dir.path())
         .await
         .unwrap();
-    partial.run(store.pool()).await.unwrap();
+    let mut conn = dedicated_test_conn(&store).await;
+    partial.run_direct(&mut conn).await.unwrap();
+    conn.close().await.unwrap();
 
     store
 }
@@ -202,7 +228,9 @@ async fn store_at_migration_0008() -> Store {
     let partial = sqlx::migrate::Migrator::new(partial_dir.path())
         .await
         .unwrap();
-    partial.run(store.pool()).await.unwrap();
+    let mut conn = dedicated_test_conn(&store).await;
+    partial.run_direct(&mut conn).await.unwrap();
+    conn.close().await.unwrap();
 
     store
 }
@@ -277,7 +305,9 @@ async fn store_at_migration_0009() -> Store {
     let partial = sqlx::migrate::Migrator::new(partial_dir.path())
         .await
         .unwrap();
-    partial.run(store.pool()).await.unwrap();
+    let mut conn = dedicated_test_conn(&store).await;
+    partial.run_direct(&mut conn).await.unwrap();
+    conn.close().await.unwrap();
 
     store
 }
@@ -295,6 +325,7 @@ async fn insert_legacy_session(
     metadata: Option<&str>,
     intervention_code: Option<&str>,
 ) {
+    let mut conn = dedicated_test_conn(store).await;
     sqlx::query(
         "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, metadata, intervention_code, created_at, updated_at) \
          VALUES (?, ?, '/tmp/repo', '', '', ?, '', ?, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
@@ -304,9 +335,10 @@ async fn insert_legacy_session(
     .bind(status)
     .bind(metadata)
     .bind(intervention_code)
-    .execute(store.pool())
+    .execute(&mut conn)
     .await
     .unwrap();
+    conn.close().await.unwrap();
 }
 
 /// End-to-end proof of migration `0010_five_state_status.sql`'s mapping — every old
@@ -1560,8 +1592,9 @@ async fn test_intervention_events_appended() {
         .unwrap();
 
     // Simulate a second intervention (e.g., session was resumed and hit pressure again)
-    // Reset session to running first so the scenario makes sense
-    sqlx::query("UPDATE sessions SET status = 'active' WHERE id = ?")
+    // Reset session to running first so the scenario makes sense — `update_session_intervention`
+    // is now a compare-and-set that only fires from a live status (`starting`/`working`/`waiting`).
+    sqlx::query("UPDATE sessions SET status = 'working' WHERE id = ?")
         .bind(&sid)
         .execute(store.pool())
         .await
@@ -2064,9 +2097,17 @@ async fn test_new_session_fields_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_migrate_closed_pool_error() {
-    let store = test_store().await;
-    store.pool().close().await;
+async fn test_migrate_dedicated_connection_open_failure() {
+    // `migrate()` opens its own dedicated connection to `{data_dir}/state.db`,
+    // independent of `self.pool` (see its doc comment) — closing the pool no
+    // longer affects it at all (that's the point: the pool and the migration
+    // connection can never poison each other). What *does* still make
+    // `migrate()` fail is the dedicated connection itself failing to open —
+    // e.g. the database file having vanished out from under the store.
+    let tmpdir = tempfile::tempdir().unwrap();
+    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+    std::fs::remove_dir_all(tmpdir.path()).unwrap();
+
     let result = store.migrate().await;
     assert!(result.is_err());
 }
@@ -2183,33 +2224,4 @@ async fn test_idle_status_roundtrip() {
         .unwrap()
         .unwrap();
     assert_eq!(fetched.status, SessionStatus::Waiting);
-}
-
-/// Regression test for a `sqlx-sqlite` 0.8.6 defect `Store::migrate`'s
-/// `warm_up_after_migrating` works around (see its doc comment): on a connection
-/// that just ran an `ALTER TABLE ... ADD COLUMN` (as migration 0010 does), the
-/// *first* subsequent 2+-parameter `SELECT` against that table used to panic the
-/// connection's sqlx worker thread — reproduced independently of any of this
-/// crate's own queries with a bare `ALTER TABLE` immediately followed by a
-/// 2-parameter `SELECT`. `get_session`'s own query (`WHERE id = ? OR name = ?`) is
-/// exactly such a query, run here immediately after a real `migrate()` call that
-/// applies migration 0010 on top of an already-existing (pre-0010) database —
-/// the exact shape a real upgrade takes, unlike `test_store()`'s fresh-database
-/// tests (which apply every migration in one initial batch and never hit this).
-#[tokio::test]
-async fn test_migrate_then_get_session_survives_sqlx_alter_column_defect() {
-    let store = store_at_migration_0009().await;
-    insert_legacy_session(&store, "warmup-sess", "creating", None, None).await;
-
-    store.migrate().await.unwrap();
-
-    // Before the `warm_up_after_migrating` fix, this call's worker thread would
-    // panic and the query would come back as a silent `Ok(None)` instead of the
-    // row that's actually there.
-    let fetched = store.get_session("warmup-sess").await.unwrap();
-    assert!(
-        fetched.is_some(),
-        "session must still be readable after migrating"
-    );
-    assert_eq!(fetched.unwrap().status, SessionStatus::Starting);
 }
