@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use pulpo_common::event::PulpoEvent;
+use pulpo_common::event::{DaemonEvent, PulpoEvent};
 use tokio::sync::{broadcast, watch};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -239,8 +239,11 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config::save(&config, &config_path)?;
     }
 
-    let store = store::Store::new(&config.data_dir()).await?;
-    store.migrate().await?;
+    // Never crash-loop on an unusable database (corrupt file, unsupported
+    // pre-migration schema, or a downgrade's `VersionMissing`): recover by
+    // quarantining it and starting fresh rather than exiting. See
+    // `docs/operations/*` for the recovery story.
+    let (store, recovered_db) = store::open_and_migrate(&config.data_dir()).await?;
 
     // Install per-model cost rate overrides from `[rates.<model>]` config so the usage
     // readers price new or repriced models without a code change. No-op under coverage.
@@ -264,6 +267,19 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
+
+    if let Some(recovered) = recovered_db {
+        let event = PulpoEvent::Daemon(DaemonEvent {
+            node_name: node_name.clone(),
+            subtype: "db_unusable".into(),
+            message: format!(
+                "database was unusable ({}) — quarantined to {} and started fresh",
+                recovered.reason, recovered.moved_to
+            ),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = event_tx.send(event);
+    }
 
     let manager = SessionManager::new(backend, store.clone(), config.node.default_command.clone())
         .with_capture_session_output(config.node.capture_session_output)
@@ -588,6 +604,51 @@ data_dir = "{}"
         let saved = config::load(config_path.to_str().unwrap()).unwrap();
         assert!(!saved.auth.token.is_empty());
         assert_eq!(saved.auth.token.len(), 43);
+    }
+
+    #[tokio::test]
+    async fn test_build_app_recovers_from_unusable_database() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(data_dir.join("state.db"), b"not a sqlite database").unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+        };
+
+        let (_app, addr, handle) = build_app(&cli).await.unwrap();
+        assert_eq!(addr, "127.0.0.1:0");
+
+        let quarantined = std::fs::read_dir(&data_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("state.db.unusable-")
+            });
+        assert!(
+            quarantined,
+            "expected a quarantined state.db.unusable-* file"
+        );
+
+        handle.shutdown();
     }
 
     #[test]

@@ -28,11 +28,15 @@ serde_json.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 shell-words.workspace = true
+toml.workspace = true
+dirs.workspace = true
+shellexpand.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 uuid.workspace = true
+tempfile = "3"
 
 [lints]
 workspace = true

@@ -16,6 +16,7 @@ fn event_to_sse(event: &PulpoEvent) -> Option<Result<Event, Infallible>> {
         PulpoEvent::SessionDeleted(se) => ("session_deleted", serde_json::to_string(se).ok()?),
         PulpoEvent::UsageAlert(a) => ("usage_alert", serde_json::to_string(a).ok()?),
         PulpoEvent::Intervention(iv) => ("intervention", serde_json::to_string(iv).ok()?),
+        PulpoEvent::Daemon(d) => ("daemon", serde_json::to_string(d).ok()?),
     };
     Some(Ok(Event::default().event(event_type).data(json)))
 }
@@ -134,6 +135,17 @@ mod tests {
             node_name: "n".into(),
             code: "budget_exceeded".into(),
             reason: "over budget".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        });
+        assert!(event_to_sse(&event).is_some());
+    }
+
+    #[test]
+    fn test_event_to_sse_daemon() {
+        let event = PulpoEvent::Daemon(pulpo_common::event::DaemonEvent {
+            node_name: "n".into(),
+            subtype: "db_unusable".into(),
+            message: "quarantined and started fresh".into(),
             timestamp: "2026-01-01T00:00:00Z".into(),
         });
         assert!(event_to_sse(&event).is_some());

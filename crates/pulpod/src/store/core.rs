@@ -1,11 +1,17 @@
-use anyhow::Result;
+use std::path::Path;
+
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use pulpo_common::session::InterventionCode;
 use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
-use tracing::warn;
+use tracing::{error, info, warn};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// How many `state.db.pre-*` migration backups to keep (see
+/// [`Store::backup_before_migrating`]) — oldest are pruned beyond this.
+const MAX_PRE_MIGRATION_BACKUPS: usize = 3;
 
 /// A single intervention event for audit trail purposes.
 #[derive(Debug, Clone)]
@@ -39,9 +45,71 @@ impl Store {
         self.reject_unsupported_legacy_schema().await?;
         self.warn_before_dropping_secrets().await?;
         self.warn_before_dropping_push_subscriptions().await?;
+        if self.has_pending_migrations().await? {
+            self.backup_before_migrating()?;
+        }
         MIGRATOR.run(&self.pool).await?;
         self.enforce_db_permissions();
 
+        Ok(())
+    }
+
+    /// Whether this database already has migration history (i.e. isn't a
+    /// brand-new file) with at least one migration defined in [`MIGRATOR`]
+    /// not yet applied to it. Used to decide whether an in-place migration
+    /// run is about to modify pre-existing data worth backing up first — a
+    /// freshly-created, never-migrated database has nothing to protect.
+    async fn has_pending_migrations(&self) -> Result<bool> {
+        let has_sqlx_migrations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_sqlx_migrations == 0 {
+            return Ok(false);
+        }
+
+        let applied_versions: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+            .fetch_all(&self.pool)
+            .await?;
+        let applied: std::collections::HashSet<i64> = applied_versions.into_iter().collect();
+        Ok(MIGRATOR.iter().any(|m| !applied.contains(&m.version)))
+    }
+
+    /// Copy `state.db` to `state.db.pre-<current daemon version>` before
+    /// [`MIGRATOR::run`] modifies it in place — migrations can be
+    /// irreversible (0008 drops `secrets`, 0009 drops `push_subscriptions`),
+    /// so an operator upgrading across several releases at once always has a
+    /// pre-migration snapshot to fall back to. Overwrites a same-named
+    /// backup from a previous run at the same version, and prunes down to
+    /// the [`MAX_PRE_MIGRATION_BACKUPS`] most recent backups afterward.
+    fn backup_before_migrating(&self) -> Result<()> {
+        let db_path = format!("{}/state.db", self.data_dir);
+        let backup_path = format!("{db_path}.pre-{}", env!("CARGO_PKG_VERSION"));
+        std::fs::copy(&db_path, &backup_path)
+            .with_context(|| format!("failed to back up {db_path} to {backup_path}"))?;
+        info!(backup = %backup_path, "store: backed up database before running pending migrations");
+        self.prune_old_backups()?;
+        Ok(())
+    }
+
+    /// Keep only the [`MAX_PRE_MIGRATION_BACKUPS`] most recently modified
+    /// `state.db.pre-*` files in the data dir, removing older ones.
+    fn prune_old_backups(&self) -> Result<()> {
+        let prefix = "state.db.pre-";
+        let mut backups: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+            std::fs::read_dir(&self.data_dir)?
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
+                .filter_map(|entry| {
+                    let modified = entry.metadata().ok()?.modified().ok()?;
+                    Some((modified, entry.path()))
+                })
+                .collect();
+        backups.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, path) in backups.into_iter().skip(MAX_PRE_MIGRATION_BACKUPS) {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
@@ -150,6 +218,79 @@ impl Store {
     }
 }
 
+/// What happened when [`open_and_migrate`] had to recover from an unusable
+/// database, for the caller to log/notify about (e.g. as a `PulpoEvent` a
+/// webhook can carry).
+#[derive(Debug, Clone)]
+pub struct RecoveredUnusableDb {
+    /// Why the original database was rejected (the error `open`/`migrate`
+    /// returned), as a display string.
+    pub reason: String,
+    /// Where the original, now-unusable file was moved to.
+    pub moved_to: String,
+}
+
+/// Open (creating if absent) and migrate the database at
+/// `{data_dir}/state.db`, recovering automatically from an unusable database
+/// instead of crash-looping on it.
+///
+/// A pre-0.1.0 (pre-migration) database, a downgrade (a newer `pulpod`
+/// having applied a migration this binary doesn't know — surfaces as sqlx's
+/// `VersionMissing`), or an outright corrupt/non-SQLite file all fail here.
+/// Rather than propagating that error and refusing to start, the unusable
+/// file (and any `-wal`/`-shm` siblings) is renamed to
+/// `state.db.unusable-<UTC timestamp>` and a fresh database is opened and
+/// migrated in its place. An error is returned only if that fresh attempt
+/// *also* fails — the sole remaining "refuse to start" path.
+pub async fn open_and_migrate(data_dir: &str) -> Result<(Store, Option<RecoveredUnusableDb>)> {
+    match try_open_and_migrate(data_dir).await {
+        Ok(store) => Ok((store, None)),
+        Err(first_err) => {
+            let reason = format!("{first_err:#}");
+            let moved_to = quarantine_unusable_db(data_dir).with_context(|| {
+                format!("database at {data_dir}/state.db is unusable ({reason}) and could not be quarantined")
+            })?;
+            error!(
+                reason = %reason,
+                moved_to = %moved_to,
+                "store: database unusable — quarantined and starting fresh"
+            );
+            let store = try_open_and_migrate(data_dir).await.with_context(|| {
+                format!(
+                    "quarantined unusable database to {moved_to}, but creating a fresh one also failed"
+                )
+            })?;
+            Ok((store, Some(RecoveredUnusableDb { reason, moved_to })))
+        }
+    }
+}
+
+async fn try_open_and_migrate(data_dir: &str) -> Result<Store> {
+    let store = Store::new(data_dir).await?;
+    store.migrate().await?;
+    Ok(store)
+}
+
+/// Rename `{data_dir}/state.db` (and any `-wal`/`-shm` siblings) out of the
+/// way so a fresh database can be opened at the canonical path. Returns the
+/// new path of the primary file.
+fn quarantine_unusable_db(data_dir: &str) -> Result<String> {
+    let db_path = format!("{data_dir}/state.db");
+    if !Path::new(&db_path).exists() {
+        anyhow::bail!("no {db_path} to quarantine");
+    }
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let quarantined = format!("{db_path}.unusable-{timestamp}");
+    std::fs::rename(&db_path, &quarantined)?;
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = format!("{db_path}{suffix}");
+        if Path::new(&sidecar).exists() {
+            let _ = std::fs::rename(&sidecar, format!("{quarantined}{suffix}"));
+        }
+    }
+    Ok(quarantined)
+}
+
 /// Shared test-only builder: a tempdir-backed, migrated `Store`. The tempdir is
 /// leaked so it persists for the test's lifetime (mirrors the pattern every
 /// call site used to hand-roll).
@@ -160,4 +301,152 @@ pub async fn test_store() -> Store {
     let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
     store.migrate().await.unwrap();
     store
+}
+
+/// Unit tests for the private helpers backing [`open_and_migrate`] and the
+/// pending-migration backup — behavior reachable only through public API
+/// (`Store::migrate`, `open_and_migrate`) is instead covered end-to-end in
+/// `store/tests.rs`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quarantine_unusable_db_bails_when_file_missing() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let err = quarantine_unusable_db(tmpdir.path().to_str().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("no"));
+        assert!(err.to_string().contains("state.db"));
+    }
+
+    #[test]
+    fn test_quarantine_unusable_db_renames_file_and_siblings() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        std::fs::write(tmpdir.path().join("state.db"), b"garbage").unwrap();
+        std::fs::write(tmpdir.path().join("state.db-wal"), b"wal").unwrap();
+        std::fs::write(tmpdir.path().join("state.db-shm"), b"shm").unwrap();
+
+        let quarantined = quarantine_unusable_db(dir).unwrap();
+
+        assert!(!tmpdir.path().join("state.db").exists());
+        assert!(!tmpdir.path().join("state.db-wal").exists());
+        assert!(!tmpdir.path().join("state.db-shm").exists());
+        assert!(Path::new(&quarantined).exists());
+        assert!(quarantined.contains("state.db.unusable-"));
+        assert!(Path::new(&format!("{quarantined}-wal")).exists());
+        assert!(Path::new(&format!("{quarantined}-shm")).exists());
+        assert_eq!(std::fs::read(&quarantined).unwrap(), b"garbage");
+    }
+
+    #[test]
+    fn test_quarantine_unusable_db_ignores_missing_siblings() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        std::fs::write(tmpdir.path().join("state.db"), b"garbage").unwrap();
+
+        let quarantined = quarantine_unusable_db(dir).unwrap();
+
+        assert!(Path::new(&quarantined).exists());
+        assert!(!Path::new(&format!("{quarantined}-wal")).exists());
+        assert!(!Path::new(&format!("{quarantined}-shm")).exists());
+    }
+
+    #[tokio::test]
+    async fn test_prune_old_backups_keeps_only_most_recent() {
+        let store = test_store().await;
+        for i in 0..5 {
+            std::fs::write(
+                format!("{}/state.db.pre-0.{i}.0", store.data_dir),
+                format!("backup-{i}"),
+            )
+            .unwrap();
+            // Ensure distinct mtimes across filesystems with coarse resolution.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        store.prune_old_backups().unwrap();
+
+        let remaining: Vec<String> = std::fs::read_dir(&store.data_dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("state.db.pre-"))
+            .collect();
+        assert_eq!(remaining.len(), MAX_PRE_MIGRATION_BACKUPS);
+        // The three most recently written backups (0.2.0, 0.3.0, 0.4.0) survive.
+        for kept in [
+            "state.db.pre-0.2.0",
+            "state.db.pre-0.3.0",
+            "state.db.pre-0.4.0",
+        ] {
+            assert!(remaining.contains(&kept.to_owned()), "{remaining:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prune_old_backups_noop_under_the_cap() {
+        let store = test_store().await;
+        std::fs::write(format!("{}/state.db.pre-0.1.0", store.data_dir), b"a").unwrap();
+
+        store.prune_old_backups().unwrap();
+
+        assert!(Path::new(&format!("{}/state.db.pre-0.1.0", store.data_dir)).exists());
+    }
+
+    #[tokio::test]
+    async fn test_open_and_migrate_success_reports_no_recovery() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let (store, recovered) = open_and_migrate(tmpdir.path().to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(recovered.is_none());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_open_and_migrate_recovers_from_garbage_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        std::fs::write(tmpdir.path().join("state.db"), b"not a sqlite database").unwrap();
+
+        let (store, recovered) = open_and_migrate(dir).await.unwrap();
+
+        let recovered = recovered.expect("expected recovery from a garbage file");
+        assert!(Path::new(&recovered.moved_to).exists());
+        assert_eq!(
+            std::fs::read(&recovered.moved_to).unwrap(),
+            b"not a sqlite database"
+        );
+        // The fresh database at the canonical path is usable.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_open_and_migrate_refuses_when_directory_unwritable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        let mut perms = std::fs::metadata(tmpdir.path()).unwrap().permissions();
+        perms.set_mode(0o500); // read + execute only, no write
+        std::fs::set_permissions(tmpdir.path(), perms.clone()).unwrap();
+
+        let result = open_and_migrate(dir).await;
+
+        // Restore permissions unconditionally so the tempdir can be cleaned up.
+        perms.set_mode(0o700);
+        std::fs::set_permissions(tmpdir.path(), perms).unwrap();
+
+        assert!(result.is_err(), "expected open_and_migrate to refuse");
+    }
 }

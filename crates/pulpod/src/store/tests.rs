@@ -270,6 +270,123 @@ async fn test_migrate_is_idempotent() {
     store.migrate().await.unwrap();
     // Running migrate again should not error
     store.migrate().await.unwrap();
+
+    // Neither call had a pending migration to protect (the first ran against
+    // a brand-new file, the second against an already-fully-migrated one), so
+    // no `state.db.pre-*` backup should exist either time.
+    let backups: Vec<_> = std::fs::read_dir(tmpdir.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("state.db.pre-"))
+        .collect();
+    assert!(backups.is_empty(), "unexpected backups: {backups:?}");
+}
+
+#[tokio::test]
+async fn test_migrate_backs_up_before_running_pending_migrations() {
+    let store = store_at_migration_0007().await;
+    let backup_path = format!(
+        "{}/state.db.pre-{}",
+        store.data_dir,
+        env!("CARGO_PKG_VERSION")
+    );
+    assert!(!std::path::Path::new(&backup_path).exists());
+
+    store.migrate().await.unwrap();
+
+    assert!(
+        std::path::Path::new(&backup_path).exists(),
+        "expected a pre-migration backup at {backup_path}"
+    );
+}
+
+#[tokio::test]
+async fn test_migrate_backup_overwrites_stale_same_version_file() {
+    let store = store_at_migration_0007().await;
+    let backup_path = format!(
+        "{}/state.db.pre-{}",
+        store.data_dir,
+        env!("CARGO_PKG_VERSION")
+    );
+    std::fs::write(&backup_path, b"stale placeholder").unwrap();
+
+    store.migrate().await.unwrap();
+
+    let contents = std::fs::read(&backup_path).unwrap();
+    assert_ne!(contents, b"stale placeholder");
+}
+
+#[tokio::test]
+async fn test_open_and_migrate_recovers_from_unsupported_legacy_schema() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let dir = tmpdir.path().to_str().unwrap();
+    {
+        let store = Store::new(dir).await.unwrap();
+        sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+            .execute(store.pool())
+            .await
+            .unwrap();
+    }
+
+    let (store, recovered) = crate::store::open_and_migrate(dir).await.unwrap();
+
+    let recovered = recovered.expect("expected recovery from a legacy schema");
+    assert!(
+        recovered
+            .reason
+            .contains("unsupported legacy database schema")
+    );
+    assert!(std::path::Path::new(&recovered.moved_to).exists());
+    // A fully-migrated, usable database now lives at the canonical path.
+    let versions: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
+        .fetch_all(store.pool())
+        .await
+        .unwrap();
+    assert!(!versions.is_empty());
+}
+
+#[tokio::test]
+async fn test_open_and_migrate_recovers_from_downgrade_version_missing() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let dir = tmpdir.path().to_str().unwrap();
+    {
+        // Simulate a downgrade: a newer `pulpod` applied a migration
+        // (version 9999) this binary's embedded `MIGRATOR` has never heard
+        // of. sqlx's own migrations-table schema, minimally reproduced.
+        let store = Store::new(dir).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                (version, description, success, checksum, execution_time)
+             VALUES (9999, 'from the future', 1, x'00', 0)",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+
+    let (store, recovered) = crate::store::open_and_migrate(dir).await.unwrap();
+
+    let recovered = recovered.expect("expected recovery from a downgrade");
+    assert!(recovered.reason.contains("9999"));
+    assert!(std::path::Path::new(&recovered.moved_to).exists());
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]
