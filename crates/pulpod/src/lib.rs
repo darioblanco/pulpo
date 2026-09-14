@@ -698,9 +698,11 @@ data_dir = "{}"
     }
 
     #[tokio::test]
-    async fn test_build_app_tolerates_retired_discord_config() {
-        // Pre-removal configs may still carry a `[notifications.discord]` section.
-        // The daemon must boot and ignore it rather than reject it.
+    async fn test_build_app_tolerates_unknown_notifications_section() {
+        // `[notifications.discord]` isn't a known key any more (the Discord
+        // notifier it configured was removed) — the generic unknown-key rule
+        // warns and drops it. The daemon must still boot end to end rather
+        // than reject the whole config over one unrecognized section.
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -733,11 +735,12 @@ events = ["ready", "killed"]
     }
 
     #[tokio::test]
-    async fn test_build_app_tolerates_retired_vapid_config() {
-        // Web Push was removed; a config written before the removal may still
-        // carry a `[notifications.vapid]` table. The daemon must boot and
-        // ignore it rather than reject it (same treatment as the retired
-        // `[notifications.discord]` section).
+    async fn test_build_app_tolerates_unknown_notifications_section_preserves_auth_token() {
+        // `[notifications.vapid]` isn't a known key any more (Web Push, which it
+        // configured, was removed) — same generic unknown-key warn-and-drop
+        // treatment as `[notifications.discord]` above. This variant also
+        // checks that an unrelated unknown section doesn't trigger a spurious
+        // config rewrite that would lose an existing auth token.
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");

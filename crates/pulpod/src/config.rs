@@ -13,20 +13,8 @@ pub struct Config {
     pub node: NodeConfig,
     #[serde(default)]
     pub auth: AuthConfig,
-    /// Retired `[peers]` table (manual peer configuration + Tailscale peer
-    /// discovery were removed). This field only exists so configs written
-    /// before the removal still load (`deny_unknown_fields` would otherwise
-    /// reject them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub peers: Option<toml::Value>,
     #[serde(default)]
     pub watchdog: WatchdogConfig,
-    /// Retired `[plans]` table (Claude weekly-token-allowance config for the removed
-    /// burn-rate/time-to-cap projection). This field only exists so configs written
-    /// before the removal still load (`deny_unknown_fields` would otherwise reject
-    /// them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub plans: Option<toml::Value>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
     /// Canonical top-level `[[webhooks]]` endpoints.
@@ -37,34 +25,6 @@ pub struct Config {
     /// unioned with this list at startup for back-compat.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
-    /// Retired `[docker]` session-runtime configuration.
-    /// The docker session runtime was removed — this field only exists so
-    /// configs written before the removal still load (`deny_unknown_fields`
-    /// would otherwise reject them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub docker: Option<toml::Value>,
-    /// Retired `[controller]` mode configuration.
-    /// Controller/node relay mode was removed — every pulpod is standalone,
-    /// reached directly via a saved daemon URL or Tailscale. This field only
-    /// exists so configs written before the removal still load
-    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
-    /// dropped on save.
-    #[serde(default, skip_serializing)]
-    pub controller: Option<toml::Value>,
-    /// Retired `[inks.<name>]` preset registry configuration.
-    /// Inks were removed — command/runtime live directly on sessions and
-    /// schedules, and budgets moved onto schedules. This field only exists so
-    /// configs written before the removal still load (`deny_unknown_fields`
-    /// would otherwise reject them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub inks: Option<toml::Value>,
-    /// Retired `[metrics]` table (the Prometheus `/api/v1/metrics` endpoint was
-    /// removed in favor of a single plain-webhook notification channel). This
-    /// field only exists so configs written before the removal still load
-    /// (`deny_unknown_fields` would otherwise reject them); `load()` logs a
-    /// startup warning when it's present, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub metrics: Option<toml::Value>,
     /// Per-model cost rates, keyed by a model-ID substring (`[rates.<model>]`).
     ///
     /// Overrides — or adds — entries in the built-in rate table so a new or repriced
@@ -126,12 +86,6 @@ pub struct RateConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
-    /// Retired `[notifications.discord]` webhook notifier configuration.
-    /// The Discord webhook notifier was removed — this field only exists so
-    /// configs written before the removal still load (`deny_unknown_fields`
-    /// would otherwise reject them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub discord: Option<toml::Value>,
     /// Generic webhook endpoints.
     ///
     /// **Deprecated location.** Prefer the canonical top-level `[[webhooks]]`
@@ -140,14 +94,6 @@ pub struct NotificationsConfig {
     /// promotion keep working unchanged.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
-    /// Retired `[notifications.vapid]` table (Web Push, VAPID keys, and the
-    /// push action-token secret were removed — webhooks are now the only
-    /// notification channel). This field only exists so configs written
-    /// before the removal still load (`deny_unknown_fields` would otherwise
-    /// reject them); `load()` logs a startup warning when it's present, and
-    /// it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub vapid: Option<toml::Value>,
 }
 
 /// Generic webhook endpoint configuration.
@@ -176,13 +122,6 @@ pub struct WebhookEndpointConfig {
     /// Events below this floor are dropped. Absent ⇒ no floor (all severities).
     #[serde(default)]
     pub min_severity: Option<String>,
-    /// Retired: per-endpoint HMAC-SHA256 request signing (`X-Pulpo-Signature`)
-    /// was removed along with the durable outbox — delivery is now a plain
-    /// POST with a fixed retry schedule. This field only exists so configs
-    /// written before the removal still load; `load()` logs a startup warning
-    /// when any endpoint still has it set, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub secret: Option<String>,
 }
 
 /// Match a single `events` glob pattern against an `"<type>.<subtype>"` event key.
@@ -267,42 +206,12 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
 pub struct WatchdogConfig {
     #[serde(default = "default_watchdog_enabled")]
     pub enabled: bool,
-    /// Retired `watchdog.memory_threshold` setting.
-    /// Memory-pressure intervention was removed (it never fired for the unattended
-    /// agent loop the watchdog targets) — the watchdog no longer probes system
-    /// memory at all. This field only exists so configs written before the removal
-    /// still load (`deny_unknown_fields` would otherwise reject them); `load()` logs
-    /// a startup warning when it's present, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub memory_threshold: Option<u8>,
     #[serde(default = "default_check_interval_secs")]
     pub check_interval_secs: u64,
-    /// Retired `watchdog.breach_count` setting.
-    /// Only used by the removed memory-pressure intervention (consecutive breaches
-    /// over `memory_threshold` before stopping a session). This field only exists so
-    /// configs written before the removal still load; `load()` logs a startup
-    /// warning when it's present, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub breach_count: Option<u32>,
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
     #[serde(default = "default_idle_action")]
     pub idle_action: String,
-    /// Retired `watchdog.ready_ttl_secs` setting.
-    /// Auto-purging Ready sessions after a TTL was removed — sessions now stay
-    /// listed until `pulpo cleanup`/purge. This field only exists so configs
-    /// written before the removal still load; `load()` logs a startup warning
-    /// when it's present, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub ready_ttl_secs: Option<u64>,
-    /// Retired `watchdog.adopt_tmux` setting.
-    /// Auto-adoption of external tmux sessions into pulpo management was removed —
-    /// a session pulpo didn't spawn never got harness hooks, a preset session id, or
-    /// real resume. This field only exists so configs written before the removal
-    /// still load (`deny_unknown_fields` would otherwise reject them); `load()` logs
-    /// a startup warning when it's present, and it is dropped on the next save.
-    #[serde(default, skip_serializing)]
-    pub adopt_tmux: Option<bool>,
     /// Seconds of unchanged output before Active→Idle transition (default: 60).
     #[serde(default = "default_idle_threshold_secs")]
     pub idle_threshold_secs: u64,
@@ -310,19 +219,6 @@ pub struct WatchdogConfig {
     /// Appended to the built-in defaults.
     #[serde(default)]
     pub waiting_patterns: Vec<String>,
-    /// Retired `watchdog.burn_ceiling_usd_per_hour` key (the burn-velocity governor
-    /// was removed — flat budget caps are the only spend control). This field only
-    /// exists so configs written before the removal still load (`deny_unknown_fields`
-    /// would otherwise reject them). It is ignored and dropped on save.
-    #[serde(default, skip_serializing)]
-    pub burn_ceiling_usd_per_hour: Option<toml::Value>,
-    /// Retired `watchdog.burn_ceiling_tokens_per_hour` key. See
-    /// `burn_ceiling_usd_per_hour`.
-    #[serde(default, skip_serializing)]
-    pub burn_ceiling_tokens_per_hour: Option<toml::Value>,
-    /// Retired `watchdog.burn_action` key. See `burn_ceiling_usd_per_hour`.
-    #[serde(default, skip_serializing)]
-    pub burn_action: Option<toml::Value>,
 }
 
 impl WatchdogConfig {
@@ -347,18 +243,11 @@ impl Default for WatchdogConfig {
     fn default() -> Self {
         Self {
             enabled: default_watchdog_enabled(),
-            memory_threshold: None,
             check_interval_secs: default_check_interval_secs(),
-            breach_count: None,
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
-            ready_ttl_secs: None,
-            adopt_tmux: None,
             idle_threshold_secs: default_idle_threshold_secs(),
             waiting_patterns: Vec::new(),
-            burn_ceiling_usd_per_hour: None,
-            burn_ceiling_tokens_per_hour: None,
-            burn_action: None,
         }
     }
 }
@@ -396,18 +285,6 @@ pub struct NodeConfig {
     /// `tailscale serve` is used to expose the dashboard over the tailnet.
     #[serde(default)]
     pub bind: BindMode,
-    /// Retired `tag` key (its only reader was the removed Tailscale peer discovery).
-    /// This field only exists so configs written before the removal still load
-    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
-    /// dropped on save.
-    #[serde(default, skip_serializing)]
-    pub tag: Option<toml::Value>,
-    /// Retired `discovery_interval_secs` key (Tailscale peer discovery was removed).
-    /// This field only exists so configs written before the removal still load
-    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
-    /// dropped on save.
-    #[serde(default, skip_serializing)]
-    pub discovery_interval_secs: Option<toml::Value>,
     /// Default command used when spawning a session without an explicit command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_command: Option<String>,
@@ -430,8 +307,6 @@ impl Default for NodeConfig {
             port: default_port(),
             data_dir: default_data_dir(),
             bind: BindMode::default(),
-            tag: None,
-            discovery_interval_secs: None,
             default_command: None,
             log_retain_days: default_log_retain_days(),
             capture_session_output: default_capture_session_output(),
@@ -511,6 +386,148 @@ pub fn save(config: &Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Table paths (dot-joined from the config root) whose *keys* are user-defined
+/// names rather than a fixed struct's field set — currently only the
+/// `[rates.<model>]` map. Every entry under such a path is accepted by name
+/// (any model id goes), but the entry's own fields are still checked — against
+/// the single representative sub-schema `schema_config` builds for it — so a
+/// typo inside `[rates."claude-opus-4-9"]` is still caught.
+fn is_freeform_table(path: &str) -> bool {
+    path == "rates"
+}
+
+/// A `Config` with every field populated — including `Option`s, and one
+/// representative entry in the free-form `rates` map and each `webhooks` list —
+/// so that serializing it produces the complete tree of keys `Config` (and
+/// everything nested inside it) can ever deserialize.
+///
+/// `load()` walks a parsed config file's [`toml::Value`] against this tree (see
+/// [`strip_unknown_keys`]): any key that doesn't appear in it, at any nesting
+/// level, is unknown and gets warned about and dropped before the real
+/// `Config::deserialize` runs.
+fn schema_config() -> Config {
+    let mut rates = HashMap::new();
+    rates.insert(
+        String::from("__model__"),
+        RateConfig {
+            input: 0.0,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write_5m: 0.0,
+            cache_write_1h: 0.0,
+        },
+    );
+    let webhook = WebhookEndpointConfig {
+        name: String::new(),
+        url: String::new(),
+        events: Vec::new(),
+        min_severity: Some(String::new()),
+    };
+    Config {
+        node: NodeConfig {
+            default_command: Some(String::new()),
+            ..NodeConfig::default()
+        },
+        auth: AuthConfig::default(),
+        watchdog: WatchdogConfig::default(),
+        notifications: NotificationsConfig {
+            webhooks: vec![webhook.clone()],
+        },
+        webhooks: vec![webhook],
+        rates,
+        scheduler: SchedulerConfig::default(),
+    }
+}
+
+/// Recursively drop keys from `actual` that don't appear in `schema` at the same
+/// position, recording each dropped key's dotted path (from the config root) in
+/// `warnings`, and returning the cleaned value.
+///
+/// `path` is the dotted path to `actual`/`schema` so far (empty at the root). A
+/// table under an [`is_freeform_table`] path accepts any key name — e.g.
+/// `rates.claude-opus-4-9` — but still validates that entry's own fields against
+/// `schema`'s single representative entry. An array (`[[webhooks]]`,
+/// `[[notifications.webhooks]]`) validates every element against `schema`'s
+/// single representative element, however many elements `actual` has.
+///
+/// Anything else — scalars, or a type mismatch between `actual` and `schema`
+/// (a table where a string is expected, say) — is left untouched: that's a
+/// genuine type error, not an unknown key, and surfaces later from `Config`'s
+/// own deserialization with a precise message (e.g. `bind = "container"`).
+fn strip_unknown_keys(
+    actual: &toml::Value,
+    schema: &toml::Value,
+    path: &str,
+    warnings: &mut Vec<String>,
+) -> toml::Value {
+    match (actual, schema) {
+        (toml::Value::Table(actual_table), toml::Value::Table(schema_table)) => {
+            let freeform = is_freeform_table(path);
+            let freeform_schema = schema_table.values().next();
+            let mut cleaned = toml::Table::new();
+            for (key, value) in actual_table {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                let sub_schema = if freeform {
+                    freeform_schema
+                } else {
+                    schema_table.get(key)
+                };
+                match sub_schema {
+                    Some(sub_schema) => {
+                        cleaned.insert(
+                            key.clone(),
+                            strip_unknown_keys(value, sub_schema, &child_path, warnings),
+                        );
+                    }
+                    None => warnings.push(child_path),
+                }
+            }
+            toml::Value::Table(cleaned)
+        }
+        (toml::Value::Array(actual_items), toml::Value::Array(schema_items)) => {
+            let element_schema = schema_items.first();
+            toml::Value::Array(
+                actual_items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| match element_schema {
+                        Some(element_schema) => strip_unknown_keys(
+                            item,
+                            element_schema,
+                            &format!("{path}[{index}]"),
+                            warnings,
+                        ),
+                        None => item.clone(),
+                    })
+                    .collect(),
+            )
+        }
+        _ => actual.clone(),
+    }
+}
+
+/// Parse `content` as a config, dropping any unknown key — at any nesting level
+/// — before deserializing into [`Config`]. Returns the dropped keys' dotted
+/// paths (sorted) alongside the config.
+///
+/// This is the pure logic `load()` wraps: it stays a plain function of `&str`
+/// so tests can assert on exactly which keys got flagged without going through
+/// a temp file or a tracing subscriber.
+fn parse_config(content: &str) -> Result<(Config, Vec<String>)> {
+    let parsed: toml::Value = toml::from_str(content).context("Failed to parse config")?;
+    let schema = toml::Value::try_from(schema_config())
+        .expect("a fully-populated Config always serializes to a toml::Value");
+    let mut warnings = Vec::new();
+    let cleaned = strip_unknown_keys(&parsed, &schema, "", &mut warnings);
+    warnings.sort();
+    let config: Config = cleaned.try_into().context("Failed to parse config")?;
+    Ok((config, warnings))
+}
+
 pub fn load(path: &str) -> Result<Config> {
     let expanded = shellexpand::tilde(path);
     let path = std::path::Path::new(expanded.as_ref());
@@ -518,95 +535,15 @@ pub fn load(path: &str) -> Result<Config> {
     if path.exists() {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Config = toml::from_str(&content).context("Failed to parse config")?;
+        let (config, warnings) = parse_config(&content)?;
+        for unknown_key in &warnings {
+            warn!("config: unknown key '{unknown_key}' ignored");
+        }
         config.watchdog.validate()?;
-        if config.watchdog.memory_threshold.is_some() {
-            warn!(
-                "config: watchdog.memory_threshold is retired (memory-pressure intervention \
-                 was removed) — ignoring it"
-            );
-        }
-        if config.watchdog.breach_count.is_some() {
-            warn!(
-                "config: watchdog.breach_count is retired (memory-pressure intervention was \
-                 removed) — ignoring it"
-            );
-        }
-        if config.watchdog.ready_ttl_secs.is_some() {
-            warn!(
-                "config: watchdog.ready_ttl_secs is retired (Ready sessions no longer \
-                 auto-purge — they stay listed until `pulpo cleanup`/purge) — ignoring it"
-            );
-        }
-        if config.watchdog.adopt_tmux.is_some() {
-            warn!(
-                "config: watchdog.adopt_tmux is retired (auto-adoption of external tmux \
-                 sessions was removed) — ignoring it"
-            );
-        }
-        if config.node.tag.is_some() {
-            warn!(
-                "config: node.tag is retired (Tailscale peer discovery, its only reader, was \
-                 removed) — ignoring it"
-            );
-        }
-        if config.metrics.is_some() {
-            warn!(
-                "config: [metrics] is retired (the Prometheus /api/v1/metrics endpoint was \
-                 removed in favor of a single plain-webhook notification channel) — ignoring \
-                 it"
-            );
-        }
-        if config.notifications.vapid.is_some() {
-            warn!(
-                "config: [notifications.vapid] is retired (Web Push was removed — webhooks \
-                 are now the only notification channel) — ignoring it"
-            );
-        }
-        if config
-            .webhook_endpoints()
-            .iter()
-            .any(|w| w.secret.is_some())
-        {
-            warn!(
-                "config: webhook `secret` is retired (HMAC request signing was removed along \
-                 with the durable outbox) — ignoring it"
-            );
-        }
-        if config.plans.is_some() {
-            warn!(
-                "config: [plans] is retired (the burn-rate/time-to-cap projection it fed was \
-                 removed — Pulpo now ships exact metering and a flat budget cap only) — \
-                 ignoring it"
-            );
-        }
-        if config.watchdog.burn_ceiling_usd_per_hour.is_some()
-            || config.watchdog.burn_ceiling_tokens_per_hour.is_some()
-            || config.watchdog.burn_action.is_some()
-        {
-            warn!(
-                "config: watchdog.burn_ceiling_usd_per_hour / burn_ceiling_tokens_per_hour / \
-                 burn_action are retired (the burn-velocity governor was removed — use \
-                 --budget-cost for a flat spend cap instead) — ignoring them"
-            );
-        }
         Ok(config)
     } else {
         // Return defaults if no config file exists
-        Ok(Config {
-            node: NodeConfig {
-                name: default_name(),
-                port: default_port(),
-                data_dir: default_data_dir(),
-                bind: BindMode::default(),
-                tag: None,
-                discovery_interval_secs: None,
-                default_command: None,
-                log_retain_days: default_log_retain_days(),
-                capture_session_output: default_capture_session_output(),
-            },
-            ..Default::default()
-        })
+        Ok(Config::default())
     }
 }
 
@@ -705,101 +642,6 @@ data_dir = "/tmp/pulpo-test"
 
         let result = load(tmpfile.path().to_str().unwrap());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_load_rejects_unknown_top_level_section() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[sandbox]
-enabled = true
-"#
-        )
-        .unwrap();
-
-        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
-        assert!(err.contains("Failed to parse config"));
-        assert!(err.contains("sandbox"));
-    }
-
-    #[test]
-    fn test_load_rejects_deprecated_watchdog_ready_ttl_alias() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[watchdog]
-finished_ttl_secs = 60
-"#
-        )
-        .unwrap();
-
-        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
-        assert!(err.contains("Failed to parse config"));
-        assert!(err.contains("finished_ttl_secs"));
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_watchdog_adopt_tmux_key() {
-        // Configs written before auto-adoption of external tmux sessions was removed
-        // still load: `watchdog.adopt_tmux` is retired but not rejected.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[watchdog]
-adopt_tmux = true
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.adopt_tmux, Some(true));
-    }
-
-    #[test]
-    fn test_save_drops_legacy_watchdog_adopt_tmux_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[watchdog]
-adopt_tmux = true
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.adopt_tmux, Some(true));
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("adopt_tmux"),
-            "retired watchdog.adopt_tmux key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.watchdog.adopt_tmux.is_none());
-    }
-
-    #[test]
-    fn test_load_without_watchdog_adopt_tmux_key_defaults_to_none() {
-        let config: Config = toml::from_str("[node]\nname = \"test\"\n").unwrap();
-        assert!(config.watchdog.adopt_tmux.is_none());
     }
 
     #[test]
@@ -1198,9 +1040,7 @@ token = "my-secret-token"
     fn test_watchdog_config_default() {
         let wc = WatchdogConfig::default();
         assert!(wc.enabled);
-        assert!(wc.memory_threshold.is_none());
         assert_eq!(wc.check_interval_secs, 10);
-        assert!(wc.breach_count.is_none());
         assert_eq!(wc.idle_timeout_secs, 600);
         assert_eq!(wc.idle_action, "alert");
     }
@@ -1275,18 +1115,11 @@ check_interval_secs = 5
             },
             watchdog: WatchdogConfig {
                 enabled: false,
-                memory_threshold: None,
                 check_interval_secs: 30,
-                breach_count: None,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
-                ready_ttl_secs: None,
-                adopt_tmux: None,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
-                burn_ceiling_usd_per_hour: None,
-                burn_ceiling_tokens_per_hour: None,
-                burn_action: None,
             },
             ..Default::default()
         };
@@ -1337,301 +1170,6 @@ enabled = false
         };
         let err = wd.validate().unwrap_err();
         assert!(err.to_string().contains("check_interval_secs"));
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_watchdog_memory_threshold_key() {
-        // Configs written before memory-pressure intervention was removed still
-        // load: `watchdog.memory_threshold` is retired but not rejected.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[watchdog]
-memory_threshold = 80
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.memory_threshold, Some(80));
-    }
-
-    #[test]
-    fn test_save_drops_legacy_watchdog_memory_threshold_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[watchdog]
-memory_threshold = 80
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.memory_threshold, Some(80));
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("memory_threshold"),
-            "retired watchdog.memory_threshold key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.watchdog.memory_threshold.is_none());
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_watchdog_breach_count_key() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[watchdog]
-breach_count = 5
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.breach_count, Some(5));
-    }
-
-    #[test]
-    fn test_save_drops_legacy_watchdog_breach_count_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[watchdog]
-breach_count = 5
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.breach_count, Some(5));
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("breach_count"),
-            "retired watchdog.breach_count key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.watchdog.breach_count.is_none());
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_watchdog_ready_ttl_secs_key() {
-        // Configs written before ready-TTL cleanup was removed still load:
-        // `watchdog.ready_ttl_secs` is retired but not rejected.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-
-[watchdog]
-ready_ttl_secs = 3600
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.ready_ttl_secs, Some(3600));
-    }
-
-    #[test]
-    fn test_save_drops_legacy_watchdog_ready_ttl_secs_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[watchdog]
-ready_ttl_secs = 3600
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.watchdog.ready_ttl_secs, Some(3600));
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("ready_ttl_secs"),
-            "retired watchdog.ready_ttl_secs key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.watchdog.ready_ttl_secs.is_none());
-    }
-
-    #[test]
-    fn test_load_without_legacy_watchdog_keys_defaults_to_none() {
-        let config: Config = toml::from_str("[node]\nname = \"test\"\n").unwrap();
-        assert!(config.watchdog.memory_threshold.is_none());
-        assert!(config.watchdog.breach_count.is_none());
-        assert!(config.watchdog.ready_ttl_secs.is_none());
-    }
-
-    #[test]
-    fn test_watchdog_validate_idle_action_alert() {
-        let wd = WatchdogConfig {
-            idle_action: "alert".into(),
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_idle_action_kill() {
-        let wd = WatchdogConfig {
-            idle_action: "kill".into(),
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_idle_action_invalid() {
-        let wd = WatchdogConfig {
-            idle_action: "pause".into(),
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("idle_action"));
-    }
-
-    #[test]
-    fn test_watchdog_burn_keys_retired_and_none_by_default() {
-        let wd = WatchdogConfig::default();
-        assert!(wd.burn_ceiling_usd_per_hour.is_none());
-        assert!(wd.burn_ceiling_tokens_per_hour.is_none());
-        assert!(wd.burn_action.is_none());
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_watchdog_burn_keys() {
-        // Configs written before the burn-velocity governor was removed still load;
-        // the keys are retired but not rejected.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "burn-cfg"
-
-[watchdog]
-burn_ceiling_usd_per_hour = 5.0
-burn_ceiling_tokens_per_hour = 1000000
-burn_action = "stop"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.watchdog.burn_ceiling_usd_per_hour.is_some());
-        assert!(config.watchdog.burn_ceiling_tokens_per_hour.is_some());
-        assert!(config.watchdog.burn_action.is_some());
-    }
-
-    #[test]
-    fn test_save_drops_legacy_watchdog_burn_keys() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[watchdog]
-burn_ceiling_usd_per_hour = 5.0
-burn_ceiling_tokens_per_hour = 1000000
-burn_action = "stop"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.watchdog.burn_ceiling_usd_per_hour.is_some());
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("burn_ceiling") && !content.contains("burn_action"),
-            "retired watchdog burn keys are dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.watchdog.burn_ceiling_usd_per_hour.is_none());
-        assert!(reloaded.watchdog.burn_ceiling_tokens_per_hour.is_none());
-        assert!(reloaded.watchdog.burn_action.is_none());
-    }
-
-    #[test]
-    fn test_load_tolerates_legacy_plans_section() {
-        // Configs written before the burn-rate/time-to-cap projection (and its
-        // `[plans]` allowance config) was removed still load.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-
-[plans.max]
-weekly_token_allowance = 1000000
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.plans.is_some(), "legacy [plans] section is parsed");
-    }
-
-    #[test]
-    fn test_save_drops_legacy_plans_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[plans.max]
-weekly_token_allowance = 1000000
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.plans.is_some());
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("[plans"),
-            "retired [plans] section is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.plans.is_none());
     }
 
     #[test]
@@ -1739,76 +1277,6 @@ idle_action = "pause"
     }
 
     #[test]
-    fn test_load_config_with_legacy_inks_section() {
-        // Configs written before the ink removal still load; the section is
-        // tolerated and ignored.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[inks.reviewer]
-command = "claude -p 'Custom review'"
-description = "Code review specialist"
-
-[inks.coder]
-command = "codex -p 'Do it'"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.inks.is_some(), "legacy [inks] section is parsed");
-    }
-
-    #[test]
-    fn test_save_drops_legacy_inks_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[inks.reviewer]
-command = "claude -p 'Custom review'"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("[inks"),
-            "retired [inks] section is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.inks.is_none());
-    }
-
-    #[test]
-    fn test_load_config_without_inks_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.inks.is_none());
-    }
-
-    #[test]
     fn test_config_without_notifications() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
@@ -1823,7 +1291,6 @@ data_dir = "/tmp/test"
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.notifications.discord.is_none());
         assert!(config.notifications.webhooks.is_empty());
     }
 
@@ -1844,9 +1311,7 @@ data_dir = "/tmp/test"
                     url: "https://example.com/api/hooks/789/xyz".into(),
                     events: vec!["killed".into()],
                     min_severity: None,
-                    secret: None,
                 }],
-                ..Default::default()
             },
             ..Default::default()
         };
@@ -1863,7 +1328,6 @@ data_dir = "/tmp/test"
     #[test]
     fn test_notifications_config_default() {
         let config = NotificationsConfig::default();
-        assert!(config.discord.is_none());
         assert!(config.webhooks.is_empty());
     }
 
@@ -1875,18 +1339,10 @@ data_dir = "/tmp/test"
                 url: "url".into(),
                 events: vec![],
                 min_severity: None,
-                secret: None,
             }],
-            ..Default::default()
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_notifications_config_default_webhooks_empty() {
-        let config = NotificationsConfig::default();
-        assert!(config.webhooks.is_empty());
     }
 
     #[test]
@@ -1896,7 +1352,6 @@ data_dir = "/tmp/test"
             url: "https://example.com".into(),
             events: vec!["killed".into()],
             min_severity: None,
-            secret: Some("key".into()),
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
@@ -1909,26 +1364,23 @@ data_dir = "/tmp/test"
             url: "https://ci.example.com/hook".into(),
             events: vec!["ready".into()],
             min_severity: None,
-            secret: Some("s3cret".into()),
         };
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: WebhookEndpointConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.name, "ci");
         assert_eq!(parsed.url, "https://ci.example.com/hook");
         assert_eq!(parsed.events, vec!["ready"]);
-        // Retired: `secret` is never serialized, even when set.
-        assert!(parsed.secret.is_none());
     }
 
     #[test]
-    fn test_webhook_endpoint_config_no_secret() {
+    fn test_webhook_endpoint_config_defaults() {
         let toml_str = r#"
 name = "hook"
 url = "https://example.com"
 "#;
         let parsed: WebhookEndpointConfig = toml::from_str(toml_str).unwrap();
-        assert!(parsed.secret.is_none());
         assert!(parsed.events.is_empty());
+        assert!(parsed.min_severity.is_none());
     }
 
     #[test]
@@ -1943,9 +1395,7 @@ url = "https://example.com"
                     url: "https://example.com/hook".into(),
                     events: vec!["killed".into()],
                     min_severity: None,
-                    secret: Some("key".into()),
                 }],
-                ..Default::default()
             },
             ..Default::default()
         };
@@ -1956,8 +1406,6 @@ url = "https://example.com"
         assert_eq!(wh.name, "test-hook");
         assert_eq!(wh.url, "https://example.com/hook");
         assert_eq!(wh.events, vec!["killed"]);
-        // Retired: `secret` is dropped on save, so it doesn't survive the roundtrip.
-        assert!(wh.secret.is_none());
     }
 
     // -- Node bind config tests --
@@ -1968,8 +1416,6 @@ url = "https://example.com"
         assert!(!node.name.is_empty());
         assert_eq!(node.port, 7433);
         assert_eq!(node.bind, pulpo_common::auth::BindMode::Local);
-        assert!(node.tag.is_none());
-        assert!(node.discovery_interval_secs.is_none());
     }
 
     #[test]
@@ -1989,108 +1435,13 @@ bind = "tailscale"
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
     }
 
-    /// `tag` under `[node]` is a retired key (its only reader was the removed
-    /// Tailscale peer discovery). A config written before the removal that still
-    /// carries it must keep loading (`deny_unknown_fields` would otherwise reject
-    /// `NodeConfig`), and the key must be dropped on the next save.
-    #[test]
-    fn test_load_config_tolerates_legacy_tag() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-bind = "tailscale"
-tag = "pulpo"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
-
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("tag"),
-            "retired tag key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.node.tag.is_none());
-    }
-
-    /// Peer discovery over Tailscale was removed; `discovery_interval_secs` under
-    /// `[node]` is now a retired key. A config written before the removal that
-    /// still carries it must keep loading (`deny_unknown_fields` would otherwise
-    /// reject `NodeConfig`), and the key must be dropped on the next save.
-    #[test]
-    fn test_load_config_tolerates_legacy_discovery_interval_secs() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-bind = "tailscale"
-discovery_interval_secs = 60
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
-
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("discovery_interval_secs"),
-            "retired discovery_interval_secs key is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.node.discovery_interval_secs.is_none());
-    }
-
-    /// A config written before the peers/discovery removal may still carry a
-    /// top-level `[peers]` table. It must keep loading and be dropped on save —
-    /// same tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
-    #[test]
-    fn test_load_config_tolerates_legacy_peers_section() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-
-[peers]
-mac-mini = "10.0.0.1:7433"
-
-[peers.linux]
-address = "10.0.0.2:7433"
-token = "secret"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.peers.is_some(), "legacy [peers] section is parsed");
-
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("[peers"),
-            "retired [peers] section is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.peers.is_none());
-    }
-
     /// `bind = "container"` (deploying pulpod itself inside Docker/Podman) was
     /// removed alongside `docker/` — a containerized pulpod can't see the agents'
-    /// own session files that exact usage metering depends on. Loading such a
-    /// config must fail loudly with a pointer to the remaining bind modes,
-    /// rather than silently falling back to a default.
+    /// own session files that exact usage metering depends on. `bind` is a known
+    /// key, so an invalid value like this is a proper enum-deserialization error
+    /// (not an unknown key): loading such a config must fail loudly with a
+    /// pointer to the remaining bind modes, rather than silently falling back to
+    /// a default or being swallowed by the unknown-key warn-and-ignore path.
     #[test]
     fn test_load_config_rejects_bind_container() {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -2145,49 +1496,6 @@ name = "test"
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Tailscale);
-    }
-
-    // -- Retired `[notifications.vapid]` (Web Push) tests --
-
-    #[test]
-    fn test_notifications_config_default_has_no_vapid() {
-        let config = NotificationsConfig::default();
-        assert!(config.vapid.is_none());
-    }
-
-    /// A config written before Web Push was removed may still carry a
-    /// `[notifications.vapid]` table. It must keep loading (`deny_unknown_fields`
-    /// would otherwise reject `NotificationsConfig`) and be dropped on save —
-    /// same tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
-    #[test]
-    fn test_load_config_tolerates_legacy_vapid_section() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-
-[notifications.vapid]
-private_key = "existing-priv"
-public_key = "existing-pub"
-action_secret = "existing-secret"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.notifications.vapid.is_some());
-
-        let path = tmpfile.path();
-        save(&config, path).unwrap();
-        let content = std::fs::read_to_string(path).unwrap();
-        assert!(
-            !content.contains("vapid"),
-            "retired [notifications.vapid] is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.notifications.vapid.is_none());
     }
 
     #[test]
@@ -2261,234 +1569,6 @@ name = "test"
             !content.contains("default_command"),
             "None should be omitted from serialized config"
         );
-    }
-
-    #[test]
-    fn test_load_config_with_legacy_controller_section() {
-        // Configs written before controller-mode removal still load; the section
-        // is tolerated and ignored.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[controller]
-enabled = true
-stale_timeout_secs = 300
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(
-            config.controller.is_some(),
-            "legacy [controller] section is parsed"
-        );
-    }
-
-    #[test]
-    fn test_save_drops_legacy_controller_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[controller]
-address = "http://controller:7433"
-token = "tok"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("[controller]"),
-            "retired [controller] section is dropped on save"
-        );
-    }
-
-    #[test]
-    fn test_load_config_with_legacy_docker_section() {
-        // Configs written before the docker runtime removal still load.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[docker]
-image = "my-custom-image:v1"
-volumes = ["~/.ssh:/root/.ssh:ro"]
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.docker.is_some(), "legacy [docker] section is parsed");
-    }
-
-    #[test]
-    fn test_save_drops_legacy_docker_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[docker]
-image = "my-custom-image:v1"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("[docker]"),
-            "retired [docker] section is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.docker.is_none());
-    }
-
-    #[test]
-    fn test_load_config_without_docker_section() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.docker.is_none());
-    }
-
-    // -- Controller mode config tests --
-
-    #[test]
-    fn test_load_tolerates_retired_discord_section() {
-        // The Discord webhook notifier was removed, but pre-removal configs
-        // may still carry a `[notifications.discord]` section. With
-        // `deny_unknown_fields` on `NotificationsConfig`, that section must be
-        // tolerated (captured into the ignored `discord` field) rather than
-        // rejected at boot.
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "legacy"
-port = 7433
-
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["ready", "killed"]
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // The section is captured but ignored.
-        assert!(config.notifications.discord.is_some());
-        assert!(config.notifications.webhooks.is_empty());
-    }
-
-    #[test]
-    fn test_retired_discord_dropped_on_save() {
-        // A captured legacy discord section must not be re-serialized on save.
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("discord-drop.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "drop".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            notifications: NotificationsConfig {
-                discord: Some(toml::Value::String("legacy".into())),
-                ..NotificationsConfig::default()
-            },
-            ..Default::default()
-        };
-        save(&config, &path).unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("discord"),
-            "retired discord field must not be serialized: {content}"
-        );
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.notifications.discord.is_none());
-    }
-
-    // -- Retired `[metrics]` (Prometheus endpoint) tests --
-
-    #[test]
-    fn test_load_config_without_metrics_section_is_none() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "no-metrics"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.metrics.is_none());
-    }
-
-    /// A config written before the Prometheus endpoint was removed may still
-    /// carry a `[metrics]` table. It must keep loading (`deny_unknown_fields`
-    /// would otherwise reject `Config`) and be dropped on save — same
-    /// tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
-    #[test]
-    fn test_load_config_tolerates_legacy_metrics_section() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-
-[metrics]
-enabled = true
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.metrics.is_some());
-
-        let path = tmpfile.path();
-        save(&config, path).unwrap();
-        let content = std::fs::read_to_string(path).unwrap();
-        assert!(
-            !content.contains("[metrics]"),
-            "retired [metrics] is dropped on save: {content}"
-        );
-        let reloaded = load(path.to_str().unwrap()).unwrap();
-        assert!(reloaded.metrics.is_none());
     }
 
     // --- glob_match ---
@@ -2586,7 +1666,6 @@ name = "ops"
 url = "https://example.com/ops"
 events = ["lifecycle.*", "usage_alert.*"]
 min_severity = "warn"
-secret = "s3cret"
 "#
         )
         .unwrap();
@@ -2598,7 +1677,6 @@ secret = "s3cret"
         assert_eq!(w.url, "https://example.com/ops");
         assert_eq!(w.events, vec!["lifecycle.*", "usage_alert.*"]);
         assert_eq!(w.min_severity.as_deref(), Some("warn"));
-        assert_eq!(w.secret.as_deref(), Some("s3cret"));
         // Legacy nested list stays empty.
         assert!(config.notifications.webhooks.is_empty());
     }
@@ -2682,26 +1760,6 @@ url = "https://example.com/legacy"
     }
 
     #[test]
-    fn test_load_rejects_unknown_webhook_field() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "wh"
-
-[[webhooks]]
-name = "bad"
-url = "https://example.com"
-bogus_field = true
-"#
-        )
-        .unwrap();
-        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
-        assert!(err.contains("bogus_field"));
-    }
-
-    #[test]
     fn test_save_and_load_roundtrip_with_top_level_webhooks() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("wh-rt.toml");
@@ -2717,7 +1775,6 @@ bogus_field = true
                 url: "https://example.com/ops".into(),
                 events: vec!["lifecycle.*".into()],
                 min_severity: Some("warn".into()),
-                secret: Some("k".into()),
             }],
             ..Default::default()
         };
@@ -2727,5 +1784,242 @@ bogus_field = true
         assert_eq!(loaded.webhooks[0].name, "ops");
         assert_eq!(loaded.webhooks[0].events, vec!["lifecycle.*"]);
         assert_eq!(loaded.webhooks[0].min_severity.as_deref(), Some("warn"));
+    }
+
+    // --- Generic unknown-key rule: warn and ignore, at any nesting level ---
+
+    #[test]
+    fn test_parse_config_warns_and_ignores_unknown_top_level_key() {
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "test-node"
+
+[sandbox]
+enabled = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["sandbox".to_string()]);
+        assert_eq!(config.node.name, "test-node");
+    }
+
+    #[test]
+    fn test_parse_config_warns_and_ignores_unknown_nested_key() {
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+adopt_tmux = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["watchdog.adopt_tmux".to_string()]);
+        // The rest of the `[watchdog]` table around the unknown key still
+        // parses normally, defaulted since nothing else was set.
+        assert!(config.watchdog.enabled);
+        assert_eq!(config.watchdog.check_interval_secs, 10);
+    }
+
+    #[test]
+    fn test_load_from_file_warns_and_ignores_unknown_nested_key() {
+        // Same as the parse_config-level test above, but through the public
+        // `load()` file-path entry point end to end.
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+adopt_tmux = true
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.node.name, "test-node");
+        assert!(config.watchdog.enabled);
+    }
+
+    #[test]
+    fn test_parse_config_warns_and_ignores_unknown_key_in_webhook_entry() {
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "wh"
+
+[[webhooks]]
+name = "ops"
+url = "https://example.com/ops"
+secret = "s3cret"
+"#,
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["webhooks[0].secret".to_string()]);
+        assert_eq!(config.webhooks.len(), 1);
+        assert_eq!(config.webhooks[0].name, "ops");
+        assert_eq!(config.webhooks[0].url, "https://example.com/ops");
+    }
+
+    #[test]
+    fn test_parse_config_warns_and_ignores_unknown_key_in_rate_entry() {
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "test"
+
+[rates."claude-opus-4-9"]
+input = 5.0
+output = 25.0
+markup_percent = 10
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            warnings,
+            vec!["rates.claude-opus-4-9.markup_percent".to_string()]
+        );
+        assert_eq!(config.rates["claude-opus-4-9"].input, 5.0);
+        assert_eq!(config.rates["claude-opus-4-9"].output, 25.0);
+    }
+
+    #[test]
+    fn test_parse_config_warns_on_typo_of_known_key_and_uses_default() {
+        // `idle_actoin` is a typo of `idle_action` — not a special-cased alias,
+        // just another unknown key: warned, dropped, and the real field keeps
+        // its default rather than picking up the typo's value.
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "test"
+
+[watchdog]
+idle_actoin = "kill"
+"#,
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["watchdog.idle_actoin".to_string()]);
+        assert_eq!(config.watchdog.idle_action, "alert");
+    }
+
+    #[test]
+    fn test_parse_config_fully_valid_config_has_no_warnings() {
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "test-node"
+port = 9999
+data_dir = "/tmp/pulpo-test"
+bind = "public"
+default_command = "claude"
+log_retain_days = 14
+capture_session_output = true
+
+[auth]
+token = "tok"
+
+[watchdog]
+enabled = true
+check_interval_secs = 10
+idle_timeout_secs = 600
+idle_action = "alert"
+idle_threshold_secs = 60
+waiting_patterns = ["custom>"]
+
+[scheduler]
+tick_secs = 30
+
+[rates."claude-opus-4-9"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write_5m = 6.25
+cache_write_1h = 10.0
+
+[[webhooks]]
+name = "ops"
+url = "https://example.com/ops"
+events = ["lifecycle.*"]
+min_severity = "warn"
+
+[[notifications.webhooks]]
+name = "legacy"
+url = "https://example.com/legacy"
+"#,
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(config.node.name, "test-node");
+        assert_eq!(config.webhooks.len(), 1);
+        assert_eq!(config.notifications.webhooks.len(), 1);
+        assert_eq!(config.rates["claude-opus-4-9"].output, 25.0);
+    }
+
+    #[test]
+    fn test_parse_config_owner_shape_has_exactly_expected_warnings() {
+        // Structure mirrors `examples/config/public-with-auth.toml` and
+        // `examples/config/watchdog.toml`, plus five keys retired across
+        // September 2026's cleanup — one per nesting shape the generic
+        // unknown-key rule has to handle: a nested field under a known table
+        // (`node.tag`, `watchdog.adopt_tmux`), a bare unknown top-level table
+        // (`[metrics]`), an unknown top-level table with its own nested
+        // content (`[plans.max]`), and an unknown field inside a
+        // `[[webhooks]]` entry (`secret`).
+        let (config, warnings) = parse_config(
+            r#"
+[node]
+name = "my-server"
+port = 7433
+bind = "public"
+tag = "pulpo"
+
+[auth]
+token = "replace-with-long-random-token"
+
+[watchdog]
+enabled = true
+check_interval_secs = 10
+idle_threshold_secs = 60
+idle_timeout_secs = 600
+idle_action = "alert"
+adopt_tmux = true
+waiting_patterns = ["custom-tool>"]
+
+[metrics]
+enabled = true
+
+[plans.max]
+weekly_token_allowance = 1000000
+
+[[webhooks]]
+name = "ops"
+url = "https://example.com/hooks/pulpo"
+secret = "s3cret"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            warnings,
+            vec![
+                "metrics".to_string(),
+                "node.tag".to_string(),
+                "plans".to_string(),
+                "watchdog.adopt_tmux".to_string(),
+                "webhooks[0].secret".to_string(),
+            ]
+        );
+        // Every known field around the retired keys still loads correctly.
+        assert_eq!(config.node.name, "my-server");
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Public);
+        assert_eq!(config.auth.token, "replace-with-long-random-token");
+        assert_eq!(config.watchdog.check_interval_secs, 10);
+        assert_eq!(config.watchdog.waiting_patterns, vec!["custom-tool>"]);
+        assert_eq!(config.webhooks.len(), 1);
+        assert_eq!(config.webhooks[0].url, "https://example.com/hooks/pulpo");
     }
 }

@@ -138,18 +138,11 @@ mod tests {
             },
             watchdog: crate::config::WatchdogConfig {
                 enabled: true,
-                memory_threshold: None,
                 check_interval_secs: 30,
-                breach_count: None,
                 idle_timeout_secs: 300,
                 idle_action: "pause".into(),
-                ready_ttl_secs: None,
-                adopt_tmux: None,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
-                burn_ceiling_usd_per_hour: None,
-                burn_ceiling_tokens_per_hour: None,
-                burn_action: None,
             },
             notifications: crate::config::NotificationsConfig {
                 webhooks: vec![crate::config::WebhookEndpointConfig {
@@ -157,9 +150,7 @@ mod tests {
                     url: "https://example.com/hook".into(),
                     events: vec!["session.created".into()],
                     min_severity: None,
-                    secret: None,
                 }],
-                ..Default::default()
             },
             ..Default::default()
         };
@@ -192,17 +183,14 @@ mod tests {
                         url: "https://example.com/hook".into(),
                         events: vec!["ready".into(), "killed".into()],
                         min_severity: None,
-                        secret: Some("s3cret".into()),
                     },
                     crate::config::WebhookEndpointConfig {
                         name: "logs-hook".into(),
                         url: "https://logs.example.com".into(),
                         events: vec![],
                         min_severity: None,
-                        secret: None,
                     },
                 ],
-                ..Default::default()
             },
             ..Default::default()
         };

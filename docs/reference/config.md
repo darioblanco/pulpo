@@ -4,9 +4,11 @@ Default file: `~/.pulpo/config.toml`
 
 All sections are optional. Pulpo runs with zero config.
 
-Unknown config fields are rejected — except a short list of **retired keys** (see the
-section at the bottom), which still parse from a config written before their removal and
-are ignored. Any other unrecognized field is rejected outright.
+Any config key that isn't recognized — a leftover from a removed feature, a typo, anything
+not listed below, at any nesting level — is logged once at startup (`config: unknown key
+'<path>' ignored`) and otherwise ignored; it never fails startup. Recognized keys with an
+invalid value (e.g. `bind = "container"`) still fail loudly, since that's a mistake in a
+real setting, not an unrecognized one.
 Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
 delete `~/.pulpo/state.db` and restart.
 
@@ -155,36 +157,13 @@ The nested `[[notifications.webhooks]]` form is **deprecated** but still read fo
 back-compat: any endpoints there are unioned with the top-level `[[webhooks]]` list at
 startup. Prefer the top-level form for new configs. The fields are identical.
 
-## Retired keys (ignored with a warning)
+## Unknown keys
 
-These keys existed in earlier releases and are gone. A config file written before a given
-removal still **loads**: the key is parsed and ignored (all of the keys below log a
-startup warning; a few older removals — `[docker]`, `[controller]`, `[inks.<name>]`,
-`[peers]`, `notifications.discord` — are ignored silently, with no warning). `pulpod`
-only ever writes the config file back once, automatically, the very first time it runs
-with an empty `auth.token` (to persist the freshly generated one) — that save happens to
-drop any retired key present at that moment too, since retired fields are never
-serialized. Once a token exists, nothing writes the file again, so a retired key you add
-or leave afterward stays in the file, still ignored, until you edit it out by hand. Do
-not set any of these in a new config — they have no effect.
-
-| Key | Removed | Replacement |
-|-----|---------|-------------|
-| `[docker]` | Docker session runtime removed | Agents run in `tmux`; use `--worktree` for isolation |
-| `[controller]` | Controller/node control plane removed (July 2026) | `pulpo --url <host:port>` for direct multi-machine access |
-| `[inks.<name>]` | Ink preset registry removed (July 2026) | Command set directly per session/schedule; `pulpo schedule add --budget-cost <USD>` for recurring budgets |
-| `[peers]` | Peer registry + Tailscale peer discovery removed (September 2026) | `pulpo --url <host:port>`, a saved web UI connection, or SSH — see [Control Your Agents From Anywhere](/guides/remote-control) |
-| `[metrics]` | Prometheus `/api/v1/metrics` endpoint removed (September 2026) | `[[webhooks]]` for event-driven monitoring; scrape/aggregate on the receiving end if you need dashboards |
-| `[notifications.vapid]` | Web Push (VAPID keys, push subscriptions, the "Stop session" action token) removed (September 2026) | `[[webhooks]]` is the only notification channel |
-| `webhooks.secret` (per-endpoint) | HMAC-SHA256 request signing removed along with the durable outbox (September 2026) | None — treat the URL as the shared secret, or put the endpoint behind your own auth |
-| `[plans.<name>]` | Claude weekly-token-allowance config for the removed burn-rate/time-to-cap projection (September 2026) | None — `pulpo usage` shows exact tokens/cost only, no allowance-based estimate |
-| `notifications.discord` | Discord webhook notifier removed | `[[webhooks]]` to any HTTP endpoint (see `contrib/examples/webhook-discord` for a Discord relay) |
-| `node.discovery_interval_secs` | Tailscale peer-discovery scan frequency; peer discovery removed (September 2026) | No replacement needed — `bind = "tailscale"` requires no discovery |
-| `node.tag` | Reserved for a Tailscale-ACL-based peer scoping that was never built; its only reader was the removed peer discovery | No replacement needed |
-| `watchdog.adopt_tmux` | Auto-adoption of external tmux sessions removed (September 2026) | Start sessions that matter with `pulpo spawn`, which gets harness hooks, a preset session id, and real resume |
-| `watchdog.memory_threshold` | Memory-pressure intervention removed (September 2026) — it never fired for the unattended agent loop the watchdog targets | No replacement needed — idle and budget breakers cover a runaway session |
-| `watchdog.breach_count` | Memory-pressure intervention removed (September 2026) | No replacement needed |
-| `watchdog.ready_ttl_secs` | Ready-session TTL auto-purge removed (September 2026) | No replacement needed — Ready sessions stay listed until `pulpo cleanup`/purge |
-| `watchdog.burn_ceiling_usd_per_hour` | Burn-velocity governor removed (September 2026) | `--budget-cost` on `pulpo spawn`/`pulpo schedule add` — a flat cap, alert at 80%, stop at 100% |
-| `watchdog.burn_ceiling_tokens_per_hour` | Burn-velocity governor removed (September 2026) | Same as above |
-| `watchdog.burn_action` | Burn-velocity governor removed (September 2026) | Same as above |
+Any key not documented above — including one left over from a removed feature
+(an old `[docker]`, `[controller]`, `[inks.<name>]`, `[peers]`, `[metrics]`,
+`[plans.<name>]`, `[notifications.vapid]`/`.discord`, a per-webhook `secret`, a
+retired `watchdog.*` or `node.*` setting, or a plain typo) — is logged once at
+startup and ignored, at any nesting level; it never fails startup. Nothing
+rewrites the file on its own to clean these up (`pulpod` only ever saves once,
+the first time it runs with an empty `auth.token`), so an unknown key stays in
+the file, still ignored, until you edit it out by hand.
