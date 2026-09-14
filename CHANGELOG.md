@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/darioblanco/pulpo/compare/v0.3.0...v0.3.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **cli:** shell-quote spawn/handoff/schedule arguments so prompts survive ([#121](https://github.com/darioblanco/pulpo/issues/121)) ([e7fd85a](https://github.com/darioblanco/pulpo/commit/e7fd85a0381ead6f15af7758c9116f16b922d397))
+
 ## [0.3.0](https://github.com/darioblanco/pulpo/compare/v0.2.0...v0.3.0) (2026-09-13)
 
 
