@@ -1066,7 +1066,6 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
         "still no id learned after a clean exit with hooks disabled"
     );
 
-
     // Swap in a scenario that just stays up after starting (read fresh by every new
     // fake-codex process), so the resumed process is reliably observable as Working
     // rather than racing straight through "stop,exit" again before a poll catches it.
