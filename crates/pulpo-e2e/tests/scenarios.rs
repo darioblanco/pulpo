@@ -1057,24 +1057,23 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let session = daemon.wait_status("s16-codex-fallback", SessionStatus::Active, SHORT);
+    // Don't wait on the transient `Active` status here: the "stop,exit" scenario
+    // (no "start"/"wait" step) can run to completion in well under the ~150ms poll
+    // interval on a loaded CI runner, so `Active` may never be observed at all
+    // before the session moves on to `Ready` — a genuine intermittent race, not a
+    // platform difference (this exact pattern flaked on Linux CI; see the S16
+    // extension test below for the fuller writeup). Wait directly for the stable,
+    // terminal state this scenario actually settles into instead.
+    let session = daemon.wait_for("s16-codex-fallback", SHORT, |s| s.exit_code == Some(0));
     assert_eq!(session.harness.as_deref(), Some("codex"));
     assert!(
         session.harness_session_id.is_none(),
-        "SessionStart never fires in this scenario — no id should be learned yet"
-    );
-
-    daemon.wait_for("s16-codex-fallback", SHORT, |s| s.exit_code == Some(0));
-    assert!(
-        daemon
-            .session("s16-codex-fallback")
-            .unwrap()
-            .harness_session_id
-            .is_none(),
         "still no id learned after a clean exit with hooks disabled"
     );
 
-    daemon.input("s16-codex-fallback", Some("exit"));
+    // `pulpo stop` (a direct `kill_session`) rather than typing "exit" into the
+    // lingering fallback shell — see the S16 extension test's doc comment for why.
+    daemon.stop("s16-codex-fallback", false);
     daemon.wait_status("s16-codex-fallback", SessionStatus::Stopped, SHORT);
 
     // Swap in a scenario that just stays up after starting (read fresh by every new
@@ -1139,15 +1138,18 @@ fn commit_fake_scenario(repo_path: &std::path::Path, scenario: &str) {
 /// must not refuse it just because `effective_resume_workdir` fell back to the
 /// original repo path.
 ///
-/// Reaches `Stopped` via `pulpo stop` (a direct `kill_session`) rather than typing
-/// `"exit"` into the lingering fallback shell the way S3/S11/S14/S15/plain-S16 do:
-/// this is the only scenario in the suite that combines a git worktree with the
-/// interactive-fallback-shell-exit path, and that specific combination hung
-/// reproducibly in CI on Linux (`s16-codex-worktree-removed` never left `Ready` —
-/// the "exit" keystrokes were never observed taking effect) while passing on
-/// macOS — every *other* worktree scenario (S9) already tears sessions down via
-/// `pulpo stop`, never via typed input, so this aligns with the mechanism that's
-/// actually proven to work with worktrees in CI instead of the one that isn't.
+/// Reaches `Stopped` via `pulpo stop` (a direct `kill_session`), and never waits on
+/// the transient `Active` status after the initial spawn — see the plain S16 test
+/// above for the full writeup of an intermittent CI-only (Linux) race this scenario
+/// shape exposed: with a "stop,exit"-only fake scenario (no "start"/"wait" step),
+/// the whole run can finish in well under this suite's ~150ms poll interval, so a
+/// `wait_status(..., Active, _)` right after spawn can time out having *never*
+/// observed `Active` at all — this is not deterministic (a rerun of the same commit
+/// passed), not specific to worktrees (the plain S16 test flaked the exact same way
+/// on a later run), and not about typed `"exit"` input either (that was this test's
+/// first, incorrect diagnosis — kept as `pulpo stop` regardless since it is still a
+/// strictly more robust teardown than typed input, matching S9's precedent for
+/// worktree sessions).
 #[test]
 fn s16_codex_resume_still_works_when_worktree_removed() {
     let daemon = Daemon::start(DaemonConfig::default());
@@ -1179,7 +1181,10 @@ fn s16_codex_resume_still_works_when_worktree_removed() {
     let worktree_path = std::path::PathBuf::from(session.worktree_path.expect("worktree path"));
     assert!(worktree_path.exists(), "expected the worktree to exist");
 
-    daemon.wait_status("s16-codex-worktree-removed", SessionStatus::Active, SHORT);
+    // Don't wait on the transient `Active` status here — see the plain S16 test's
+    // comment above: "stop,exit" (no "start"/"wait" step) can complete in well
+    // under the test's ~150ms poll interval on a loaded CI runner, so `Active` may
+    // never actually be observed. Wait directly for the stable, terminal state.
     daemon.wait_for("s16-codex-worktree-removed", SHORT, |s| {
         s.exit_code == Some(0)
     });
