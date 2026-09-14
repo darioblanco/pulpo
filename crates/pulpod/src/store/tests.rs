@@ -635,15 +635,21 @@ async fn test_open_and_migrate_recovers_from_downgrade_version_missing() {
 async fn test_open_and_migrate_refuses_without_quarantine_when_backup_fails() {
     let tmpdir = tempfile::tempdir().unwrap();
     let dir = tmpdir.path().to_str().unwrap();
-    // A database with pending migrations (8, 9, 10) so `migrate()` attempts a
-    // pre-migration backup at all.
-    store_at_migration_0007_in(dir).await;
+    // A database with at least one pending migration (the fixture applies every
+    // migration except 0008) so `migrate()` attempts a pre-migration backup.
+    let fixture = store_at_migration_0007_in(dir).await;
 
     // Backups are named after the highest *applied* migration
-    // (`backup_before_migrating`), so for a 0007-shaped fixture the copy targets
-    // `state.db.pre-m7`. Occupy that exact path with a directory so the copy
-    // fails deterministically on every platform.
-    let backup_path = format!("{dir}/state.db.pre-m7");
+    // (`backup_before_migrating`). Read that version from the fixture rather than
+    // hardcoding it, then occupy the exact target path with a directory so the
+    // copy fails deterministically on every platform.
+    let highest_applied: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+            .fetch_one(fixture.pool())
+            .await
+            .unwrap();
+    drop(fixture);
+    let backup_path = format!("{dir}/state.db.pre-m{highest_applied}");
     std::fs::create_dir(&backup_path).unwrap();
 
     // `Store` isn't `Debug`, so `.unwrap_err()` (which needs `T: Debug` to format the
