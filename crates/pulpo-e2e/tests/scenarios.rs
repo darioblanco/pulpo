@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use pulpo_e2e::{
     Daemon, DaemonConfig, InterventionCode, SessionStatus, WebhookSink, init_git_repo,
-    read_fake_env, temp_workdir, wait_for_fake_argv, wait_for_fake_state,
+    read_fake_argv, read_fake_env, temp_workdir, wait_for_fake_argv, wait_for_fake_codex_env,
+    wait_for_fake_state,
 };
 
 const SHORT: Duration = Duration::from_secs(15);
@@ -782,4 +783,330 @@ fn s13_downgraded_database_recovers_and_starts_fresh() {
     });
 
     assert_recovered_and_usable(&daemon);
+}
+
+// ---------------------------------------------------------------------------
+// S14 — Codex: spawn, permission prompt, exit, resume, usage
+// ---------------------------------------------------------------------------
+
+/// Assert `pulpo usage --scan --json` reports at least one token counted for `agent`
+/// (`"claude"`/`"codex"`/`"pi"`) — proves a fake harness's own history file is
+/// discovered by the real usage reader, not just that the CLI call succeeds.
+fn assert_usage_scan_counts_agent(daemon: &Daemon, agent: &str) {
+    let output = daemon.pulpo(&["usage", "--scan", "--json"]);
+    assert!(
+        output.status.success(),
+        "pulpo usage --scan --json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let scan: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("usage --scan --json output should be JSON");
+    let tokens = scan["by_agent"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["label"] == agent))
+        .and_then(|row| row["total_tokens"].as_u64())
+        .unwrap_or(0);
+    assert!(
+        tokens > 0,
+        "expected {agent} usage to be counted by the scan, got: {scan}"
+    );
+}
+
+#[test]
+fn s14_codex_spawn_needs_input_exit_then_resume_and_usage_counted() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "start,prompt,needs_input,wait,exit");
+    let codex = daemon.fake_codex_bin();
+    let codex_str = codex.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s14-codex",
+        &workdir,
+        &[],
+        &[&codex_str, "-m", "gpt-5-codex", "fix the bug"],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_status("s14-codex", SessionStatus::Active, SHORT);
+    assert_eq!(session.harness.as_deref(), Some("codex"));
+
+    // Codex has no flag to preset its own thread id at launch — the FIRST hook
+    // (SessionStart) is what teaches pulpo the harness_session_id.
+    let session = daemon.wait_for("s14-codex", SHORT, |s| s.harness_session_id.is_some());
+    let harness_session_id = session.harness_session_id.clone().unwrap();
+
+    // The adapter's isolated CODEX_HOME setup: fake-codex checks auth.json/the real-home
+    // symlinks itself and reports the results — proves the seeding actually ran, not
+    // just that the isolated directory exists.
+    let env_checks = wait_for_fake_codex_env(&workdir, SHORT);
+    assert!(
+        env_checks["auth_json_exists"].is_boolean(),
+        "fake-codex should always report whether auth.json exists: {env_checks}"
+    );
+    let symlinks = env_checks["symlinks"]
+        .as_object()
+        .expect("symlinks should be an object");
+    for name in [
+        "AGENTS.md",
+        "skills",
+        "rules",
+        "plugins",
+        "prompts",
+        "memories",
+    ] {
+        assert!(
+            symlinks.contains_key(name),
+            "expected a check for symlinked entry {name:?}: {env_checks}"
+        );
+    }
+    let original_codex_home = env_checks["codex_home"]
+        .as_str()
+        .expect("codex_home should be a string")
+        .to_owned();
+
+    let session = daemon.wait_status("s14-codex", SessionStatus::Idle, SHORT);
+    assert_eq!(
+        session
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("needs_input"))
+            .map(String::as_str),
+        Some("permission")
+    );
+
+    daemon.input("s14-codex", None);
+
+    // The fake resolves the prompt (Working) then finishes the turn (Stop) before the
+    // next scenario step ("exit") fires SessionEnd and the process exits cleanly.
+    daemon.wait_status("s14-codex", SessionStatus::Ready, SHORT);
+    let session = daemon.wait_for("s14-codex", SHORT, |s| s.exit_code == Some(0));
+    assert_eq!(session.status, SessionStatus::Ready);
+    assert_eq!(session.exit_code, Some(0));
+
+    daemon.input("s14-codex", Some("exit"));
+    daemon.wait_status("s14-codex", SessionStatus::Stopped, SHORT);
+
+    // Swap in a scenario that just stays up after starting (the tmux command line is
+    // reused verbatim on resume, but this file is read fresh by every new
+    // fake-codex process — see fake-claude's S3/S4/S5 precedent), so the *resumed*
+    // process is reliably observable as Active without also replaying
+    // needs_input/wait and getting stuck blocked on stdin again.
+    set_scenario(&workdir, "start,hang");
+    let before_resume_state = read_fake_state_or_panic(&workdir);
+    let old_pid = before_resume_state["pid"].as_u64().expect("pid");
+
+    daemon.resume("s14-codex");
+
+    let session = daemon.wait_status("s14-codex", SessionStatus::Active, SHORT);
+    assert_eq!(
+        session.harness_session_id.as_deref(),
+        Some(harness_session_id.as_str()),
+        "resume must continue the same Codex thread, not start a new one"
+    );
+
+    wait_for_fake_state(&workdir, SHORT, |s| {
+        s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
+    });
+
+    let argv = read_fake_argv(&workdir).expect("resumed fake-codex should have recorded argv");
+    assert!(
+        argv.iter().any(|a| a == "resume"),
+        "expected a resume subcommand in argv: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == harness_session_id.as_str()),
+        "expected the exact harness session id in argv: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--dangerously-bypass-hook-trust"),
+        "expected the hook-trust bypass flag on resume: {argv:?}"
+    );
+
+    // Same isolated CODEX_HOME as the original spawn — resume must reuse it, not
+    // redirect to a fresh (empty) one.
+    let env = read_fake_env(&workdir);
+    assert_eq!(
+        env.get("CODEX_HOME").map(String::as_str),
+        Some(original_codex_home.as_str())
+    );
+
+    assert_usage_scan_counts_agent(&daemon, "codex");
+}
+
+// ---------------------------------------------------------------------------
+// S15 — pi: spawn, permission prompt, exit, resume (idempotent --session-id), usage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s15_pi_spawn_needs_input_exit_then_resume_is_idempotent_and_usage_counted() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "start,prompt,needs_input,wait,exit");
+    let pi = daemon.fake_pi_bin();
+    let pi_str = pi.to_string_lossy().into_owned();
+
+    let output = daemon.spawn("s15-pi", &workdir, &[], &[&pi_str, "-p", "fix the bug"]);
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_status("s15-pi", SessionStatus::Active, SHORT);
+    assert_eq!(session.harness.as_deref(), Some("pi"));
+    // Unlike Codex, pi's --session-id is preset up front (like Claude's) — known
+    // immediately, no hook needed.
+    let harness_session_id = session
+        .harness_session_id
+        .clone()
+        .expect("pi harness session id should be known up front");
+
+    let session = daemon.wait_status("s15-pi", SessionStatus::Idle, SHORT);
+    assert_eq!(
+        session
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("needs_input"))
+            .map(String::as_str),
+        Some("permission")
+    );
+
+    daemon.input("s15-pi", None);
+    daemon.wait_for("s15-pi", SHORT, |s| s.exit_code == Some(0));
+
+    daemon.input("s15-pi", Some("exit"));
+    daemon.wait_status("s15-pi", SessionStatus::Stopped, SHORT);
+
+    // Swap in a scenario that just stays up after starting (read fresh by every new
+    // fake-pi process — see fake-claude's S3/S4/S5 precedent), so the resumed
+    // process is reliably observable as Active without also replaying
+    // needs_input/wait and getting stuck blocked on stdin again.
+    set_scenario(&workdir, "start,hang");
+    let before_resume_state = read_fake_state_or_panic(&workdir);
+    let old_pid = before_resume_state["pid"].as_u64().expect("pid");
+
+    daemon.resume("s15-pi");
+
+    let session = daemon.wait_status("s15-pi", SessionStatus::Active, SHORT);
+    assert_eq!(
+        session.harness_session_id.as_deref(),
+        Some(harness_session_id.as_str())
+    );
+
+    let state = wait_for_fake_state(&workdir, SHORT, |s| {
+        s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
+    });
+    // pi's --session-id is idempotent create-or-open: the resumed process must
+    // reopen the SAME on-disk session file the original spawn created, not mint a
+    // new one — `resumed: true` here means "found the file already on disk".
+    assert_eq!(state["resumed"], serde_json::json!(true));
+    assert_eq!(state["session_id"], serde_json::json!(harness_session_id));
+
+    let argv = read_fake_argv(&workdir).expect("resumed fake-pi should have recorded argv");
+    // Resume command shape identical to spawn: `pi --session-id <id> -e <path> ...`.
+    let idx = argv
+        .iter()
+        .position(|a| a == "--session-id")
+        .unwrap_or_else(|| panic!("--session-id missing from resumed argv: {argv:?}"));
+    assert_eq!(
+        argv.get(idx + 1).map(String::as_str),
+        Some(harness_session_id.as_str())
+    );
+    assert!(
+        argv.iter().any(|a| a == "-e"),
+        "hooks must still be wired on resume: {argv:?}"
+    );
+
+    assert_usage_scan_counts_agent(&daemon, "pi");
+}
+
+// ---------------------------------------------------------------------------
+// S16 — resume fallback when a harness id was never learned
+// ---------------------------------------------------------------------------
+
+/// Codex never presets its own thread id at spawn (unlike Claude/pi) — the
+/// `SessionStart` hook is the *only* way pulpo learns it. A scenario that skips the
+/// `start` step (hooks never fire it) leaves `harness_session_id` unknown even
+/// though the session ran and exited cleanly — exactly the "legacy row / hook never
+/// fired" case `resolve_resume_command`'s fallback exists for. Resume must still
+/// target this exact session's own isolated `CODEX_HOME` via `resume --last` (the
+/// harness's own "most recent conversation here" flag) rather than silently starting
+/// a brand new Codex thread.
+#[test]
+fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "stop,exit");
+    let codex = daemon.fake_codex_bin();
+    let codex_str = codex.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s16-codex-fallback",
+        &workdir,
+        &[],
+        &[&codex_str, "-m", "gpt-5-codex", "fix the bug"],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_status("s16-codex-fallback", SessionStatus::Active, SHORT);
+    assert_eq!(session.harness.as_deref(), Some("codex"));
+    assert!(
+        session.harness_session_id.is_none(),
+        "SessionStart never fires in this scenario — no id should be learned yet"
+    );
+
+    daemon.wait_for("s16-codex-fallback", SHORT, |s| s.exit_code == Some(0));
+    assert!(
+        daemon
+            .session("s16-codex-fallback")
+            .unwrap()
+            .harness_session_id
+            .is_none(),
+        "still no id learned after a clean exit with hooks disabled"
+    );
+
+    daemon.input("s16-codex-fallback", Some("exit"));
+    daemon.wait_status("s16-codex-fallback", SessionStatus::Stopped, SHORT);
+
+    // Swap in a scenario that just stays up after starting (read fresh by every new
+    // fake-codex process), so the resumed process is reliably observable as Active
+    // rather than racing straight through "stop,exit" again before a poll catches it.
+    set_scenario(&workdir, "start,hang");
+    let before_resume_state = read_fake_state_or_panic(&workdir);
+    let old_pid = before_resume_state["pid"].as_u64().expect("pid");
+
+    daemon.resume("s16-codex-fallback");
+
+    daemon.wait_status("s16-codex-fallback", SessionStatus::Active, SHORT);
+    wait_for_fake_state(&workdir, SHORT, |s| {
+        s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
+    });
+
+    let argv = read_fake_argv(&workdir).expect("resumed fake-codex should have recorded argv");
+    assert!(
+        argv.iter().any(|a| a == "resume"),
+        "expected a resume subcommand in argv: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--last"),
+        "no id was ever learned — resume must fall back to --last, not a fresh spawn: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--dangerously-bypass-hook-trust"),
+        "hooks must still be re-injected on the fallback resume: {argv:?}"
+    );
+    // The original prompt positional must not be replayed as a new turn.
+    assert!(
+        !argv.iter().any(|a| a == "fix the bug"),
+        "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
+    );
 }

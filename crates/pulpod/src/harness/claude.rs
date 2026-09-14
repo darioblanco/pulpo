@@ -111,6 +111,24 @@ impl HarnessAdapter for ClaudeAdapter {
         Some(shell_words::join(&tokens))
     }
 
+    /// `claude --continue` — Claude Code's own "most recent conversation in this
+    /// directory" flag, used when no `harness_session_id` is known at all (a legacy
+    /// row, or a user-supplied `--session-id` that made `prepare_spawn` a full no-op
+    /// at spawn time, so pulpo never minted/learned one). Strips the same
+    /// pulpo-inserted/conflicting flags [`resume_command`](HarnessAdapter::resume_command)
+    /// does, then inserts a bare `--continue` instead of `--resume <id>`.
+    fn fallback_resume_command(&self, original_command: &str) -> Option<String> {
+        let mut tokens = shell_words::split(original_command).ok()?;
+        let claude_idx = claude_token_index(&tokens)?;
+        strip_flag_with_value(&mut tokens, "--session-id");
+        strip_flag_with_value(&mut tokens, "--settings");
+        strip_optional_value_flag(&mut tokens, "--resume");
+        strip_optional_value_flag(&mut tokens, "-r");
+        tokens.retain(|t| t != "--continue" && t != "-c");
+        tokens.splice((claude_idx + 1)..=claude_idx, ["--continue".to_owned()]);
+        Some(shell_words::join(&tokens))
+    }
+
     fn parse_event(&self, raw: &Value) -> Result<Option<HarnessEvent>> {
         let hook_event_name = raw
             .get("hook_event_name")
@@ -672,6 +690,84 @@ mod tests {
             .resume_command("claude --resume -p hi", "sid-new")
             .unwrap();
         assert_eq!(cmd, "claude --resume sid-new -p hi");
+    }
+
+    // -- fallback_resume_command --
+
+    #[test]
+    fn test_fallback_resume_command_plain() {
+        let cmd = ClaudeAdapter
+            .fallback_resume_command("claude -p hi")
+            .unwrap();
+        assert_eq!(cmd, "claude --continue -p hi");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_pulpo_inserted_flags() {
+        let original = "claude --session-id old-sid --settings /tmp/x.json -p hi";
+        let cmd = ClaudeAdapter.fallback_resume_command(original).unwrap();
+        assert_eq!(cmd, "claude --continue -p hi");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_existing_resume_and_continue_flags() {
+        assert_eq!(
+            ClaudeAdapter
+                .fallback_resume_command("claude --resume X")
+                .unwrap(),
+            "claude --continue"
+        );
+        assert_eq!(
+            ClaudeAdapter.fallback_resume_command("claude -c").unwrap(),
+            "claude --continue"
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_preserves_env_prefix() {
+        let cmd = ClaudeAdapter
+            .fallback_resume_command("env FOO=bar claude -p hi")
+            .unwrap();
+        let tokens = shell_words::split(&cmd).unwrap();
+        assert_eq!(
+            tokens,
+            ["env", "FOO=bar", "claude", "--continue", "-p", "hi"]
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_not_claude() {
+        assert!(ClaudeAdapter.fallback_resume_command("bash").is_none());
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_unparseable() {
+        assert!(
+            ClaudeAdapter
+                .fallback_resume_command("claude \"unterminated")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_then_prepare_spawn_wires_settings_only() {
+        // The end-to-end shape `resolve_resume_command` produces: fallback_resume_command's
+        // output run back through prepare_spawn must re-wire --settings without ever
+        // re-adding --session-id (mirrors the existing --continue/-r/-c no-op path).
+        let tmp = tempfile::tempdir().unwrap();
+        let fallback = ClaudeAdapter
+            .fallback_resume_command("claude -p hi")
+            .unwrap();
+        let plan = ClaudeAdapter
+            .prepare_spawn(&ctx(tmp.path(), &fallback))
+            .unwrap();
+        assert!(plan.harness_session_id.is_none());
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(tokens[0], "claude");
+        assert_eq!(tokens[1], "--settings");
+        assert!(!tokens.contains(&"--session-id".to_owned()));
+        assert!(tokens.contains(&"--continue".to_owned()));
+        assert!(tokens.contains(&"-p".to_owned()));
     }
 
     #[test]

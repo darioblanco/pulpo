@@ -52,6 +52,12 @@
 //! | `pi` | `pi --session-id <sid> -e <ext_path>` |
 //! | `pi --session-id <sid>` (from `resume_command`) | `pi --session-id <sid> -e <ext_path>` |
 //!
+//! `--continue`/`-c` get the same "still wire hooks" treatment as `--session-id`
+//! (see [`CONTINUE_FLAGS`]), added for [`fallback_resume_command`]
+//! ([`HarnessAdapter::fallback_resume_command`]) — resuming a session whose id was
+//! never learned. Every *other* `SESSION_SELECTION_FLAGS` member (`--session`,
+//! `--resume`/`-r`, `--fork`, `--no-session`) still fully no-ops, unchanged.
+//!
 //! ## Open questions / UNVERIFIED (carried from the research spec)
 //!
 //! - **Version drift**: `matches()` on argv0 basename `pi` can't tell whether an
@@ -127,6 +133,18 @@ const SESSION_SELECTION_FLAGS: &[&str] = &[
 const RESUME_CONFLICT_FLAGS: &[&str] =
     &["--session", "--continue", "-c", "--resume", "-r", "--fork"];
 
+/// `--continue`/`-c` — pi's own "most recent session in this cwd" flag. Unlike every
+/// other member of [`SESSION_SELECTION_FLAGS`], `prepare_spawn` does not fully no-op
+/// when one of these is present: `-e <path>` is documented as "repeatable/
+/// always-safe to add" regardless of what else is on the command line (the module
+/// doc's opening paragraph) — the only thing that must never be added on top of an
+/// already-pinned session-selection mechanism is `--session-id`, which these two
+/// flags never carry anyway. Hooks are re-wired the same way Claude's `RESUME_FLAGS`
+/// re-inject `--settings` without `--session-id`; see
+/// [`fallback_resume_command`](HarnessAdapter::fallback_resume_command), whose output
+/// (`pi -c ...` / `pi --continue ...`) is exactly what this exists to keep hooked up.
+const CONTINUE_FLAGS: &[&str] = &["--continue", "-c"];
+
 /// `pi`'s own subcommands (verified via `pi --help`, 0.85.1: `install`, `remove`,
 /// `uninstall`, `update`, `list`, `config`, `auth`). Each one is dispatched by
 /// `main.js` matching `args[0]` *before* pi's normal chat-session argument parser
@@ -183,6 +201,25 @@ impl HarnessAdapter for PiAdapter {
         }
 
         if has_flag(&tokens, SESSION_SELECTION_FLAGS) {
+            if has_flag(&tokens, CONTINUE_FLAGS) {
+                // `--continue`/`-c` still gets `-e <path>` wired — see CONTINUE_FLAGS'
+                // doc comment for why this one case doesn't fully no-op.
+                info!(
+                    session = %ctx.session_name,
+                    "pi adapter: command continues the most recent session, re-wiring hooks without a preset id"
+                );
+                return match rewrite_spawn_hooks_only(ctx, tokens, pi_idx) {
+                    Ok(plan) => Ok(plan),
+                    Err(error) => {
+                        warn!(
+                            session = %ctx.session_name,
+                            %error,
+                            "pi adapter: failed to prepare spawn, spawning unchanged"
+                        );
+                        Ok(SpawnPlan::unchanged(ctx.command))
+                    }
+                };
+            }
             info!(
                 session = %ctx.session_name,
                 "pi adapter: command already pins session selection via another flag, spawning unchanged"
@@ -216,6 +253,26 @@ impl HarnessAdapter for PiAdapter {
             (pi_idx + 1)..=pi_idx,
             ["--session-id".to_owned(), harness_session_id.to_owned()],
         );
+        Some(shell_words::join(&tokens))
+    }
+
+    /// `pi -c`/`pi --continue` — pi's own "most recent session in this cwd" flag,
+    /// used when no `harness_session_id` is known at all (a legacy row, or a
+    /// user-supplied session-selection flag that made `prepare_spawn` a full no-op
+    /// at spawn time). `None` when any of [`RESUME_CONFLICT_FLAGS`] is already
+    /// present — same conflict set [`resume_command`](HarnessAdapter::resume_command)
+    /// refuses, since forcing `--continue` on top of one of those is exactly the
+    /// combination pi itself rejects.
+    fn fallback_resume_command(&self, original_command: &str) -> Option<String> {
+        let mut tokens = shell_words::split(original_command).ok()?;
+        let pi_idx = pi_token_index(&tokens)?;
+
+        if has_flag(&tokens, RESUME_CONFLICT_FLAGS) {
+            return None;
+        }
+
+        strip_flag_with_value(&mut tokens, "--session-id");
+        tokens.splice((pi_idx + 1)..=pi_idx, ["--continue".to_owned()]);
         Some(shell_words::join(&tokens))
     }
 
@@ -328,6 +385,34 @@ fn rewrite_spawn(ctx: &SpawnContext, mut tokens: Vec<String>, pi_idx: usize) -> 
         env: Vec::new(),
         files: vec![ext_path],
         harness_session_id,
+    })
+}
+
+/// The fallible part of `prepare_spawn`'s `--continue`/`-c` special case (see
+/// [`CONTINUE_FLAGS`]): write the extension file and splice in `-e <path>` only,
+/// leaving every existing token — `--continue`/`-c` included — exactly as the caller
+/// passed it. Never touches `--session-id`: pi has no way to know up front which
+/// session `--continue` will actually reopen, so no id is minted or reported.
+/// Isolated so the caller can catch any I/O error and fall back to the unchanged
+/// command instead of failing the spawn.
+fn rewrite_spawn_hooks_only(
+    ctx: &SpawnContext,
+    mut tokens: Vec<String>,
+    pi_idx: usize,
+) -> Result<SpawnPlan> {
+    let harness_dir = ctx.data_dir.join("harness").join(ctx.session_id);
+    std::fs::create_dir_all(&harness_dir)?;
+    let ext_path = harness_dir.join("pulpo.ts");
+    let pulpo_bin = resolve_pulpo_bin();
+    std::fs::write(&ext_path, render_extension(&pulpo_bin))?;
+    let ext_arg = ext_path.to_string_lossy().into_owned();
+    tokens.splice((pi_idx + 1)..=pi_idx, ["-e".to_owned(), ext_arg]);
+
+    Ok(SpawnPlan {
+        command: shell_words::join(&tokens),
+        env: Vec::new(),
+        files: vec![ext_path],
+        harness_session_id: None,
     })
 }
 
@@ -642,11 +727,12 @@ mod tests {
 
     #[test]
     fn test_prepare_spawn_skips_for_each_session_selection_flag() {
+        // `--continue`/`-c` are deliberately excluded from this table — see
+        // `test_prepare_spawn_continue_flag_rewires_hooks_without_session_id` below
+        // for why those two get hooks wired instead of a full no-op.
         let tmp = tempfile::tempdir().unwrap();
         for command in [
             "pi --session /tmp/x.jsonl",
-            "pi --continue",
-            "pi -c",
             "pi --resume",
             "pi -r",
             "pi --fork abc",
@@ -657,6 +743,39 @@ mod tests {
             assert!(plan.harness_session_id.is_none());
             assert!(plan.files.is_empty());
         }
+    }
+
+    #[test]
+    fn test_prepare_spawn_continue_flag_rewires_hooks_without_session_id() {
+        // `--continue`/`-c` never carry `--session-id`, and `-e` is documented as
+        // always safe to add regardless of other flags — so unlike every other
+        // SESSION_SELECTION_FLAGS member, these two still get hooks wired. This is
+        // exactly the shape `fallback_resume_command`'s output needs to reach
+        // through prepare_spawn intact.
+        let tmp = tempfile::tempdir().unwrap();
+        for command in ["pi --continue", "pi -c"] {
+            let plan = PiAdapter.prepare_spawn(&ctx(tmp.path(), command)).unwrap();
+            assert!(
+                plan.harness_session_id.is_none(),
+                "no id known for {command:?}"
+            );
+            let tokens = shell_words::split(&plan.command).unwrap();
+            assert_eq!(tokens[0], "pi");
+            assert_eq!(tokens[1], "-e");
+            assert!(!tokens.contains(&"--session-id".to_owned()));
+            assert_eq!(plan.files.len(), 1);
+            assert!(plan.files[0].exists());
+        }
+    }
+
+    #[test]
+    fn test_prepare_spawn_continue_flag_preserves_other_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "pi --continue --model x"))
+            .unwrap();
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(&tokens[3..], ["--continue", "--model", "x"]);
     }
 
     #[test]
@@ -867,6 +986,86 @@ mod tests {
                 .resume_command("pi --no-session", "sid-1")
                 .is_some()
         );
+    }
+
+    // -- fallback_resume_command --
+
+    #[test]
+    fn test_fallback_resume_command_plain() {
+        let cmd = PiAdapter.fallback_resume_command("pi").unwrap();
+        assert_eq!(cmd, "pi --continue");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_preserves_other_args() {
+        let cmd = PiAdapter.fallback_resume_command("pi --model x").unwrap();
+        assert_eq!(cmd, "pi --continue --model x");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_existing_session_id() {
+        let cmd = PiAdapter
+            .fallback_resume_command("pi --session-id old-sid --model x")
+            .unwrap();
+        assert_eq!(cmd, "pi --continue --model x");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_preserves_env_prefix() {
+        let cmd = PiAdapter
+            .fallback_resume_command("env FOO=bar pi -p hi")
+            .unwrap();
+        let tokens = shell_words::split(&cmd).unwrap();
+        assert_eq!(tokens, ["env", "FOO=bar", "pi", "--continue", "-p", "hi"]);
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_conflicting_flag_present() {
+        for command in [
+            "pi --session /tmp/x.jsonl",
+            "pi --continue",
+            "pi -c",
+            "pi --resume",
+            "pi -r",
+            "pi --fork abc",
+        ] {
+            assert!(
+                PiAdapter.fallback_resume_command(command).is_none(),
+                "expected None for {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_not_pi() {
+        assert!(PiAdapter.fallback_resume_command("bash").is_none());
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_unparseable() {
+        assert!(
+            PiAdapter
+                .fallback_resume_command("pi \"unterminated")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_then_prepare_spawn_wires_hooks() {
+        // The end-to-end shape `resolve_resume_command` produces: fallback_resume_command's
+        // output run back through prepare_spawn must add -e without ever minting a
+        // --session-id.
+        let tmp = tempfile::tempdir().unwrap();
+        let fallback = PiAdapter.fallback_resume_command("pi -p hi").unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), &fallback))
+            .unwrap();
+        assert!(plan.harness_session_id.is_none());
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(tokens[0], "pi");
+        assert_eq!(tokens[1], "-e");
+        assert!(!tokens.contains(&"--session-id".to_owned()));
+        assert!(tokens.contains(&"--continue".to_owned()));
     }
 
     // -- parse_event --

@@ -228,6 +228,25 @@ pub trait HarnessAdapter: Send + Sync {
     /// is known / unsupported.
     fn resume_command(&self, original_command: &str, harness_session_id: &str) -> Option<String>;
 
+    /// A resume command that continues the harness's own most-recently-active
+    /// conversation, without needing to know its `harness_session_id` at all.
+    ///
+    /// Used by `session::manager::resolve_resume_command` when a session has an
+    /// adapter but no known harness session id — a legacy row from before this
+    /// session learned its id, a hook that never fired, or a user-supplied
+    /// `--session-id`/identity flag that made `prepare_spawn` no-op at spawn time.
+    /// Re-running the *original* command as a fresh conversation would silently
+    /// lose history in that case; a "most recent conversation here" flag
+    /// (`claude --continue`, `codex resume --last`, `pi -c`) preserves it instead.
+    ///
+    /// Distinct from [`resume_command`](HarnessAdapter::resume_command), which
+    /// resumes an exact, previously-learned id. Returns `None` when the adapter has
+    /// no such fallback, or the command conflicts with it — the caller then falls
+    /// back to the plain original command, same as it always has.
+    fn fallback_resume_command(&self, _original_command: &str) -> Option<String> {
+        None
+    }
+
     /// Translate a raw hook payload (as posted by `pulpo hook <harness>`) into a
     /// normalized event. Returns `Ok(None)` for events pulpo does not care about.
     fn parse_event(&self, raw: &serde_json::Value) -> Result<Option<HarnessEvent>>;
@@ -408,6 +427,18 @@ mod tests {
         let json = serde_json::to_string(&reason).unwrap();
         let back: NeedsInputReason = serde_json::from_str(&json).unwrap();
         assert_eq!(back, reason);
+    }
+
+    #[test]
+    fn test_fallback_resume_command_default_is_none() {
+        // GenericAdapter doesn't override it — the trait default applies, and a
+        // legacy/harness-less session keeps falling back to the plain original
+        // command exactly as it did before this method existed.
+        assert!(
+            generic::GenericAdapter
+                .fallback_resume_command("bash")
+                .is_none()
+        );
     }
 
     #[test]

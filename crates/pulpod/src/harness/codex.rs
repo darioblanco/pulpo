@@ -639,6 +639,30 @@ impl HarnessAdapter for CodexAdapter {
         Some(shell_words::join(&tokens))
     }
 
+    /// `codex resume --last` — Codex's own "most recent thread in this isolated
+    /// `CODEX_HOME`" resume shape, used when no `harness_session_id` is known at all
+    /// (the `SessionStart` hook never fired). Strips any existing `resume <target>`
+    /// and trailing positional prompt exactly as
+    /// [`resume_command`](HarnessAdapter::resume_command) does, then inserts
+    /// `resume --last` instead of `resume <id>`. Complements (does not replace) the
+    /// rollout-discovery fallback in [`rewrite_spawn`], which reaches the same
+    /// `resume --last` shape automatically when `resolve_resume_command` instead
+    /// replays the plain original command against an isolated `CODEX_HOME` that
+    /// already has a rollout on disk; this explicit path also covers the (rarer)
+    /// case where the adapter is asked to resume before `prepare_spawn` runs again.
+    fn fallback_resume_command(&self, original_command: &str) -> Option<String> {
+        let mut tokens = shell_words::split(original_command).ok()?;
+        let codex_idx = codex_token_index(&tokens)?;
+        let resume_idx = resume_subcommand_index(&tokens, codex_idx);
+        strip_existing_resume(&mut tokens, resume_idx);
+        strip_trailing_positionals(&mut tokens, resume_idx);
+        tokens.splice(
+            resume_idx..resume_idx,
+            ["resume".to_owned(), "--last".to_owned()],
+        );
+        Some(shell_words::join(&tokens))
+    }
+
     fn parse_event(&self, raw: &Value) -> Result<Option<HarnessEvent>> {
         if let Some(hook_event_name) = raw.get("hook_event_name").and_then(Value::as_str) {
             return Ok(parse_hook_event(raw, hook_event_name));
@@ -1229,6 +1253,95 @@ mod tests {
             .resume_command("codex exec -m gpt-5-codex 'fix the bug'", "sid-1")
             .unwrap();
         assert_eq!(cmd, "codex exec resume sid-1 -m gpt-5-codex");
+    }
+
+    // -- fallback_resume_command --
+
+    #[test]
+    fn test_fallback_resume_command_plain_strips_trailing_prompt() {
+        let cmd = CodexAdapter
+            .fallback_resume_command("codex -m gpt-5-codex 'fix'")
+            .unwrap();
+        assert_eq!(cmd, "codex resume --last -m gpt-5-codex");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_existing_resume() {
+        let cmd = CodexAdapter
+            .fallback_resume_command("codex resume old-sid -p hi")
+            .unwrap();
+        assert_eq!(cmd, "codex resume --last -p hi");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_exec_nests_after_exec() {
+        let cmd = CodexAdapter
+            .fallback_resume_command("codex exec 'fix the bug'")
+            .unwrap();
+        assert_eq!(cmd, "codex exec resume --last");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_preserves_env_prefix() {
+        let cmd = CodexAdapter
+            .fallback_resume_command("env FOO=bar codex -p hi")
+            .unwrap();
+        let tokens = shell_words::split(&cmd).unwrap();
+        assert_eq!(
+            tokens,
+            ["env", "FOO=bar", "codex", "resume", "--last", "-p", "hi"]
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_not_codex() {
+        assert!(CodexAdapter.fallback_resume_command("bash").is_none());
+    }
+
+    #[test]
+    fn test_fallback_resume_command_none_when_unparseable() {
+        assert!(
+            CodexAdapter
+                .fallback_resume_command("codex \"unterminated")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_fallback_resume_command_then_prepare_spawn_reuses_codex_home_and_adds_bypass() {
+        // End-to-end shape `resolve_resume_command` produces: the isolated codex-home
+        // dir already exists from the original spawn (prepare_spawn always creates
+        // it), so running fallback_resume_command's output back through
+        // prepare_spawn must reuse that same directory and add the bypass flag,
+        // without re-triggering the rollout-discovery branch (already resumed
+        // explicitly with --last).
+        let tmp = tempfile::tempdir().unwrap();
+        let real_home = tempfile::tempdir().unwrap();
+        let _guard = set_test_real_home(real_home.path());
+        let codex_home = tmp
+            .path()
+            .join("harness")
+            .join("22222222-2222-2222-2222-222222222222")
+            .join("codex-home");
+        std::fs::create_dir_all(&codex_home).unwrap();
+
+        let fallback = CodexAdapter.fallback_resume_command("codex -p hi").unwrap();
+        let plan = CodexAdapter
+            .prepare_spawn(&ctx(tmp.path(), &fallback))
+            .unwrap();
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(
+            tokens,
+            [
+                "codex",
+                "--dangerously-bypass-hook-trust",
+                "resume",
+                "--last",
+                "-p",
+                "hi",
+            ]
+        );
+        assert_eq!(plan.env[0].1, codex_home.to_string_lossy());
     }
 
     #[test]

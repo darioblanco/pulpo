@@ -89,17 +89,18 @@ lint-web:
 test: test-rust test-web
 
 # `pulpo-e2e` is excluded here: it's the end-to-end scenario suite (see `make e2e`
-# below), not unit tests — its tests need pulpod/pulpo/fake-claude already built at
-# fixed paths (see crates/pulpo-e2e/src/lib.rs::debug_bin) and boot real tmux
-# servers, which `cargo test --workspace` callers (this target, the pre-commit hook,
-# CI's fast `test`/`coverage` jobs) should never be surprised by.
+# below), not unit tests — its tests need pulpod/pulpo/fake-claude/fake-codex/fake-pi
+# already built at fixed paths (see crates/pulpo-e2e/src/lib.rs::debug_bin) and boot
+# real tmux servers, which `cargo test --workspace` callers (this target, the
+# pre-commit hook, CI's fast `test`/`coverage` jobs) should never be surprised by.
 test-rust:
 	cargo test --workspace --exclude pulpo-e2e
 
 # End-to-end scenario suite: a real pulpod + a real (private) tmux server + a fake
-# harness standing in for Claude Code, driven through the real pulpo CLI and HTTP
-# API — no mocks. See crates/pulpo-e2e (the harness + fake-claude binary) and
-# crates/pulpo-e2e/tests/scenarios.rs (the scenarios) for what this covers, and
+# harness standing in for Claude Code/Codex/pi, driven through the real pulpo CLI and
+# HTTP API — no mocks. See crates/pulpo-e2e (the harness + fake-claude/fake-codex/
+# fake-pi binaries) and crates/pulpo-e2e/tests/scenarios.rs (the scenarios) for what
+# this covers, and
 # CLAUDE.md's testing section for the strategy. Not part of `make ci`/the pre-commit
 # hook (too slow — the full suite takes roughly a minute, dominated by a schedule
 # test that has to wait for a real minute boundary) — it runs in its own CI job and

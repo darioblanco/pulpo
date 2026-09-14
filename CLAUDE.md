@@ -83,25 +83,46 @@ it's a second, different kind of test for a different job:
   the scenario suite is for.
 
 **The scenario suite** (`crates/pulpo-e2e/`): a dev-only workspace member, never
-part of a release build. `src/bin/fake-claude.rs` is a small binary that imitates
-Claude Code's CLI surface exactly as far as pulpo's adapter uses it
-(`--session-id`, `--settings`, `-p`, `--resume`, `--model`; unknown flags ignored)
-— scripted entirely by the `FAKE_AGENT_SCENARIO` env var (or a
-`pulpo-fake-scenario.txt` file in the session's workdir, read fresh by every
-process so a test can change behavior across a resume): `start`, `prompt`,
-`needs_input`, `wait` (blocks on stdin — `pulpo input` unblocks it),
-`stop`, `spend:<usd>` (writes a real Claude-shaped transcript file so the budget
-breaker has real data to read), `exit`/`exit:<code>`, `hang`. It reads its own
-`--settings` file and fires the same hook commands (`pulpo hook claude`, piped the
-same JSON shape Claude Code sends) that a real session would. `src/lib.rs` is the
-harness: boots an isolated `pulpod` (its own `HOME`, data dir, config, free port,
-private tmux server via `TMUX_TMPDIR`) and exposes `spawn`/`wait_status`/`session`/
-`stop`/`resume`/`input`/`restart_daemon`/`kill_tmux_server`/`cleanup`. Designed so
-adding `fake-codex`/`fake-pi` later is one more `src/bin/*.rs` file, not a new
-harness.
+part of a release build. `src/bin/fake-claude.rs`/`fake-codex.rs`/`fake-pi.rs` are
+small binaries that imitate each harness's CLI/hook surface exactly as far as
+pulpo's adapter uses it, scripted entirely by the `FAKE_AGENT_SCENARIO` env var (or
+a `pulpo-fake-scenario.txt` file in the session's workdir, read fresh by every
+process so a test can change behavior across a resume) — the shared step
+vocabulary: `start`, `prompt`, `needs_input`, `wait` (blocks on stdin — `pulpo
+input` unblocks it), `stop`, `exit`/`exit:<code>`, `hang`; `fake-claude` also has
+`spend:<usd>` (writes a real Claude-shaped transcript file so the budget breaker has
+real data to read). Each fake reads its own generated hook config exactly the way
+its real harness would and fires the same hook commands the daemon's adapter wired
+up, piped the same JSON shape:
+- `fake-claude` (`--session-id`, `--settings`, `-p`, `--resume`, `--model`; unknown
+  flags ignored): reads its `--settings` JSON and fires `pulpo hook claude`.
+- `fake-codex` (`--dangerously-bypass-hook-trust`, `resume <id>`/`resume --last`,
+  `exec`, `-m`/`--model`, a positional prompt): honors `CODEX_HOME`, reads its
+  `config.toml`'s `notify`/`[[hooks.<Event>]]` entries, verifies `auth.json` and the
+  adapter's symlinked real-home entries actually resolve (written to
+  `pulpo-fake-codex-env.json`), fires `pulpo hook codex --event <Name>` on stdin and
+  the `notify` program with its JSON as the *last argv element* (not stdin, matching
+  Codex's real delivery), and writes a real rollout file under
+  `$CODEX_HOME/sessions/YYYY/MM/DD/` so `pulpo usage` has real Codex data to read.
+- `fake-pi` (`--session-id`, `-e`, `-p`, `-c`, `--model`): can't run the generated
+  TypeScript extension, so it reads the file to confirm it exists and parses the
+  `PULPO_BIN` path out of it, then emits the same events the extension would by
+  spawning `pulpo hook pi --event <name>` itself; `--session-id` is idempotent
+  create-or-open (reopens the session file already on disk under
+  `$HOME/.pi/agent/sessions/<cwd-mangled>/` for that id, or creates one), and it
+  exits 1 when `--session-id` is combined with `-c`/`-r`/`--session`/`--fork`,
+  matching real pi.
 
-**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 13 `#[test]` functions across
-12 numbered scenarios — S7 covers two: an idle-timeout kill and a
+`src/lib.rs` is the harness: boots an isolated `pulpod` (its own `HOME`, data dir,
+config, free port, private tmux server via `TMUX_TMPDIR`), stages every fake binary
+under a temp `bin/` dir named exactly like the real CLI it imitates (`claude`/
+`codex`/`pi` — `HarnessRegistry` matches by argv0 basename), and exposes
+`spawn`/`wait_status`/`session`/`stop`/`resume`/`input`/`restart_daemon`/
+`kill_tmux_server`/`cleanup`/`fake_bin(harness)` (plus `fake_claude_bin`/
+`fake_codex_bin`/`fake_pi_bin` shorthands).
+
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 16 `#[test]` functions across
+15 numbered scenarios — S7 covers two: an idle-timeout kill and a
 `--idle-threshold 0` override): S1 spawn
 reaches Active with harness metadata; S2 a permission prompt sets `needs_input` and
 `pulpo input` resolves it; S3 a clean exit resolves through Ready then Stopped and
@@ -123,22 +144,45 @@ test for the v0.3.0 `command.join(" ")` quoting bug); the same fix on the
 `schedule add` path is covered by a `pulpo-cli` unit test asserting the stored
 `command` string round-trips, rather than a second slow (cron-minute-boundary) e2e
 wait — S8 already proves a schedule's fired session goes through the identical spawn
-path S12 exercises.
+path S12 exercises. S14 drives `fake-codex` through spawn (Active, `harness ==
+"codex"`), the first hook learning `harness_session_id`, a permission prompt
+(`needs_input`), a clean exit, and `pulpo resume` reaching the fake as `codex
+resume <id> ...` inside the *same* isolated `CODEX_HOME` — and that `pulpo usage
+--scan` counts the fake's own rollout file. S15 is the pi equivalent, additionally
+proving `--session-id` idempotency: the resume command has the identical shape as
+the original spawn (`pi --session-id <id> -e <path> ...`), and the fake reopens the
+same on-disk session file rather than minting a new one. S16 covers the resume
+*fallback* (see below) end to end for Codex: a scenario that never fires
+`SessionStart` (hooks "disabled") leaves `harness_session_id` unknown even after a
+clean exit, and `pulpo resume` still reaches the fake as `codex ...
+--dangerously-bypass-hook-trust resume --last ...` — the harness's own "most recent
+conversation here" flag — rather than silently starting a fresh thread.
 
-**Running it**: `make e2e` (builds `pulpod`/`pulpo`/`fake-claude` first, then runs
-the suite serially — `cargo test -p pulpo-e2e -- --test-threads=1`; each test boots
-its own daemon and tmux server, and running several of those concurrently on a
-laptop is exactly the kind of flakiness this strategy moved away from). Needs
-`tmux`. Not part of `make ci`/the pre-commit hook — the full suite takes roughly a
-minute (S8 has to wait for a real cron minute boundary) — it has its own CI job
-(`e2e`, independent of `coverage`) and is meant to be run manually before a PR that
-touches session/watchdog/harness/schedule behavior.
+**Running it**: `make e2e` (builds `pulpod`/`pulpo`/every `fake-*` binary first,
+then runs the suite serially — `cargo test -p pulpo-e2e -- --test-threads=1`; each
+test boots its own daemon and tmux server, and running several of those
+concurrently on a laptop is exactly the kind of flakiness this strategy moved away
+from). Needs `tmux`. Not part of `make ci`/the pre-commit hook — the full suite
+takes a bit over a minute (S8 has to wait for a real cron minute boundary) — it has
+its own CI job (`e2e`, independent of `coverage`) and is meant to be run manually
+before a PR that touches session/watchdog/harness/schedule behavior.
 
-**Adding a scenario**: pick (or add) a `FAKE_AGENT_SCENARIO` step in
-`fake-claude.rs` if the existing vocabulary doesn't cover the behavior you're
-proving, add a `#[test]` in `scenarios.rs` using the `Daemon` harness in `src/lib.rs`,
-and assert on real daemon state (`daemon.session(name)`/`wait_status`/
-`wait_for`) — never on an internal function call sequence.
+**Adding a scenario**: pick (or add) a step in the shared `FAKE_AGENT_SCENARIO`
+vocabulary (`fake-claude.rs`/`fake-codex.rs`/`fake-pi.rs`) if the existing steps
+don't cover the behavior you're proving, add a `#[test]` in `scenarios.rs` using the
+`Daemon` harness in `src/lib.rs`, and assert on real daemon state
+(`daemon.session(name)`/`wait_status`/`wait_for`) — never on an internal function
+call sequence.
+
+**Fake harnesses are unverified against the real CLIs.** `fake-claude` imitates
+behavior verified against a real Claude Code v2.1.266 binary (see
+`docs/architecture/harness-adapters.md`); `fake-codex`/`fake-pi` imitate the *Codex*
+and *pi* adapters' own documented/researched behavior, but neither fake has been
+run against a real `codex`/`pi` installation — they prove the daemon side (spawn
+rewrite → hook ingestion → state transition → resume) is internally consistent and
+matches the adapters' own contract, not that a real Codex/pi binary actually speaks
+that contract. Treat S14-S16 passing as "the adapter does what its own
+documentation says," not as field verification.
 
 - **Rust**: `cargo test --workspace --exclude pulpo-e2e` for unit tests (pulpo-e2e
   needs pre-built binaries and a tmux server — see `make e2e` above). Tests live
@@ -298,7 +342,7 @@ describe('api', () => {
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
 - **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/utils.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
 - **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
-- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. `idle_timeout` and the budget-cap fields always apply regardless of harness ownership. See `docs/architecture/harness-adapters.md`.
+- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, exercised against fake harnesses in the e2e suite — see `CLAUDE.md`'s Testing section — but still unverified against a real Codex/pi process). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. `idle_timeout` and the budget-cap fields always apply regardless of harness ownership. **Resume fallback**: when a session has an adapter but no known `harness_session_id` (a legacy row, or a hook/rollout that never reported one), `resolve_resume_command` uses `HarnessAdapter::fallback_resume_command` — the harness's own "most recent conversation here" flag (`claude --continue`, `codex resume --last`, `pi -c`) — instead of silently replaying the original command as a fresh conversation. See `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
@@ -454,8 +498,10 @@ pulpo/
 │   └── pulpo-e2e/                # End-to-end scenario suite (dev-only, never released)
 │       ├── src/
 │       │   ├── bin/fake-claude.rs # Fake Claude Code CLI/hook surface (FAKE_AGENT_SCENARIO-driven)
+│       │   ├── bin/fake-codex.rs # Fake Codex CLI/hook/notify surface (isolated CODEX_HOME, rollout files)
+│       │   ├── bin/fake-pi.rs    # Fake pi CLI surface (--session-id idempotency, pulpo hook pi --event)
 │       │   └── lib.rs            # Scenario harness: boots an isolated pulpod + private tmux server
-│       └── tests/scenarios.rs    # S1-S11: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, ...
+│       └── tests/scenarios.rs    # S1-S12, S14-S16: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, Codex/pi, resume fallbacks, ...
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars

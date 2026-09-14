@@ -27,6 +27,7 @@ pub trait HarnessAdapter: Send + Sync {
     fn matches(&self, argv0: &str) -> bool;
     fn prepare_spawn(&self, ctx: &SpawnContext) -> Result<SpawnPlan>;
     fn resume_command(&self, original_command: &str, harness_session_id: &str) -> Option<String>;
+    fn fallback_resume_command(&self, original_command: &str) -> Option<String> { None } // default impl
     fn parse_event(&self, raw: &serde_json::Value) -> Result<Option<HarnessEvent>>;
     fn emits_events(&self) -> bool;
     fn owned_signals(&self) -> HarnessSignals { HarnessSignals::all() } // default impl
@@ -41,6 +42,11 @@ pub trait HarnessAdapter: Send + Sync {
 - **`resume_command`** — given the original command and the harness's own session id,
   produce a command that resumes that exact conversation. `None` if the adapter has
   no resume support or no id is known yet.
+- **`fallback_resume_command`** — given the original command *without* a known
+  harness session id, produce a command that continues the harness's own
+  most-recently-active conversation instead (see [Resume fallback](#resume-fallback)
+  below). Defaults to `None` (no such mechanism) — every adapter except `generic`
+  overrides it.
 - **`parse_event`** — translate one raw hook payload into a [`HarnessEvent`]:
 
   ```rust
@@ -388,6 +394,54 @@ together with the rest of that session's harness dir.
 > `codex-notify` handler both check `thread_id`/`thread-id` and
 > `last_assistant_message`/`last-assistant-message`.
 
+## Resume fallback
+
+`resolve_resume_command` (`session/manager.rs`) prefers `resume_command` whenever a
+session has a known `harness_session_id`. When it doesn't — a legacy row from before
+this session learned its id, a `SessionStart` hook (Claude/Codex) that never fired,
+or a user-supplied identity flag that made `prepare_spawn` a full no-op at spawn time
+(e.g. `claude --session-id <mine>`) — it falls back to
+`HarnessAdapter::fallback_resume_command`, the harness's own "most recent
+conversation in this directory" mechanism, before finally falling back further to the
+plain original command (a fresh conversation) if the adapter has neither:
+
+- **Claude**: `claude --continue` — strips the same pulpo-inserted/conflicting flags
+  `resume_command` does, then inserts a bare `--continue` instead of `--resume <id>`.
+  Run back through `prepare_spawn`, this re-injects `--settings` (hooks stay wired)
+  without ever adding `--session-id` — the same no-op-on-`--continue` path
+  `resume_command`'s own output already takes.
+- **Codex**: `codex resume --last` — strips any existing `resume <target>`/trailing
+  positional prompt exactly like `resume_command`, then inserts `resume --last`
+  instead of `resume <id>`. This is Codex's own by-file-position resume, safe here
+  specifically because `CODEX_HOME` is isolated per pulpo session — `--last` can only
+  resolve to this session's own prior thread. Complements (doesn't replace) the
+  rollout-discovery fallback already inside `CodexAdapter::prepare_spawn` (see above),
+  which reaches the same `resume --last` shape automatically when
+  `resolve_resume_command` instead replays the plain original command against an
+  isolated `CODEX_HOME` that already has a rollout file on disk from an earlier spawn.
+- **pi**: `pi -c` (space-separated `--continue`) — strips any existing
+  `--session-id` first, then inserts `--continue`. `None` when the original command
+  already carries one of pi's own resume-conflict flags (`--session`, `--continue`/
+  `-c`, `--resume`/`-r`, `--fork`) — the same conflict set `resume_command` refuses,
+  since forcing `--continue` on top of one of those is exactly what pi itself
+  rejects.
+
+  Getting hooks wired on this path needed one adapter fix: `PiAdapter::prepare_spawn`
+  used to fully no-op (no `-e`, no hooks) for *every* member of
+  `SESSION_SELECTION_FLAGS`, `--continue`/`-c` included — correct for flags that
+  would conflict with pulpo minting a fresh `--session-id` (`--session`, `--resume`/
+  `-r`, `--fork`, `--no-session`), but not for `-e`: the module's own contract says
+  `-e <path>` is "repeatable/always-safe to add" regardless of what else is on the
+  command line, since it only loads an extension and never selects a session. So
+  `--continue`/`-c` now gets the same treatment Claude's `RESUME_FLAGS` already had
+  (re-inject hooks, skip the identity flag) instead of a full no-op — without this,
+  `fallback_resume_command`'s whole point (keep events flowing across a resume with
+  no known id) would silently lose hooks the moment it actually mattered.
+
+`prepare_spawn` always runs again on `fallback_resume_command`'s output — same as it
+does for `resume_command` — so hooks get re-injected on top regardless of which path
+produced the base command.
+
 ## Event ingestion
 
 `POST /api/v1/sessions/{id}/harness-events` (see the [API reference](/reference/api))
@@ -488,3 +542,19 @@ part of this change.
 Exact rate-limit/error detection for Codex sessions is still heuristic (scrollback
 scraping) rather than hook-driven, since Codex has no such hook today — see the
 Codex adapter section above and [Watchdog bypass](#watchdog-bypass).
+
+**Verified with fake harnesses, not with real Codex/pi processes.** `crates/pulpo-e2e`
+gained `fake-codex`/`fake-pi` (S14-S16 in `tests/scenarios.rs`, alongside the
+long-standing `fake-claude`): small binaries that imitate each CLI's flag surface and
+hook/notify delivery mechanics *as documented in this file* — honoring `CODEX_HOME`,
+reading the generated `config.toml`/`pulpo.ts` extension, firing hooks with the
+documented JSON shapes, and (for Codex) writing real rollout files `pulpo usage`
+reads. Passing S14-S16 proves the daemon's own spawn-rewrite → hook-ingestion →
+state-transition → resume pipeline is internally consistent with the Codex/pi
+adapters' own contract — it does **not** prove a real installed `codex`/`pi` binary
+actually behaves the way that contract assumes. The "UNVERIFIED"/"unverified in the
+field" caveats scattered through the Codex/pi sections above (exact hook payload
+field names, `--dangerously-bypass-hook-trust`'s TUI-prompt behavior, `codex exec
+resume`'s shape, pi's flag-conflict exit codes and event-ordering fix) still stand
+until someone runs pulpo against a real Codex/pi installation and confirms them —
+that verification work is unchanged by adding these fakes.
