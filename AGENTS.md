@@ -56,7 +56,7 @@ deliberately not planned. In priority order for live work:
    there before proposing new scope, and check [docs/adr/](docs/adr/README.md) for
    whether a related decision has already been made (e.g. the five-state session model
    in ADR [0009](docs/adr/0009-five-state-session-model.md) is accepted and now
-   implemented — see PR_NUMBER_PLACEHOLDER).
+   implemented — see [#129](https://github.com/darioblanco/pulpo/pull/129)).
 
 **Do NOT build:** mDNS/seed discovery, Tailscale peer discovery or a peer registry
 (`bind = "tailscale"` stays for transport only), an MCP server, a Kubernetes backend,

@@ -1,6 +1,6 @@
 # 0009. Five-state session model: starting / working / waiting / done / lost
 
-- **Status:** Accepted — Implemented (PR_NUMBER_PLACEHOLDER)
+- **Status:** Accepted — Implemented (#129)
 - **Date:** 2026-09-14
 
 ## Context

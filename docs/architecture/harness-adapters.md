@@ -580,7 +580,8 @@ core daemon code. The five-state `SessionStatus` rename (`starting` / `working` 
 `waiting` / `done` / `lost`, replacing the six-state `creating` / `active` / `idle` /
 `ready` / `stopped` / `lost` model and the overloaded `Idle` + `needs_input` metadata
 flag with a plain `status_reason` field) is no longer future work — it shipped per ADR
-[0009](../adr/0009-five-state-session-model.md), implemented in PR_NUMBER_PLACEHOLDER.
+[0009](../adr/0009-five-state-session-model.md), implemented in
+[#129](https://github.com/darioblanco/pulpo/pull/129).
 
 Exact rate-limit/error detection for Codex sessions is still heuristic (scrollback
 scraping) rather than hook-driven, since Codex has no such hook today — see the
