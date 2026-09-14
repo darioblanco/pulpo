@@ -198,6 +198,38 @@ fn push_quota_window(
     }
 }
 
+/// Read a session's exact usage from its own on-disk agent files and persist it
+/// (`session_cost_usd` + token counts) via [`store_exact_usage`] — the same
+/// persistence [`detect_and_store_output_metadata`] already runs on every watchdog
+/// tick for `Active`/`Idle` sessions.
+///
+/// Call this at every transition into `Ready` or `Stopped` too: the idle-sweep
+/// loop (`watchdog::idle::check_idle_sessions`) only ever visits `Active`/`Idle`
+/// sessions, so a session that reaches a terminal status (the exit-marker path in
+/// `watchdog::idle`, a harness's own `SessionEnded` event in
+/// `session::manager::apply_harness_event`, or an explicit `pulpo stop`) before the
+/// next tick would otherwise never get its final cost recorded — the bug this
+/// fixes (a real run ending with `session_cost_usd` still unset even though its
+/// transcript had the data all along).
+///
+/// Gated like [`crate::usage::read_exact_usage_for_session`] (the actual
+/// filesystem read this wraps) — untestable I/O under coverage, so this delegates
+/// to a no-op stub there. [`store_exact_usage`], the persistence half, stays
+/// coverage-included and is unit-tested directly with a synthetic `ExactUsage`.
+#[cfg(not(coverage))]
+pub(crate) async fn refresh_exact_usage(store: &Store, session: &Session) {
+    let exact_usage =
+        crate::usage::read_exact_usage_for_session(session, std::path::Path::new(store.data_dir()));
+    if let Some(exact) = exact_usage {
+        store_exact_usage(store, session, &exact).await;
+    }
+}
+
+/// No-op stub under coverage builds (no real filesystem access) — see
+/// [`crate::usage::read_exact_usage_for_session`]'s matching stub.
+#[cfg(coverage)]
+pub(crate) async fn refresh_exact_usage(_store: &Store, _session: &Session) {}
+
 /// Store exact usage read from the agent's own session files.
 ///
 /// Unlike scraped usage, these values are session-lifetime totals computed fresh on
@@ -328,6 +360,30 @@ mod tests {
         };
         store.insert_session(&session).await.unwrap();
         session
+    }
+
+    /// `refresh_exact_usage` — the shared helper `watchdog::idle`'s exit-marker path,
+    /// `session::manager::apply_harness_event`'s `SessionEnded` handling, and
+    /// `stop_session` all call at every transition into `Ready`/`Stopped` (see its
+    /// doc comment for why: the idle-sweep loop alone only ever revisits
+    /// `Active`/`Idle` sessions). A session whose command isn't agent-shaped (no
+    /// structured usage reader matches) is the deterministic, environment-independent
+    /// case: both the real reader and the `cfg(coverage)` stub must leave its
+    /// metadata untouched.
+    #[tokio::test]
+    async fn test_refresh_exact_usage_noop_for_non_agent_command() {
+        let store = test_store().await;
+        let session = insert_session(&store, "generic-cmd").await;
+
+        refresh_exact_usage(&store, &session).await;
+
+        let refreshed = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(refreshed.meta_str(meta::SESSION_COST_USD).is_none());
+        assert!(refreshed.meta_str(meta::TOTAL_INPUT_TOKENS).is_none());
     }
 
     #[test]

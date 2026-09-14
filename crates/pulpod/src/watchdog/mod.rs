@@ -15,6 +15,7 @@ use idle::{
     check_session_idle, handle_active_session, handle_idle_session, handle_session_ready,
     sweep_ready_exit_code,
 };
+pub(crate) use metadata::refresh_exact_usage;
 use metadata::{build_session_event, detect_and_store_output_metadata};
 pub use output_patterns::detect_waiting_for_input;
 use pulpo_common::event::PulpoEvent;

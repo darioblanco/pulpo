@@ -703,9 +703,33 @@ impl SessionManager {
         remove_session_log(self.store.data_dir(), &session_id);
         remove_exit_markers(self.store.data_dir(), &session_id);
         cleanup_harness_dir(self.store.data_dir(), &session_id);
+        self.store.delete_intervention_events(&session_id).await?;
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
+    }
+
+    /// Remove a session outright (`DELETE /api/v1/sessions/{id}`, `pulpo rm`):
+    /// purge its row, intervention events, exit markers, session log, and harness
+    /// dir via [`Self::purge_session`] — the same helper `stop_session(..., purge:
+    /// true)` uses. Only sessions not currently `Active`/`Idle` may be removed —
+    /// stop it first, same rule `pulpo cleanup`'s dead-session sweep already
+    /// follows implicitly (it only ever considers `Stopped`/`Lost` sessions).
+    pub async fn remove_session(&self, id: &str) -> Result<()> {
+        let session = self
+            .store
+            .get_session(id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {id}"))?;
+
+        if matches!(session.status, SessionStatus::Active | SessionStatus::Idle) {
+            bail!(
+                "session cannot be removed while status is {} — stop it first",
+                session.status
+            );
+        }
+
+        self.purge_session(&session).await
     }
 
     /// True when another (non-dead) session still references `worktree_path` — guards
@@ -868,6 +892,12 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         self.stop_session_backend(&session, &backend_id)?;
         self.mark_session_stopped(&mut session).await?;
+
+        // Same reasoning as the `SessionEnded` hook path above: an explicit `pulpo
+        // stop` is another transition into a terminal status the idle-sweep loop
+        // never revisits, so it's another place a session could otherwise keep
+        // reporting no final cost.
+        crate::watchdog::refresh_exact_usage(&self.store, &session).await;
 
         if purge {
             self.purge_session(&session).await?;
@@ -1275,6 +1305,16 @@ impl SessionManager {
                 .update_session_exit_code(&session_id_str, code)
                 .await?;
             session.exit_code = Some(code);
+        }
+
+        // A `SessionEnded` hook lands the session in `Ready` or `Stopped` (see
+        // `harness::transition_for_event`) — a terminal-ish status the watchdog's
+        // idle-sweep loop no longer visits for cost refreshes (it only ever checks
+        // `Active`/`Idle` sessions). Without this, a session whose harness reports
+        // it's done before the next watchdog tick would see its final
+        // `session_cost_usd` never recorded at all.
+        if matches!(event, harness::HarnessEvent::SessionEnded { .. }) {
+            crate::watchdog::refresh_exact_usage(&self.store, &session).await;
         }
 
         session.updated_at = Utc::now();

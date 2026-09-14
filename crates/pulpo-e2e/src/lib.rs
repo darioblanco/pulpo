@@ -497,6 +497,14 @@ impl Daemon {
         );
     }
 
+    /// `pulpo rm <name>` — purge a single session outright (row, intervention
+    /// events, exit markers, session log, harness dir). Unlike `stop`, this does
+    /// not assert success — callers exercising the 409 (active/idle) path need the
+    /// raw output.
+    pub fn remove(&self, name: &str) -> std::process::Output {
+        self.pulpo(&["rm", name])
+    }
+
     /// `pulpo resume <name>`. The CLI always tries to auto-attach afterwards, which
     /// fails fast with no controlling terminal — the resume itself already
     /// happened server-side by the time that attach attempt runs, so the process's

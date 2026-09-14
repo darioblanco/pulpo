@@ -50,6 +50,21 @@ pub async fn get(
     }
 }
 
+/// `DELETE /api/v1/sessions/{id}` — remove a session outright (`pulpo rm`).
+///
+/// Only sessions not currently `Active`/`Idle` may be removed (409 otherwise);
+/// removal purges the session row, its intervention events, exit markers, session
+/// log, and harness dir — see `SessionManager::remove_session`.
+pub async fn remove(
+    State(state): State<Arc<super::AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    match state.session_manager.remove_session(&id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => Err(map_manager_err(&e)),
+    }
+}
+
 pub async fn create(
     State(state): State<Arc<super::AppState>>,
     Json(req): Json<CreateSessionRequest>,

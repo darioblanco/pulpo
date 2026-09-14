@@ -100,7 +100,12 @@ token this endpoint would hand back.
 
 Both are computed from the structured usage readers (exact token/cost data read
 directly from each harness's own session files) — there is no output-scraping
-fallback and no credential reading.
+fallback and no credential reading. This data is normally refreshed by the
+watchdog while a session is `Active`/`Idle`, and again the moment it reaches
+`Ready`/`Stopped`; a `Stopped` session that still has no cost recorded (e.g. one
+from before this on-demand path existed) is computed and persisted on demand the
+first time `GET /api/v1/usage/sessions` (or `pulpo usage`) is queried, rather than
+reporting no cost forever.
 
 **`GET /api/v1/usage/sessions`** → `UsageSessionsResponse`:
 
@@ -145,6 +150,7 @@ table, or an unrecognized model).
 | GET | `/api/v1/sessions` | List sessions (`?status=`, `?search=`, `?sort=`, `?order=`) |
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details (`:id` resolves by UUID or name) |
+| DELETE | `/api/v1/sessions/:id` | Remove a single session outright (only when not `Active`/`Idle`) |
 | POST | `/api/v1/sessions/:id/stop` | Stop a running session (`?purge=true` to also remove the record) |
 | POST | `/api/v1/sessions/:id/resume` | Resume a lost, ready, or stopped session |
 | GET | `/api/v1/sessions/:id/output?lines=<n>` | Get captured terminal output (default 100 lines) |
@@ -266,6 +272,15 @@ running), `404` if not found. See [Resume Semantics](/operations/session-lifecyc
 | `sessions_deleted` | number | Session records removed |
 | `worktrees_cleaned` | number | Git worktrees removed |
 | `logs_cleaned` | number | Per-session output log files (`{id}.log`) removed |
+
+### Remove (`DELETE /api/v1/sessions/:id`)
+
+Removes a single session outright: purges the row, its intervention events, exit
+markers, session log, and git worktree/harness dir — the same purge helper
+`POST /api/v1/sessions/:id/stop?purge=true` and `POST /api/v1/sessions/cleanup` use.
+→ `204 No Content`; `404` if the session doesn't exist; `409 Conflict` if it's
+currently `Active`/`Idle` — stop it first (`pulpo stop`). `pulpo rm <name-or-id>`
+(alias `remove`) is the CLI equivalent.
 
 ### Output
 

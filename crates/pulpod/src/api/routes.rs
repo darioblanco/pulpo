@@ -64,7 +64,10 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/v1/sessions",
             get(sessions::list).post(sessions::create),
         )
-        .route("/api/v1/sessions/{id}", get(sessions::get))
+        .route(
+            "/api/v1/sessions/{id}",
+            get(sessions::get).delete(sessions::remove),
+        )
         .route("/api/v1/sessions/cleanup", post(sessions::cleanup))
         .route("/api/v1/sessions/{id}/stop", post(sessions::stop))
         .route("/api/v1/sessions/{id}/output", get(sessions::output))
@@ -281,6 +284,54 @@ mod tests {
         // Verify it's gone
         let get_resp = server.get(&format!("/api/v1/sessions/{id}")).await;
         get_resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_route() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "rm-route-test",
+                "workdir": "/tmp",
+                "command": "test"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
+
+        server.post(&format!("/api/v1/sessions/{id}/stop")).await;
+
+        let resp = server.delete(&format!("/api/v1/sessions/{id}")).await;
+        resp.assert_status(StatusCode::NO_CONTENT);
+
+        let get_resp = server.get(&format!("/api/v1/sessions/{id}")).await;
+        get_resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_route_not_found() {
+        let server = test_server().await;
+        let resp = server.delete("/api/v1/sessions/nonexistent").await;
+        resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_route_conflict_when_active() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "rm-route-active",
+                "workdir": "/tmp",
+                "command": "test"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
+
+        let resp = server.delete(&format!("/api/v1/sessions/{id}")).await;
+        resp.assert_status(StatusCode::CONFLICT);
     }
 
     #[tokio::test]

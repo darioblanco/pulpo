@@ -38,6 +38,7 @@ pub(super) fn conflict(msg: &str) -> ApiError {
 /// Substring table (checked in order):
 /// - "not found" → 404
 /// - "already active" → 409
+/// - "cannot be removed" (`DELETE /sessions/{id}`, an Active/Idle session) → 409
 /// - "cannot be resumed" → 400
 /// - "docker runtime was removed" → 400
 /// - "worktree no longer exists" (handoff, source worktree missing on disk) → 400
@@ -49,7 +50,7 @@ pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
     let msg = e.to_string();
     if msg.contains("not found") {
         not_found(&msg)
-    } else if msg.contains("already active") {
+    } else if msg.contains("already active") || msg.contains("cannot be removed") {
         conflict(&msg)
     } else if msg.contains("cannot be resumed")
         || msg.contains("docker runtime was removed")
@@ -106,6 +107,13 @@ mod tests {
     #[test]
     fn test_map_manager_err_already_active() {
         let e = anyhow::anyhow!("a session named 'x' is already active — stop it first");
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn test_map_manager_err_cannot_be_removed() {
+        let e = anyhow::anyhow!("session cannot be removed while status is active — stop it first");
         let (status, _) = map_manager_err(&e);
         assert_eq!(status, StatusCode::CONFLICT);
     }

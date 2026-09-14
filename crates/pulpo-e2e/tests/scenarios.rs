@@ -129,7 +129,9 @@ fn s2_needs_input_then_input_resolves_it() {
 fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
     let daemon = Daemon::start(DaemonConfig::default());
     let (_dir, workdir) = temp_workdir();
-    set_scenario(&workdir, "start,prompt,stop,exit");
+    // `spend:0.25` (before `exit`) writes a real Claude-shaped transcript record —
+    // see below for why the session must report that cost once it's Stopped.
+    set_scenario(&workdir, "start,prompt,stop,spend:0.25,exit");
     let claude = daemon.fake_claude_bin();
     let claude_str = claude.to_string_lossy().into_owned();
 
@@ -165,6 +167,30 @@ fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
     daemon.input("s3-clean-exit", Some("exit"));
     let session = daemon.wait_status("s3-clean-exit", SessionStatus::Stopped, SHORT);
     assert_eq!(session.exit_code, Some(0));
+
+    // Regression: exact usage used to be refreshed only by the watchdog's idle
+    // sweep, which never revisits a session once it leaves Active/Idle — a session
+    // that reached Ready/Stopped before the next tick kept reporting no cost at
+    // all, even though its transcript (the `spend:0.25` step above) had the data
+    // the whole time. The `SessionEnded` hook handling now runs the exact reader
+    // itself (`watchdog::refresh_exact_usage`), so the cost should already be
+    // there — poll briefly rather than asserting instantly, since it's recorded
+    // asynchronously relative to this test's own polling of `status`.
+    let session = daemon.wait_for("s3-clean-exit", SHORT, |s| {
+        s.metadata
+            .as_ref()
+            .and_then(|m| m.get("session_cost_usd"))
+            .and_then(|v| v.parse::<f64>().ok())
+            .is_some_and(|cost| cost > 0.0)
+    });
+    assert_eq!(session.status, SessionStatus::Stopped);
+    let cost: f64 = session
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("session_cost_usd"))
+        .and_then(|v| v.parse().ok())
+        .expect("session_cost_usd should be recorded for a stopped session with a transcript");
+    assert!(cost > 0.0, "expected session_cost_usd > 0, got {cost}");
 
     // Swap in a scenario that just stays up after starting, so the *resumed*
     // process is reliably observable as Active before it does anything else.
@@ -462,6 +488,28 @@ fn s9_worktrees_distinct_survive_stop_and_removed_by_cleanup() {
         "stopping a session (without --purge) must not remove its worktree"
     );
 
+    // `pulpo rm` purges a single stopped session outright, worktree included —
+    // without touching the still-alive `s9-wt-two` sharing nothing but the origin
+    // repo.
+    let rm_out = daemon.remove("s9-wt-one");
+    assert!(
+        rm_out.status.success(),
+        "pulpo rm failed: {}",
+        String::from_utf8_lossy(&rm_out.stderr)
+    );
+    assert!(
+        daemon.session("s9-wt-one").is_none(),
+        "pulpo rm should remove the session record"
+    );
+    assert!(
+        !std::path::Path::new(&wt1).exists(),
+        "pulpo rm should remove worktree 1"
+    );
+    assert!(
+        std::path::Path::new(&wt2).exists(),
+        "pulpo rm on session 1 must not touch session 2's worktree"
+    );
+
     daemon.stop("s9-wt-two", false);
     daemon.wait_status("s9-wt-two", SessionStatus::Stopped, SHORT);
 
@@ -538,7 +586,37 @@ fn s11_generic_command_has_no_harness_and_ends_stopped() {
     assert_eq!(session.exit_code, Some(0));
 
     daemon.input("s11-generic", Some("exit"));
-    daemon.wait_status("s11-generic", SessionStatus::Stopped, SHORT);
+    let session = daemon.wait_status("s11-generic", SessionStatus::Stopped, SHORT);
+
+    // `sleep 3` exiting on its own wrote a real `.code` exit marker via
+    // `wrap_command` — confirm it's actually there before proving `pulpo rm`
+    // cleans it up below.
+    let session_id = session.id.to_string();
+    let marker_path = daemon
+        .data_dir
+        .join("exit")
+        .join(format!("{session_id}.code"));
+    assert!(
+        marker_path.exists(),
+        "expected exit marker at {marker_path:?}"
+    );
+
+    // `pulpo rm` on a Stopped session: purges the row and its exit markers (see
+    // the same purge helper `pulpo stop --purge`/`pulpo cleanup` use).
+    let rm_out = daemon.remove("s11-generic");
+    assert!(
+        rm_out.status.success(),
+        "pulpo rm failed: {}",
+        String::from_utf8_lossy(&rm_out.stderr)
+    );
+    assert!(
+        daemon.session("s11-generic").is_none(),
+        "pulpo rm should remove the session record"
+    );
+    assert!(
+        !marker_path.exists(),
+        "pulpo rm should remove the exit marker"
+    );
 }
 
 // ---------------------------------------------------------------------------

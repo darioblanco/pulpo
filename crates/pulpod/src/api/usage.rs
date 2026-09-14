@@ -5,17 +5,44 @@ use axum::{
     extract::{Query, State},
 };
 use pulpo_common::api::{UsageScanResponse, UsageSessionsResponse};
+use pulpo_common::session::{Session, SessionStatus, meta};
 use serde::Deserialize;
 
 use crate::api::error::{ApiError, internal_error};
+use crate::store::Store;
 use crate::usage::rollup::{build_repo_rollups, session_usage};
+
+/// For a `Stopped` session with no `session_cost_usd` metadata yet, compute its
+/// exact usage on demand (and persist it) instead of leaving it to a watchdog tick
+/// that will never revisit a terminal session — `check_idle_sessions` only ever
+/// visits `Active`/`Idle` sessions, so a session that reached `Stopped` before
+/// `watchdog::metadata::refresh_exact_usage` ran for it (an old session from
+/// before that fix, or a race the watchdog missed) would otherwise report no cost
+/// forever. Best-effort: a session still missing cost afterward (no structured
+/// usage reader matched, e.g. a non-agent command) is returned unchanged.
+async fn session_with_on_demand_usage(store: &Store, session: Session) -> Session {
+    if session.status != SessionStatus::Stopped
+        || session.meta_str(meta::SESSION_COST_USD).is_some()
+    {
+        return session;
+    }
+    crate::watchdog::refresh_exact_usage(store, &session).await;
+    store
+        .get_session(&session.id.to_string())
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(session)
+}
 
 /// `GET /api/v1/usage/sessions` — exact per-session usage plus per-repo rollups, for
 /// pulpo-managed sessions on this node.
 ///
-/// Read-only; computed from the exact-usage metadata the watchdog keeps fresh via the
-/// structured usage readers (Claude/Codex/pi). Sessions run with an unsupported harness
-/// simply show no usage — there is no output-scraping fallback.
+/// Computed from the exact-usage metadata the watchdog keeps fresh via the
+/// structured usage readers (Claude/Codex/pi); a `Stopped` session with no cost
+/// recorded yet is refreshed on demand (see [`session_with_on_demand_usage`]).
+/// Sessions run with an unsupported harness simply show no usage — there is no
+/// output-scraping fallback.
 pub async fn sessions(
     State(state): State<Arc<super::AppState>>,
 ) -> Result<Json<UsageSessionsResponse>, ApiError> {
@@ -26,8 +53,13 @@ pub async fn sessions(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
 
+    let mut refreshed = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        refreshed.push(session_with_on_demand_usage(&state.store, session).await);
+    }
+
     let node_name = state.config.read().await.node.name.clone();
-    let usages: Vec<_> = sessions.iter().map(session_usage).collect();
+    let usages: Vec<_> = refreshed.iter().map(session_usage).collect();
     let repos = build_repo_rollups(&usages);
     Ok(Json(UsageSessionsResponse {
         node_name,
@@ -107,6 +139,63 @@ mod tests {
             ..Default::default()
         };
         state.store.insert_session(&session).await.unwrap();
+    }
+
+    /// Insert a `Stopped` session with a non-agent command — deterministic input
+    /// for the on-demand-refresh tests below: no structured usage reader matches
+    /// `"cargo build"`, so `session_with_on_demand_usage`'s call into
+    /// `watchdog::refresh_exact_usage` is guaranteed to find nothing, regardless of
+    /// what's on the machine actually running the test.
+    async fn insert_stopped(state: &AppState, name: &str, meta_pairs: &[(&str, &str)]) {
+        let mut metadata = HashMap::new();
+        for (k, v) in meta_pairs {
+            metadata.insert((*k).to_owned(), (*v).to_owned());
+        }
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp/repo".into(),
+            command: "cargo build".into(),
+            status: SessionStatus::Stopped,
+            runtime: Runtime::Tmux,
+            metadata: Some(metadata),
+            ..Default::default()
+        };
+        state.store.insert_session(&session).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_sessions_computes_usage_on_demand_for_stopped_session_without_cost() {
+        // A `Stopped` session with no `session_cost_usd` yet (e.g. one that reached
+        // `Stopped` before `watchdog::refresh_exact_usage` existed, or a race the
+        // watchdog missed) triggers an on-demand refresh instead of reporting no
+        // cost forever. The command here matches no structured reader, so the
+        // refresh finds nothing — this proves the code path runs without error and
+        // still reports "no usage" rather than crashing or fabricating a value.
+        let state = test_state().await;
+        insert_stopped(&state, "old-stopped", &[]).await;
+
+        let resp = super::sessions(State(state)).await.unwrap();
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_skips_on_demand_refresh_when_stopped_session_already_has_cost() {
+        use pulpo_common::session::meta;
+        // A `Stopped` session that already has cost metadata must not be touched by
+        // the on-demand path — it's returned as-is.
+        let state = test_state().await;
+        insert_stopped(
+            &state,
+            "already-priced",
+            &[(meta::SESSION_COST_USD, "2.500000")],
+        )
+        .await;
+
+        let resp = super::sessions(State(state)).await.unwrap();
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].cost_usd, Some(2.5));
     }
 
     #[tokio::test]

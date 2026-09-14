@@ -6,11 +6,15 @@
 pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches; alias: s)
 pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]  Hand off a finished
                                           session's context to a new session (alias: h)
-pulpo list [--all]                        List sessions, live only by default (alias: ls; -a/--all includes stopped/lost)
+pulpo list [--all]                        List sessions: Active, Idle, Ready, and Lost by default —
+                                          Stopped is hidden, with a trailing hint reporting how many
+                                          were hidden (alias: ls; -a/--all also shows Stopped)
 pulpo logs <NAME> [--lines N] [--follow]  Show session output (alias: l; default 100 lines; -f to tail)
 pulpo attach <NAME>                       Attach to a session terminal (alias: a)
 pulpo input <NAME> [TEXT]                 Send text input to a session (alias: i, send)
 pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, kill; -p/--purge also removes from history)
+pulpo rm <NAME>                           Remove a single session outright (alias: remove; must not
+                                          be active or idle — stop it first)
 pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost, ready, or stopped session (alias: r; auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions (alias: iv)

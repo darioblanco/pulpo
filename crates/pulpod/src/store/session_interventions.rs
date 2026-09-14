@@ -48,4 +48,17 @@ impl Store {
         .await?;
         rows.iter().map(row_to_intervention_event).collect()
     }
+
+    /// Delete every intervention event recorded for a session. There's no foreign-key
+    /// cascade on `intervention_events.session_id` (see migration 0001), so a session
+    /// purge (`pulpo rm`, `stop --purge`) must call this itself alongside the row
+    /// delete — otherwise these rows outlive the session forever with no code path
+    /// left that can ever look them up again.
+    pub async fn delete_intervention_events(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM intervention_events WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
