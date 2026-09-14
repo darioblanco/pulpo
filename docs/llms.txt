@@ -8,9 +8,10 @@ durable remote sessions on machines you own.
 
 Primary docs:
 - /README.md
-- /SPEC.md
 - /ROADMAP.md
+- /AGENTS.md
 - /CONTRIBUTING.md
+- /docs/adr/README.md
 - /docs/getting-started/why-pulpo.md
 - /docs/getting-started/install.md
 - /docs/getting-started/quickstart.md
@@ -33,9 +34,21 @@ Primary docs:
 - /docs/reference/api.md
 - /docs/operations/session-lifecycle.md
 - /docs/operations/release-and-distribution.md
+- /docs/adr/0001-hook-driven-agent-state.md
+- /docs/adr/0002-meter-and-breaker-box-positioning.md
+- /docs/adr/0003-scenario-tests-as-behavior-gate.md
+- /docs/adr/0004-one-plain-webhook-channel.md
+- /docs/adr/0005-config-file-is-source-of-truth.md
+- /docs/adr/0006-exact-metering-and-flat-budget-cap-only.md
+- /docs/adr/0007-rust-stays-go-decision-deferred.md
+- /docs/adr/0008-unknown-config-keys-warn-and-are-ignored.md
+- /docs/adr/0009-five-state-session-model.md
 
 Canonical runtime concepts:
-- Session states: creating, active, idle, ready, stopped, lost.
+- Session states: creating, active, idle, ready, stopped, lost. A five-state model
+  (starting/working/waiting/done/lost) was accepted 2026-09-14 (ADR 0009) but is NOT
+  implemented yet — the six states above remain the accurate description of shipped
+  behavior until that migration lands.
 - Resume applies to lost, ready, AND stopped sessions (recreates the backend, re-executes
   the command). Only active/idle/creating sessions cannot be resumed (still running).
 - Sessions run arbitrary shell commands — no built-in provider abstraction.

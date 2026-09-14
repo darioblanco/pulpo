@@ -234,7 +234,7 @@ Vendor dashboards show one account after the fact. Pulpo is live and exact, and 
 it runs the sessions — it can also pull the plug.
 
 <h3 align="center">
-  <a href="https://pulpo.darioblanco.com/getting-started/quickstart">Quickstart</a>
+  <a href="https://pulpo.darioblanco.com/getting-started/quickstart.html">Quickstart</a>
   <span> · </span>
   <a href="https://pulpo.darioblanco.com">Documentation</a>
   <span> · </span>

@@ -26,7 +26,7 @@ Use this when you want:
 - multiple background tasks on one repo without branch collisions
 
 This recipe is especially useful for solo power users and teams doing parallel
-implementation work. See [Use Cases](/getting-started/use-cases).
+implementation work. See [Use Cases](../getting-started/use-cases.md).
 
 ## The Simple Version
 
@@ -133,7 +133,7 @@ pulpo resume frontend
 ```
 
 Stopping a session cleans up its worktree and branch according to the worktree
-lifecycle behavior described in [Worktrees Guide](/guides/worktrees).
+lifecycle behavior described in [Worktrees Guide](worktrees.md).
 
 ## Summary
 

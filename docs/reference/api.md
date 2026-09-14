@@ -34,7 +34,7 @@ These are all **read-only** — `PUT /api/v1/config`, `PUT /api/v1/watchdog`, an
 `PUT /api/v1/notifications` do not exist (any `PUT`/`POST` to these paths falls through
 to `405 Method Not Allowed`). The config file (`~/.pulpo/config.toml`) is the sole
 source of truth — there is no API or web UI path to edit it. To change anything, edit
-the file and restart `pulpod`; see [Configuration](/guides/configuration).
+the file and restart `pulpod`; see [Configuration](../guides/configuration.md).
 
 **`GET /api/v1/node`** → `NodeInfo`:
 
@@ -52,7 +52,7 @@ the file and restart `pulpod`; see [Configuration](/guides/configuration).
 
 | Field | Type | Description |
 |-------|------|--------------|
-| `node.name` / `node.port` / `node.data_dir` / `node.bind` | — | Mirrors `[node]` (see [Config Reference](/reference/config)) |
+| `node.name` / `node.port` / `node.data_dir` / `node.bind` | — | Mirrors `[node]` (see [Config Reference](config.md)) |
 | `auth` | object | Always `{}` — the token itself is never included here (see `GET /api/v1/auth/token`) |
 | `watchdog.*` | — | Same shape as `GET /api/v1/watchdog` below |
 | `notifications.webhooks` | array | Same shape as `GET /api/v1/notifications` below |
@@ -76,7 +76,7 @@ the file and restart `pulpod`; see [Configuration](/guides/configuration).
 
 `webhooks` is the union of the top-level `[[webhooks]]` list and the deprecated
 `[[notifications.webhooks]]` list (top-level entries first) — see
-[Config Reference § webhooks](/reference/config#webhooks). Each entry's `min_severity`
+[Config Reference § webhooks](config.md#webhooks). Each entry's `min_severity`
 key is omitted entirely (not `null`) when the endpoint sets no floor. The per-endpoint
 `secret` field is never echoed back — request signing was removed (see
 [Webhooks](#webhooks) below).
@@ -119,7 +119,7 @@ reporting no cost forever.
 `SessionUsage`: `session_id`, `session_name`, `workdir`, `usage_source` (`"claude-jsonl"` /
 `"codex-jsonl"` / `"pi-jsonl"` / `null` if nothing was read yet), `total_tokens` (u64),
 `cost_usd` (number \| null — null when the model has no priced rate, see
-`[rates.<model>]` in the [Config Reference](/reference/config)).
+`[rates.<model>]` in the [Config Reference](config.md)).
 
 `DimensionRollup`: `label` (the repo path), `session_count`, `total_tokens`,
 `total_cost_usd` (number \| null).
@@ -174,13 +174,13 @@ Every endpoint that returns a session (`list`, `get`, `create`, `resume`, `hando
 | `workdir` | string | Working directory |
 | `command` | string | The (possibly harness-rewritten) command actually run |
 | `description` | string \| null | Free-text note set at spawn time |
-| `status` | string | `creating` \| `active` \| `idle` \| `ready` \| `stopped` \| `lost` (see [Session Lifecycle](/operations/session-lifecycle)) |
+| `status` | string | `creating` \| `active` \| `idle` \| `ready` \| `stopped` \| `lost` (see [Session Lifecycle](../operations/session-lifecycle.md)) |
 | `exit_code` | number \| null | The agent process's exit code, once known (recorded from the `.code` exit marker, or from a hook-reported `SessionEnded` for harness-managed sessions) |
 | `backend_session_id` | string \| null | tmux `$N` id |
 | `output_snapshot` | string \| null | Last captured output (persisted snapshot; live tail comes from `output`/`stream`) |
 | `metadata` | object \| null | Free-form key/value string map (also carries internal bookkeeping such as usage fields) |
 | `ink` | string \| null | Historical only — the ink preset registry was removed; never set on new sessions |
-| `intervention_code` | string \| null | `memory_pressure` \| `idle_timeout` \| `user_stop` \| `budget_exceeded`, or `null` if never intervened. An unrecognized/retired stored code (e.g. a historical `burn_rate` row from the removed burn-rate governor) also reads back as `null` — see [Config Reference](/reference/config) |
+| `intervention_code` | string \| null | `memory_pressure` \| `idle_timeout` \| `user_stop` \| `budget_exceeded`, or `null` if never intervened. An unrecognized/retired stored code (e.g. a historical `burn_rate` row from the removed burn-rate governor) also reads back as `null` — see [Config Reference](config.md) |
 | `intervention_reason` | string \| null | Human-readable reason for the last intervention |
 | `intervention_at` | RFC 3339 string \| null | When the last intervention happened |
 | `last_output_at` | RFC 3339 string \| null | Last time output changed |
@@ -252,7 +252,7 @@ without `command`, the new session opens a login shell. The new session inherits
 source's working directory and, if the source used one, its git worktree (`adopted`, not
 copied — no new branch or checkout). Returns `201 Created` with the same shape as
 `POST /api/v1/sessions`. `400 Bad Request` if the source's worktree no longer exists on
-disk. See [Plan Then Build](/guides/plan-then-build).
+disk. See [Plan Then Build](../guides/plan-then-build.md).
 
 ### Stop / Resume / Cleanup
 
@@ -262,7 +262,7 @@ already-stopped session).
 
 `POST /api/v1/sessions/:id/resume` → `200 OK` with the updated `Session`; `400 Bad
 Request` if the session is `Active`/`Idle`/`Creating` (cannot be resumed — still
-running), `404` if not found. See [Resume Semantics](/operations/session-lifecycle#resume-semantics).
+running), `404` if not found. See [Resume Semantics](../operations/session-lifecycle.md#resume-semantics).
 
 `POST /api/v1/sessions/cleanup` — removes every `Stopped`/`Lost` session → `200 OK`,
 `CleanupResponse`:
@@ -322,7 +322,7 @@ it (for `"pi"`, whatever `pulpo.ts` posted), passed through unchanged. The daemo
 resolves the session's harness adapter, translates the payload into a normalized
 lifecycle event, applies the resulting state transition — including recording
 `exit_code` for a hook-reported session end — and emits the existing SSE `session`
-event (see [Harness Adapters](/architecture/harness-adapters)); no separate
+event (see [Harness Adapters](../architecture/harness-adapters.md)); no separate
 notification channel.
 
 Status codes, checked in this order:
@@ -456,7 +456,7 @@ curl -N http://localhost:7433/api/v1/events
 ## Webhooks
 
 `[[webhooks]]` is pulpo's only outbound notification channel (see
-[Config Reference § webhooks](/reference/config#webhooks) for the config fields). There
+[Config Reference § webhooks](config.md#webhooks) for the config fields). There
 is no webhook management API — endpoints are configured in `config.toml` only.
 
 Every session/usage-alert/intervention event that isn't purely internal housekeeping

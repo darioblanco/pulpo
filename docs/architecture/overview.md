@@ -89,7 +89,7 @@ with failure or intervention paths to:
 
 `stopped` or `lost`
 
-This is the most important behavior in the system. See [Session Lifecycle](/operations/session-lifecycle) for exact transitions.
+This is the most important behavior in the system. See [Session Lifecycle](../operations/session-lifecycle.md) for exact transitions.
 
 ### Watchdog
 
@@ -108,7 +108,7 @@ resulting events drive the same transitions directly — the watchdog stops gues
 scrollback for whatever signals that harness's events cover. A session blocked on the
 harness (a permission prompt, a question) shows as `idle` with a `needs input
 (<reason>)` label rather than plain `idle`. See
-[Harness Adapters](/architecture/harness-adapters).
+[Harness Adapters](harness-adapters.md).
 
 ## Control Surfaces
 
@@ -123,7 +123,7 @@ These are all clients of the same session model. If one surface disappears, the 
 
 The daemon owns the truth, and every surface reflects or operates on that same truth —
 but "control plane" is deliberately not the framing (see
-[POSITIONING.md](https://github.com/darioblanco/pulpo/blob/main/POSITIONING.md)): there
+[Why Pulpo](../getting-started/why-pulpo.md)): there
 is no cross-node orchestration, by design. Each node's `pulpod` is standalone
 infrastructure that meters and governs its own sessions; reach it directly.
 
@@ -150,7 +150,7 @@ pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
 pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves the worktree on disk; it's reclaimed on the next purge — `pulpo stop --purge`, `pulpo cleanup`, or a watchdog intervention (budget/idle) that stops the session. See [Worktrees](/guides/worktrees) for the full cleanup model.
+Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves the worktree on disk; it's reclaimed on the next purge — `pulpo stop --purge`, `pulpo cleanup`, or a watchdog intervention (budget/idle) that stops the session. See [Worktrees](../guides/worktrees.md) for the full cleanup model.
 
 ### Built-in Scheduler
 
@@ -213,7 +213,7 @@ Consequences, by design:
   point is something you own; Pulpo does not run one for you.
 
 **Agent callbacks point at the local node (locked invariant).** Harness adapters (see
-[Harness Adapters](/architecture/harness-adapters)) inject hooks into the agent process
+[Harness Adapters](harness-adapters.md)) inject hooks into the agent process
 that always target the **local `pulpod`** that spawned the session — never a remote
 machine. The local daemon owns the session lifecycle and forwards events onward from
 there. Routing agent processes at a central machine would couple every agent to that
@@ -233,6 +233,26 @@ Session spawn → resolve_command → build_command → tmux create
        ↓
   SSE events → web UI / webhooks
 ```
+
+## Security Model
+
+- **Network**: `pulpod` binds to `127.0.0.1` by default (`bind = "local"`). In
+  `"public"` mode it binds to `0.0.0.0` and requires a bearer token on every
+  `/api/v1/*` request (auto-generated on first run, retrievable locally via
+  `GET /api/v1/auth/token`). In `"tailscale"` mode it stays on `127.0.0.1` and runs
+  `tailscale serve` to proxy the dashboard over HTTPS on the tailnet — auth is
+  delegated to Tailscale (WireGuard) instead of a token. See
+  [Private Infrastructure With Tailscale](../guides/private-infra-with-tailscale.md)
+  and [Config Reference](../reference/config.md) for the operational detail.
+- **Auth**: in `local`/`tailscale` modes, network isolation *is* the auth layer; only
+  `public` mode needs the bearer token.
+- **Agents**: sessions run as the same user `pulpod` runs as — equivalent to running
+  the agent directly in a terminal. The `command` field gives full control over what
+  runs in the session, same as a shell would.
+- **No secrets in the API**: the API never exposes API keys. Credentials live in each
+  agent's own config/environment, on each node; `pulpod` does not read or store them
+  (see ADR [0006](../adr/0006-exact-metering-and-flat-budget-cap-only.md) for why it
+  stopped reading agent credential files at all).
 
 ## Stable vs Experimental
 
@@ -274,4 +294,7 @@ Adding a new backend means implementing ~10 methods (`create_session`, `kill_ses
 - **Zero-config local start** — `pulpod` runs out of the box, with optional operational depth
 - **No unsafe code** — `forbid(unsafe_code)` workspace-wide
 
-For the full architecture spec, see [SPEC.md](https://github.com/darioblanco/pulpo/blob/main/SPEC.md).
+This page, [Core Concepts](core-concepts.md), and [Harness Adapters](harness-adapters.md)
+are the maintained architecture reference; for the strategic narrative (the bet, what
+shipped, what was cut) see [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
+and the [Architecture Decision Records](https://github.com/darioblanco/pulpo/blob/main/docs/adr/README.md).

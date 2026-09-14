@@ -28,8 +28,8 @@ pulpo attach fix   # from the same box, or over SSH/Tailscale from a laptop
 
 A cost budget sits on top of that same durable session, alerting at 80% of
 a cap and stopping it before it runs past 100%. See
-[Quickstart](/getting-started/quickstart) and
-[Control Your Agents From Anywhere](/guides/remote-control) for the hands-on version of this
+[Quickstart](quickstart.md) and
+[Control Your Agents From Anywhere](../guides/remote-control.md) for the hands-on version of this
 loop.
 
 ## The Problem It Solves
@@ -123,7 +123,7 @@ is not "which tool has more features?" It is "which layer does each tool own?"
 | Generic infrastructure | Raw tmux, cron, SSH, Docker scripts | Maximum flexibility, no product constraints | Pulpo gives you lifecycle semantics, recovery, cost metering, and budgets on top |
 
 For a more detailed and explicitly source-based version, see
-[Alternatives And Comparisons](/getting-started/alternatives).
+[Alternatives And Comparisons](alternatives.md).
 
 ## Hosted Agents Vs Pulpo
 
@@ -181,8 +181,8 @@ somewhere, be observed, and survive failure.
 
 ## Read Next
 
-1. [Quickstart](/getting-started/quickstart)
-2. [Control Your Agents From Anywhere](/guides/remote-control)
-3. [Install](/getting-started/install)
-4. [Alternatives And Comparisons](/getting-started/alternatives)
-5. [Core Concepts](/architecture/core-concepts)
+1. [Quickstart](quickstart.md)
+2. [Control Your Agents From Anywhere](../guides/remote-control.md)
+3. [Install](install.md)
+4. [Alternatives And Comparisons](alternatives.md)
+5. [Core Concepts](../architecture/core-concepts.md)

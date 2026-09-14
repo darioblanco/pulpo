@@ -3,9 +3,9 @@
 This guide is the shortest path from "I installed Pulpo" to "I know what my agents cost, and
 I have a durable session running on infrastructure I control."
 
-If you want the market context first, read [Why Pulpo](/getting-started/why-pulpo).
+If you want the market context first, read [Why Pulpo](why-pulpo.md).
 If you want examples with specific coding agents, see
-[Agent Examples](/guides/agent-examples).
+[Agent Examples](../guides/agent-examples.md).
 
 ## 1. Install
 
@@ -77,7 +77,7 @@ pulpo attach my-api
 ```
 
 This is the daily-driver loop: spawn, detach, walk away, reattach later from wherever you
-are. See [Control Your Agents From Anywhere](/guides/remote-control) for the full pattern,
+are. See [Control Your Agents From Anywhere](../guides/remote-control.md) for the full pattern,
 including checking status from a phone via the web UI.
 
 ## 6. Resume After A Crash Or Reboot
@@ -101,8 +101,8 @@ pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
 pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each agent gets an isolated git worktree at `~/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](/guides/worktrees) for details.
-For a full end-to-end workflow, see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
+Each agent gets an isolated git worktree at `~/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](../guides/worktrees.md) for details.
+For a full end-to-end workflow, see [Parallel Agents On One Repo](../guides/parallel-agents-one-repo.md).
 
 ## 8. Schedule Recurring Runs
 
@@ -112,7 +112,7 @@ pulpo schedule list
 ```
 
 For a fuller version of this pattern — including a cost budget — see
-[Nightly Code Review](/guides/nightly-code-review).
+[Nightly Code Review](../guides/nightly-code-review.md).
 
 ## 9. Isolated Worktree Runs
 
@@ -124,7 +124,7 @@ pulpo spawn risky-task --workdir ~/repo --worktree -- claude --dangerously-skip-
 
 The session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves it on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention.
 
-For the full workflow, see [Worktrees](/guides/worktrees).
+For the full workflow, see [Worktrees](../guides/worktrees.md).
 
 ## 10. Remote Nodes
 
@@ -146,15 +146,15 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 
 ## Next Steps
 
-- [Control Your Agents From Anywhere](/guides/remote-control) — the daily-driver spawn/detach/reattach loop, in depth
-- [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
-- [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
-- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) — a concrete parallel-worktree workflow
-- [Worktrees](/guides/worktrees) — isolate higher-risk runs from your main checkout
-- [Agent Examples](/guides/agent-examples) — concrete examples with Claude Code, Codex, pi, Gemini CLI, Kimi Code, GLM-5 via OpenCode, and local models
-- [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
-- [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
-- [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior
-- [Configuration Guide](/guides/configuration) — watchdog, notifications, bind modes
+- [Control Your Agents From Anywhere](../guides/remote-control.md) — the daily-driver spawn/detach/reattach loop, in depth
+- [Why Pulpo](why-pulpo.md) — ICPs, alternatives, and where Pulpo fits
+- [Nightly Code Review](../guides/nightly-code-review.md) — a concrete recurring background-agent workflow
+- [Parallel Agents On One Repo](../guides/parallel-agents-one-repo.md) — a concrete parallel-worktree workflow
+- [Worktrees](../guides/worktrees.md) — isolate higher-risk runs from your main checkout
+- [Agent Examples](../guides/agent-examples.md) — concrete examples with Claude Code, Codex, pi, Gemini CLI, Kimi Code, GLM-5 via OpenCode, and local models
+- [Core Concepts](../architecture/core-concepts.md) — the smallest vocabulary for understanding Pulpo
+- [Architecture Overview](../architecture/overview.md) — the session/runtime/watchdog mental model
+- [Session Lifecycle](../operations/session-lifecycle.md) — exact transition behavior
+- [Configuration Guide](../guides/configuration.md) — watchdog, notifications, bind modes
 - [Examples](https://github.com/darioblanco/pulpo/tree/main/examples) — runnable CLI workflows
-- [CLI Reference](/reference/cli) — all commands, flags, and scripting recipes
+- [CLI Reference](../reference/cli.md) — all commands, flags, and scripting recipes

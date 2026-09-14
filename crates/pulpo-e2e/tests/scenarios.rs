@@ -4,7 +4,7 @@
 //! HTTP API — and asserts on real, observed state, never a mock. See
 //! `crates/pulpo-e2e/src/lib.rs` for the harness these tests are built on,
 //! `crates/pulpo-e2e/src/bin/fake-claude.rs` for the fake harness's contract, and
-//! `CLAUDE.md`'s testing section for the strategy this suite implements and how to
+//! `AGENTS.md`'s testing section for the strategy this suite implements and how to
 //! add a scenario.
 //!
 //! Run with `make e2e` (builds `pulpod`/`pulpo`/`fake-claude` first) or, once built,
@@ -309,7 +309,7 @@ fn s5_daemon_restart_preserves_sessions_and_auto_resumes_lost_ones() {
 
     daemon.wait_status("s5-restart-with-loss", SessionStatus::Active, SHORT);
     // `backend_session_id` itself gets upgraded from a plain name to tmux's own
-    // `$N` id shortly after creation (see `CLAUDE.md`'s "Session IDs" note) — the
+    // `$N` id shortly after creation (see `AGENTS.md`'s "Session IDs" note) — the
     // durable proof of "named after the session, not a stale $N id" is the actual
     // tmux session name, which never changes after creation.
     assert!(
@@ -731,7 +731,7 @@ fn assert_recovered_and_usable(daemon: &Daemon) {
 /// migrator knows — simulating a database a *newer* `pulpod` already
 /// migrated, now opened by an *older* binary after a downgrade. Shells out to
 /// the system `sqlite3` (also relied on being present the way `tmux` is for
-/// this whole suite — see `CLAUDE.md`'s "Running it" note).
+/// this whole suite — see `AGENTS.md`'s "Running it" note).
 fn seed_downgraded_database(path: &std::path::Path) {
     let sql = "\
         CREATE TABLE _sqlx_migrations (\n\
@@ -773,7 +773,7 @@ fn s13_garbage_database_recovers_and_starts_fresh() {
     assert_recovered_and_usable(&daemon);
 }
 
-/// Same recovery, for the other failure mode called out in `CLAUDE.md`: a
+/// Same recovery, for the other failure mode called out in `AGENTS.md`: a
 /// downgrade, where `MIGRATOR.run()` fails with sqlx's `VersionMissing`
 /// rather than the legacy-schema check.
 #[test]

@@ -7,13 +7,13 @@ check on it, or take over, from anywhere on your tailnet.
 
 This guide is the daily-driver loop: run one always-on daemon, spawn, detach, and reattach
 later from a different machine. It stays on a single node — see
-[Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) if you also
+[Private Infrastructure With Tailscale](private-infra-with-tailscale.md) if you also
 need to reach private repos or internal APIs, or if you outgrow one box.
 
 ## 1. Run `pulpod` On One Always-On Machine
 
 A Mac mini, a home server, a spare Linux box, or a cheap always-on VM you own. Install it
-once (see [Install](/getting-started/install)) and the daemon starts automatically via
+once (see [Install](../getting-started/install.md)) and the daemon starts automatically via
 `brew services` or `systemd` — nothing to babysit.
 
 To reach it from outside your LAN, put it on your tailnet:
@@ -116,14 +116,14 @@ exited — resume still recreates the backend and reruns the command even if the
 shell is still lingering, since the agent process itself is gone), and `stopped` sessions
 (terminated on purpose or exited cleanly). `pulpod` also auto-resumes sessions that were
 `active` when it shut down, the next time it starts — you often won't need to run `resume` by
-hand at all. See [Session Lifecycle](/operations/session-lifecycle) and
-[Recovery](/guides/recovery) for the exact state machine and detection rules.
+hand at all. See [Session Lifecycle](../operations/session-lifecycle.md) and
+[Recovery](recovery.md) for the exact state machine and detection rules.
 
 ## Related Docs
 
-- [Quickstart](/getting-started/quickstart) — the shortest path from install to a running
+- [Quickstart](../getting-started/quickstart.md) — the shortest path from install to a running
   session
-- [Session Lifecycle](/operations/session-lifecycle) — exact state transitions
-- [Recovery](/guides/recovery) — resume semantics after crashes and reboots
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) — reaching
+- [Session Lifecycle](../operations/session-lifecycle.md) — exact state transitions
+- [Recovery](recovery.md) — resume semantics after crashes and reboots
+- [Private Infrastructure With Tailscale](private-infra-with-tailscale.md) — reaching
   private repos and internal APIs, and what changes if you ever need more than one machine

@@ -11,8 +11,8 @@ monitoring that forwards to your own observability stack.
 
 **The problem**: a few coding agents running in parallel can burn a weekly subscription
 allowance in an afternoon, and no vendor `/usage` page aggregates spend across your
-accounts or machines. Pulpo fills that gap — see [Why Pulpo](https://pulpo.darioblanco.com/getting-started/why-pulpo)
-for the full case, and [Alternatives And Comparisons](https://pulpo.darioblanco.com/getting-started/alternatives)
+accounts or machines. Pulpo fills that gap — see [Why Pulpo](https://pulpo.darioblanco.com/getting-started/why-pulpo.html)
+for the full case, and [Alternatives And Comparisons](https://pulpo.darioblanco.com/getting-started/alternatives.html)
 for how it compares to cost readers (ccusage), native multi-agent UX tools (Conductor,
 Claude Code Remote Control), and hosted agent clouds.
 
@@ -78,4 +78,4 @@ Most scripts use these environment variables:
 
 For more workflows (worktrees, handoff, private-infra credentials, webhooks), see the
 [docs site](https://pulpo.darioblanco.com) and
-[Examples in the docs](https://pulpo.darioblanco.com/getting-started/quickstart).
+[Examples in the docs](https://pulpo.darioblanco.com/getting-started/quickstart.html).

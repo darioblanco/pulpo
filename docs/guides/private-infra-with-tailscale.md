@@ -6,7 +6,7 @@ them. Pulpo keeps the runtime and the reachability entirely on machines you own:
 on a box on your tailnet, reachable from anywhere on that tailnet.
 
 If you haven't set up the daily-driver loop yet (spawn, detach, reattach from elsewhere), see
-[Control Your Agents From Anywhere](/guides/remote-control) first — this guide adds a
+[Control Your Agents From Anywhere](remote-control.md) first — this guide adds a
 credentialed run on top of that same single-node setup.
 
 ## Example Setup
@@ -73,7 +73,7 @@ network that only `mac-mini` can reach.
 
 SSH in over the tailnet and attach directly, or open the web UI at the node's tailnet
 address — both covered in
-[Control Your Agents From Anywhere](/guides/remote-control):
+[Control Your Agents From Anywhere](remote-control.md):
 
 ```bash
 ssh mac-mini
@@ -91,7 +91,7 @@ pulpo spawn risky-audit \
   -- env GITHUB_TOKEN=ghp_work_xxxxxxxxxxxx claude --dangerously-skip-permissions -p "Audit this repository and propose fixes."
 ```
 
-See [Worktrees](/guides/worktrees) for the full isolation model.
+See [Worktrees](worktrees.md) for the full isolation model.
 
 ## Operational Notes
 
@@ -103,9 +103,9 @@ See [Worktrees](/guides/worktrees) for the full isolation model.
 
 ## Related Docs
 
-- [Control Your Agents From Anywhere](/guides/remote-control)
-- [Worktrees](/guides/worktrees)
-- [Use Cases](/getting-started/use-cases)
+- [Control Your Agents From Anywhere](remote-control.md)
+- [Worktrees](worktrees.md)
+- [Use Cases](../getting-started/use-cases.md)
 
 ## Multiple Machines
 
@@ -118,4 +118,4 @@ plane joining them — cross-node orchestration is a dead product lane (see
   connection in the web UI, or plain SSH + `pulpo attach`.
 - Aggregate visibility across machines by pointing every node's `[[webhooks]]` at the same
   collector — see the "Monitoring & event topology" section of the
-  [Architecture Overview](/architecture/overview).
+  [Architecture Overview](../architecture/overview.md).

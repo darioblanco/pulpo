@@ -1086,7 +1086,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 return Ok(format_sessions(&sessions));
             }
             // Default view hides only `Stopped` — a `Lost` session is exactly the
-            // kind worth resuming after a reboot (see CLAUDE.md's "no sessions"
+            // kind worth resuming after a reboot (see AGENTS.md's "no sessions"
             // bug report), so it stays visible alongside Active/Idle/Ready.
             let (visible, hidden): (Vec<Session>, Vec<Session>) = sessions
                 .into_iter()

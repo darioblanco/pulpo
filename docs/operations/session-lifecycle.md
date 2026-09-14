@@ -109,7 +109,7 @@ For a session whose harness has a resume mechanism (Claude Code, Codex, pi), "re
 the session command" above means the harness's *own* resume command — `claude --resume <id>`,
 `codex resume <id>`, or pi's idempotent `--session-id <id>` — so the conversation
 continues where it left off instead of starting fresh. See
-[Harness Adapters](/architecture/harness-adapters) for the exact rewrite per harness.
+[Harness Adapters](../architecture/harness-adapters.md) for the exact rewrite per harness.
 
 ## Harness-Driven Transitions (Claude Code, Codex, pi)
 
@@ -126,7 +126,7 @@ The one additive piece: a `NeedsInput` event sets `Idle` plus a `needs_input` me
 reason (`permission`, `question`, `idle`, ...), rendered as `needs input (<reason>)` in
 `pulpo ls` and the web UI — distinguishing "blocked on me" from a plain idle prompt. The
 `SessionStatus` enum itself is unchanged. Full event mapping, per-harness spawn/resume
-rewrites, and the watchdog-bypass mechanism: [Harness Adapters](/architecture/harness-adapters).
+rewrites, and the watchdog-bypass mechanism: [Harness Adapters](../architecture/harness-adapters.md).
 
 A hook-driven `SessionEnded` moves the session to `Ready`/`Stopped` immediately, ahead of
 any `.code` exit-marker read — the marker is written by the wrapper only once the agent
@@ -177,7 +177,7 @@ url = "https://example.com/hooks/pulpo"
 events = ["lifecycle.ready", "lifecycle.stopped", "lifecycle.lost"]
 ```
 
-See the [config reference](/reference/config#webhooks) for `min_severity` and the full
+See the [config reference](../reference/config.md#webhooks) for `min_severity` and the full
 event catalogue. The legacy `[[notifications.webhooks]]` form still works.
 
 ## Exit Markers

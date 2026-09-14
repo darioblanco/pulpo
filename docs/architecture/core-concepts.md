@@ -67,7 +67,7 @@ The most important meanings:
 - `lost`: the backend disappeared unexpectedly
 - `stopped`: the session was terminated (or exited cleanly) and is still resumable
 
-See [Session Lifecycle](/operations/session-lifecycle) for exact transition rules.
+See [Session Lifecycle](../operations/session-lifecycle.md) for exact transition rules.
 
 ## 5. Watchdog
 
@@ -84,7 +84,7 @@ For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), a **harne
 adapter** reports real events — turn finished, blocked on a permission prompt, session
 ended — instead of the watchdog guessing from scrollback text. A session blocked this
 way shows as `idle` with a `needs input (<reason>)` label, distinct from a plain idle
-prompt. See [Harness Adapters](/architecture/harness-adapters).
+prompt. See [Harness Adapters](harness-adapters.md).
 
 Without the watchdog, Pulpo would be a launcher. With it, Pulpo becomes runtime infrastructure.
 
@@ -113,7 +113,7 @@ They matter operationally, but they are easier to reason about once session/runt
 
 ## Read Next
 
-1. [Architecture Overview](/architecture/overview)
-2. [Quickstart](/getting-started/quickstart)
-3. [Session Lifecycle](/operations/session-lifecycle)
-4. [Harness Adapters](/architecture/harness-adapters)
+1. [Architecture Overview](overview.md)
+2. [Quickstart](../getting-started/quickstart.md)
+3. [Session Lifecycle](../operations/session-lifecycle.md)
+4. [Harness Adapters](harness-adapters.md)

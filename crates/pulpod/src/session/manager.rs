@@ -1051,7 +1051,7 @@ impl SessionManager {
 
         // If the backend session is still alive, just re-mark it as running — unless
         // the agent already exited into the wrapper's fallback shell (an exit marker
-        // is present, see `wrap_command`/CLAUDE.md's exit-marker rules). In that case
+        // is present, see `wrap_command`/AGENTS.md's exit-marker rules). In that case
         // the shell is alive but there's no live agent to just "un-pause": treat it
         // the same as a dead backend — kill the leftover shell and recreate the
         // backend with the resume command (`restore_session_backend` purges the
@@ -4205,7 +4205,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_ready_session_alive_with_exit_marker_recreates_backend() {
         // A Ready session's fallback shell can still be alive in tmux even though
-        // the agent process itself already exited (see `wrap_command`/CLAUDE.md's
+        // the agent process itself already exited (see `wrap_command`/AGENTS.md's
         // exit-marker rules) — resuming it must not just flip status back to
         // Active, which would leave the marker in place and get the session
         // bounced straight back to Ready by the very next watchdog idle-check tick.

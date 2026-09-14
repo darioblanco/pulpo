@@ -17,6 +17,9 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  MDBOOK_VERSION: 0.5.4
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,16 +27,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Cache cargo bin
+        uses: actions/cache@v4
         with:
-          node-version: 22
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-mdbook-${{ env.MDBOOK_VERSION }}
 
-      - name: Install docs dependencies
-        run: npm --prefix docs install
+      - name: Install mdBook
+        run: |
+          if ! command -v mdbook >/dev/null || [ "$(mdbook --version)" != "mdbook v${MDBOOK_VERSION}" ]; then
+            cargo install mdbook --version "${MDBOOK_VERSION}" --locked
+          fi
 
       - name: Build docs
-        run: npm --prefix docs run docs:build
+        run: mdbook build docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -41,7 +48,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/.vuepress/dist
+          path: docs/book
 
   deploy:
     needs: build

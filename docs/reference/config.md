@@ -9,11 +9,16 @@ not listed below, at any nesting level — is logged once at startup (`config: u
 '<path>' ignored`) and otherwise ignored; it never fails startup. Recognized keys with an
 invalid value (e.g. `bind = "container"`) still fail loudly, since that's a mistake in a
 real setting, not an unrecognized one.
-Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
-delete `~/.pulpo/state.db` and restart.
+Pre-`sqlx` legacy databases are unsupported, but `pulpod` never crash-loops on one: an
+unusable `state.db` (corrupt, an unsupported legacy schema, or a downgrade) is quarantined
+as `state.db.unusable-<UTC timestamp>` and a fresh database is created in its place
+automatically — no manual deletion needed. Every startup against an existing database also
+backs it up to `state.db.pre-<version>` before migrating. See
+[Release and Distribution](../operations/release-and-distribution.md) "Upgrading `pulpod`"
+for the full recovery/backup behavior.
 
 The config file is the source of truth: `pulpod` and the web UI only read it (see
-[`GET /api/v1/config`](/reference/api#node-config)). To change anything, edit the file
+[`GET /api/v1/config`](api.md#node--config)). To change anything, edit the file
 by hand and restart `pulpod` — there is no API or UI to write it back, so a retired key
 you remove yourself simply stays gone; one you leave in place stays in the file (ignored)
 until you edit it out.
@@ -62,7 +67,7 @@ events drive those transitions instead. Everything else still applies unconditio
 including to harness-managed sessions: `idle_timeout_secs`/`idle_action` (alert/kill after
 a session has sat idle too long) and the budget-cost fields (set per session/schedule, not
 here — see `pulpo spawn --budget-cost` and `pulpo schedule add --budget-cost`). See
-[Harness Adapters](/architecture/harness-adapters).
+[Harness Adapters](../architecture/harness-adapters.md).
 
 ## `[scheduler]`
 
@@ -115,7 +120,7 @@ that exhausts every attempt is logged and dropped — there is no persistence, s
 survives a restart or is retried after the daemon gives up. Delivery is also bounded — a
 5s connect / 10s total per-attempt timeout, and at most 16 deliveries in flight across
 every endpoint at once — and a failed delivery's log line never includes the URL itself
-(it's the shared secret); see [API Reference § Webhooks](/reference/api#webhooks) for
+(it's the shared secret); see [API Reference § Webhooks](api.md#webhooks) for
 the full envelope shape and these bounds.
 
 | Field | Type | Default | Description |
@@ -147,7 +152,7 @@ idempotency can still key on it). There is no request signing; treat the URL its
 the shared secret, or put the endpoint behind your own auth.
 
 Event types are `lifecycle`, `intervention`, and `usage_alert`; see the
-[session lifecycle reference](/operations/session-lifecycle) and the linked webhook example
+[session lifecycle reference](../operations/session-lifecycle.md) and the linked webhook example
 for the full event catalogue. (The envelope also reserves a `fleet` type from the earlier
 multi-node design; nothing emits it today.)
 

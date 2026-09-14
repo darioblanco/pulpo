@@ -15,7 +15,7 @@ echo "==> Pre-commit: running tests..."
 # pulpo-e2e (the end-to-end scenario suite) is excluded here — it needs
 # pulpod/pulpo/fake-claude pre-built at fixed paths and a real tmux server, and the
 # full suite takes roughly a minute; run it manually with `make e2e` before a PR
-# that touches session/watchdog/harness/schedule behavior. See CLAUDE.md's Testing
+# that touches session/watchdog/harness/schedule behavior. See AGENTS.md's Testing
 # section.
 cargo test --workspace --exclude pulpo-e2e
 (cd web && PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --passWithNoTests)
