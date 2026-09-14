@@ -326,6 +326,30 @@ fn resolve_path(path: &str) -> String {
     }
 }
 
+/// Join a trailing `command: Vec<String>` (e.g. the argv after `--` in
+/// `pulpo spawn ... -- claude -p "fix the bug"`) into a single shell-quoted string for
+/// storage on the daemon and, eventually, execution.
+///
+/// `pulpod`'s `wrap_command` embeds this string verbatim inside a `sh -l -c '...'`
+/// wrapper that a real shell parses when the session's tmux pane starts (and the
+/// harness adapters `shell_words::split` it to rewrite flags before that). It must
+/// therefore already be valid POSIX shell syntax: `shell_words::join` quotes each
+/// argument that needs it (wrapping in single quotes, escaping embedded single quotes)
+/// so `shell_words::split` — used by the harness adapters and, ultimately, the shell
+/// itself — recovers the exact original argv, spaces/quotes/`$`/`;` and all. A plain
+/// `command.join(" ")` loses this: any argument containing whitespace or a shell
+/// metacharacter gets split apart or reinterpreted by the shell that finally runs it.
+///
+/// Returns `None` when no trailing command was given (bare `pulpo spawn <name>` spawns
+/// a plain shell, and the daemon takes an absent `command` field to mean that).
+fn join_command(command: &[String]) -> Option<String> {
+    if command.is_empty() {
+        None
+    } else {
+        Some(shell_words::join(command))
+    }
+}
+
 /// Derive a session name from a directory path (basename, kebab-cased).
 fn derive_session_name(path: &str) -> String {
     let basename = std::path::Path::new(path)
@@ -704,11 +728,7 @@ async fn execute_schedule(
             budget_cost,
             command,
         } => {
-            let cmd = if command.is_empty() {
-                None
-            } else {
-                Some(command.join(" "))
-            };
+            let cmd = join_command(command);
             let resolved_workdir = workdir.clone().unwrap_or_else(|| {
                 std::env::current_dir()
                     .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
@@ -1059,11 +1079,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             budget_cost,
             command,
         } => {
-            let cmd = if command.is_empty() {
-                None
-            } else {
-                Some(command.join(" "))
-            };
+            let cmd = join_command(command);
             // Resolve workdir: --workdir flag > current directory
             let resolved_workdir = workdir.clone().unwrap_or_else(|| {
                 std::env::current_dir()
@@ -1138,11 +1154,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             detach,
             command,
         } => {
-            let cmd = if command.is_empty() {
-                None
-            } else {
-                Some(command.join(" "))
-            };
+            let cmd = join_command(command);
             let mut body = serde_json::json!({});
             if let Some(n) = name {
                 body["name"] = serde_json::json!(n);
@@ -2299,6 +2311,72 @@ mod tests {
             err.contains("Could not connect to pulpod"),
             "Expected friendly error, got: {err}"
         );
+    }
+
+    /// Regression test for the v0.3.0 quoting bug on the `schedule add` path: the
+    /// `command` field in the POST body must round-trip through `shell_words::split`
+    /// back to the exact original argv — not `command.join(" ")`'s word-split
+    /// approximation, which would explode `-p "two words"` into two positional args
+    /// once the daemon later runs the stored string through a shell.
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_execute_schedule_add_preserves_quoted_multi_word_command() {
+        use axum::{Router, body::Bytes, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/schedules",
+            post(|body: Bytes| async move {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&body).expect("valid JSON body");
+                let command = value["command"]
+                    .as_str()
+                    .expect("command field is a string")
+                    .to_owned();
+                let parsed = shell_words::split(&command).expect("stored command re-parses");
+                assert_eq!(
+                    parsed,
+                    vec![
+                        "claude".to_owned(),
+                        "-p".to_owned(),
+                        "two words".to_owned(),
+                        "--model".to_owned(),
+                        "haiku".to_owned(),
+                    ],
+                    "stored command was {command:?}"
+                );
+                (StatusCode::OK, "{}".to_owned())
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::Schedule {
+                action: ScheduleAction::Add {
+                    name: "nightly".into(),
+                    cron: "0 3 * * *".into(),
+                    workdir: Some("/repo".into()),
+                    description: None,
+                    worktree: false,
+                    worktree_base: None,
+                    budget_cost: None,
+                    command: vec![
+                        "claude".into(),
+                        "-p".into(),
+                        "two words".into(),
+                        "--model".into(),
+                        "haiku".into(),
+                    ],
+                },
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "Created schedule \"nightly\"");
     }
 
     #[tokio::test]
@@ -3641,6 +3719,67 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo"]).unwrap();
         assert!(cli.command.is_none());
         assert!(cli.path.is_none());
+    }
+
+    #[test]
+    fn test_join_command_empty_is_none() {
+        assert_eq!(join_command(&[]), None);
+    }
+
+    #[test]
+    fn test_join_command_single_plain_word() {
+        assert_eq!(join_command(&["claude".into()]), Some("claude".into()));
+    }
+
+    /// Regression test for the v0.3.0 bug: `command.join(" ")` silently dropped
+    /// quoting, so `claude -p "Reply with exactly the word: pong" --model haiku`
+    /// stored (and later ran) as `claude -p Reply with exactly the word: pong
+    /// --model haiku` — the prompt exploded into stray positional arguments.
+    /// `join_command` must instead produce a string that `shell_words::split`
+    /// parses back to exactly the original argv.
+    fn assert_round_trips(argv: &[&str]) {
+        let owned: Vec<String> = argv.iter().map(|s| (*s).to_owned()).collect();
+        let joined = join_command(&owned).expect("non-empty argv joins to Some");
+        let parsed = shell_words::split(&joined)
+            .unwrap_or_else(|e| panic!("joined command {joined:?} did not re-parse: {e}"));
+        assert_eq!(parsed, owned, "joined command was {joined:?}");
+    }
+
+    #[test]
+    fn test_join_command_round_trips_argument_with_spaces() {
+        assert_round_trips(&[
+            "claude",
+            "-p",
+            "Reply with exactly the word: pong",
+            "--model",
+            "haiku",
+        ]);
+    }
+
+    #[test]
+    fn test_join_command_round_trips_argument_with_single_quote() {
+        assert_round_trips(&["claude", "-p", "it's a trap", "--model", "haiku"]);
+    }
+
+    #[test]
+    fn test_join_command_round_trips_argument_with_dollar_var() {
+        assert_round_trips(&["claude", "-p", "print $HOME please", "--model", "haiku"]);
+    }
+
+    #[test]
+    fn test_join_command_round_trips_argument_with_semicolon() {
+        assert_round_trips(&["claude", "-p", "do a; rm -rf /", "--model", "haiku"]);
+    }
+
+    #[test]
+    fn test_join_command_round_trips_all_special_chars_combined() {
+        assert_round_trips(&[
+            "claude",
+            "-p",
+            "it's $HOME; echo pong with spaces",
+            "--model",
+            "haiku",
+        ]);
     }
 
     #[test]

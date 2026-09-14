@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use pulpo_e2e::{
     Daemon, DaemonConfig, InterventionCode, SessionStatus, WebhookSink, init_git_repo,
-    read_fake_env, temp_workdir, wait_for_fake_state,
+    read_fake_env, temp_workdir, wait_for_fake_argv, wait_for_fake_state,
 };
 
 const SHORT: Duration = Duration::from_secs(15);
@@ -539,4 +539,78 @@ fn s11_generic_command_has_no_harness_and_ends_stopped() {
 
     daemon.input("s11-generic", Some("exit"));
     daemon.wait_status("s11-generic", SessionStatus::Stopped, SHORT);
+}
+
+// ---------------------------------------------------------------------------
+// S12 — quoted spawn arguments survive to the harness (v0.3.0 quoting bug)
+// ---------------------------------------------------------------------------
+
+/// Regression test for the v0.3.0 bug reported on the owner's machine:
+/// `pulpo spawn smoke --workdir ~/x -d -- claude -p "Reply with exactly the word:
+/// pong" --model haiku` stored (and ran) the command as
+/// `claude -p Reply with exactly the word: pong --model haiku` — the CLI joined the
+/// trailing `command: Vec<String>` with a plain `command.join(" ")`, so every shell
+/// downstream (the harness adapter's `shell_words::split`, and ultimately the shell
+/// `pulpod`'s `wrap_command` runs the session under) split and reinterpreted the
+/// prompt into stray positional arguments instead of treating it as Claude Code's `-p`
+/// value. `pulpo-cli` now joins with `shell_words::join`, which quotes each argument
+/// so it round-trips exactly.
+///
+/// This proves the fix end to end through every real hop: the `pulpo` CLI, the
+/// daemon's Claude adapter (`prepare_spawn`'s split/rewrite/join), `wrap_command`'s
+/// own shell-escaping, and the real shell that finally execs the harness — by reading
+/// back `fake-claude`'s own recorded `argv` (`pulpo-fake-argv.json`), not just
+/// `pulpod`'s view of the stored command string.
+#[test]
+fn s12_spawn_quoted_prompt_reaches_harness_intact() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "start,hang");
+    let claude = daemon.fake_claude_bin();
+    let claude_str = claude.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s12-quoted-spawn",
+        &workdir,
+        &[],
+        &[
+            &claude_str,
+            "-p",
+            "Reply with exactly the word: pong",
+            "--model",
+            "haiku",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    daemon.wait_status("s12-quoted-spawn", SessionStatus::Active, SHORT);
+    let argv = wait_for_fake_argv(&workdir, SHORT);
+
+    // The daemon's Claude adapter splices `--session-id <uuid> --settings <path>`
+    // right after argv0, so `-p`/`--model` are not necessarily at fixed indices —
+    // find them by value instead of asserting on the whole argv shape.
+    let p_index = argv
+        .iter()
+        .position(|a| a == "-p")
+        .unwrap_or_else(|| panic!("-p flag missing from recorded argv: {argv:?}"));
+    assert_eq!(
+        argv.get(p_index + 1).map(String::as_str),
+        Some("Reply with exactly the word: pong"),
+        "the prompt must survive as ONE argument, not split by a shell along the way; \
+         full argv: {argv:?}"
+    );
+
+    let model_index = argv
+        .iter()
+        .position(|a| a == "--model")
+        .unwrap_or_else(|| panic!("--model flag missing from recorded argv: {argv:?}"));
+    assert_eq!(
+        argv.get(model_index + 1).map(String::as_str),
+        Some("haiku"),
+        "full argv: {argv:?}"
+    );
 }

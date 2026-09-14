@@ -100,8 +100,8 @@ private tmux server via `TMUX_TMPDIR`) and exposes `spawn`/`wait_status`/`sessio
 adding `fake-codex`/`fake-pi` later is one more `src/bin/*.rs` file, not a new
 harness.
 
-**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 12 `#[test]` functions across
-11 numbered scenarios — S7 covers two: an idle-timeout kill and a
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 13 `#[test]` functions across
+12 numbered scenarios — S7 covers two: an idle-timeout kill and a
 `--idle-threshold 0` override): S1 spawn
 reaches Active with harness metadata; S2 a permission prompt sets `needs_input` and
 `pulpo input` resolves it; S3 a clean exit resolves through Ready then Stopped and
@@ -114,7 +114,16 @@ kill intervention fires, and `--idle-threshold 0` disables the time-based
 transition for a generic command; S8 a due schedule fires a session; S9 two
 worktrees on one repo stay distinct, survive a plain stop, and are removed by
 `pulpo cleanup`; S10 hooks reach a non-default port (`PULPO_URL`); S11 a generic
-(harness-less) command uses the scrollback/exit-marker path and ends Stopped.
+(harness-less) command uses the scrollback/exit-marker path and ends Stopped; S12 a
+spawned command's quoted, multi-word `-p` prompt (and a later `--model` flag) reaches
+the harness as intact arguments — `fake-claude` records its own `argv` to
+`pulpo-fake-argv.json`, proving `shell_words::join`/`split` round-trip through the CLI,
+the harness adapter's rewrite, and `wrap_command`'s own shell-escaping (regression
+test for the v0.3.0 `command.join(" ")` quoting bug); the same fix on the
+`schedule add` path is covered by a `pulpo-cli` unit test asserting the stored
+`command` string round-trips, rather than a second slow (cron-minute-boundary) e2e
+wait — S8 already proves a schedule's fired session goes through the identical spawn
+path S12 exercises.
 
 **Running it**: `make e2e` (builds `pulpod`/`pulpo`/`fake-claude` first, then runs
 the suite serially — `cargo test -p pulpo-e2e -- --test-threads=1`; each test boots
