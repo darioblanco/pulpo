@@ -663,6 +663,16 @@ impl HarnessAdapter for CodexAdapter {
         Some(shell_words::join(&tokens))
     }
 
+    /// Unlike Claude's `--continue` or pi's `-c`/`--continue` (both scoped to "the
+    /// most recent conversation in this cwd"), `resume --last` above is scoped to
+    /// this session's own isolated `CODEX_HOME` (`rewrite_spawn` keys it by
+    /// `data_dir`/`session_id`, never by `ctx.workdir`) — so it keeps resuming the
+    /// right thread even when `effective_resume_workdir` has fallen back to a
+    /// different directory because the session's worktree was removed.
+    fn fallback_resume_is_cwd_scoped(&self) -> bool {
+        false
+    }
+
     fn parse_event(&self, raw: &Value) -> Result<Option<HarnessEvent>> {
         if let Some(hook_event_name) = raw.get("hook_event_name").and_then(Value::as_str) {
             return Ok(parse_hook_event(raw, hook_event_name));
@@ -1296,6 +1306,14 @@ mod tests {
     #[test]
     fn test_fallback_resume_command_none_when_not_codex() {
         assert!(CodexAdapter.fallback_resume_command("bash").is_none());
+    }
+
+    #[test]
+    fn test_fallback_resume_is_cwd_scoped_is_false() {
+        // Overrides the trait's conservative default: `resume --last` is keyed by
+        // this session's own isolated CODEX_HOME, not by cwd, so
+        // resolve_resume_command must not refuse it just because a worktree is gone.
+        assert!(!CodexAdapter.fallback_resume_is_cwd_scoped());
     }
 
     #[test]

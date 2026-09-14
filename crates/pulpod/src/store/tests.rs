@@ -100,7 +100,15 @@ async fn test_migrate_uses_sqlx_migrations_table() {
 async fn store_at_migration_0007() -> Store {
     let tmpdir = tempfile::tempdir().unwrap();
     let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+    store_at_migration_0007_in(tmpdir.path().to_str().unwrap()).await
+}
+
+/// Like [`store_at_migration_0007`], but against a caller-owned `dir` (the
+/// canonical `state.db` path) instead of a freshly leaked tempdir — for tests
+/// that need to inspect or manipulate the directory afterward (e.g. forcing
+/// the pre-migration backup copy to fail).
+async fn store_at_migration_0007_in(dir: &str) -> Store {
+    let store = Store::new(dir).await.unwrap();
 
     let migrations_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let partial_dir = tempfile::tempdir().unwrap();
@@ -387,6 +395,46 @@ async fn test_open_and_migrate_recovers_from_downgrade_version_missing() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+/// #126 follow-up: a failure unrelated to the database's own integrity — here, the
+/// pre-migration backup copy itself failing — must NOT quarantine `state.db`.
+/// Forces the failure deterministically by putting a directory at the exact path
+/// `backup_before_migrating` would copy `state.db` to, rather than fiddling with
+/// filesystem permissions (which the earlier connect-time-only unwritable-dir test
+/// already covers, and which no longer even reaches the backup step under the new
+/// classification — see `is_quarantine_worthy`).
+#[tokio::test]
+async fn test_open_and_migrate_refuses_without_quarantine_when_backup_fails() {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let dir = tmpdir.path().to_str().unwrap();
+    // A database with pending migrations (8, 9) so `migrate()` attempts a
+    // pre-migration backup at all.
+    store_at_migration_0007_in(dir).await;
+
+    let backup_path = format!("{dir}/state.db.pre-{}", env!("CARGO_PKG_VERSION"));
+    std::fs::create_dir(&backup_path).unwrap();
+
+    // `Store` isn't `Debug`, so `.unwrap_err()` (which needs `T: Debug` to format the
+    // Ok case in its panic message) doesn't apply here — match instead.
+    let err = match crate::store::open_and_migrate(dir).await {
+        Ok(_) => panic!("expected open_and_migrate to refuse when the backup copy fails"),
+        Err(e) => e,
+    };
+    assert!(format!("{err:#}").contains("failed to back up"));
+
+    // The original database must still be at the canonical path, untouched — not
+    // quarantined — since a failed backup copy says nothing about its integrity.
+    assert!(std::path::Path::new(&format!("{dir}/state.db")).exists());
+    let unusable: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains("unusable"))
+        .collect();
+    assert!(
+        unusable.is_empty(),
+        "must not quarantine on a backup failure: {unusable:?}"
+    );
 }
 
 #[tokio::test]

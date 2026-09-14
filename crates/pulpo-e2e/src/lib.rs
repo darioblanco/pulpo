@@ -67,6 +67,46 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// Recursively list `dir`'s contents (one path per line, relative to `dir`, with
+/// file sizes) for diagnostics — never panics; a missing/unreadable directory or
+/// entry is reported inline instead. Used by `Daemon::timeout_diagnostics` to dump
+/// a Codex session's isolated `CODEX_HOME/sessions/` tree.
+fn list_dir_recursive(dir: &Path) -> String {
+    fn walk(dir: &Path, base: &Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            let _ = writeln!(out, "<unreadable: {}>", dir.display());
+            return;
+        };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(std::fs::DirEntry::path);
+        for entry in entries {
+            let path = entry.path();
+            let rel = path.strip_prefix(base).unwrap_or(&path);
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => {
+                    let _ = writeln!(out, "{}/", rel.display());
+                    walk(&path, base, out);
+                }
+                Ok(_) => {
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    let _ = writeln!(out, "{} ({size} bytes)", rel.display());
+                }
+                Err(error) => {
+                    let _ = writeln!(out, "{} <stat failed: {error}>", rel.display());
+                }
+            }
+        }
+    }
+
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    walk(dir, dir, &mut out);
+    if out.is_empty() {
+        out.push_str("<empty or missing>\n");
+    }
+    out
+}
+
 /// Resolve a path to its canonical (symlink-free, absolute) form, falling back to
 /// the original path if canonicalization fails (e.g. it doesn't exist yet).
 ///
@@ -517,7 +557,9 @@ impl Daemon {
 
     /// Poll `session(name)` until its status matches, or panic after `timeout`.
     pub fn wait_status(&self, name: &str, status: SessionStatus, timeout: Duration) -> Session {
-        self.wait_for(name, timeout, |s| s.status == status)
+        self.wait_for_impl(name, timeout, &format!("status == {status:?}"), |s| {
+            s.status == status
+        })
     }
 
     /// Poll `session(name)` until `pred` accepts it, or panic after `timeout` with
@@ -526,6 +568,20 @@ impl Daemon {
         &self,
         name: &str,
         timeout: Duration,
+        pred: impl FnMut(&Session) -> bool,
+    ) -> Session {
+        self.wait_for_impl(name, timeout, "<custom predicate>", pred)
+    }
+
+    /// Shared implementation behind `wait_status`/`wait_for`. `desc` (shown in the
+    /// timeout panic) is purely cosmetic — `wait_status` passes the exact status it
+    /// was waiting for; `wait_for` can't introspect its closure, so it passes a
+    /// generic placeholder.
+    fn wait_for_impl(
+        &self,
+        name: &str,
+        timeout: Duration,
+        desc: &str,
         mut pred: impl FnMut(&Session) -> bool,
     ) -> Session {
         let start = Instant::now();
@@ -539,12 +595,77 @@ impl Daemon {
             }
             if start.elapsed() > timeout {
                 panic!(
-                    "timed out after {timeout:?} waiting for session {name:?}; \
-                     last observed: {last:#?}"
+                    "timed out after {timeout:?} waiting for session {name:?} to satisfy \
+                     [{desc}]; last observed: {last:#?}\n{}",
+                    self.timeout_diagnostics(last.as_ref())
                 );
             }
             std::thread::sleep(Duration::from_millis(150));
         }
+    }
+
+    /// Best-effort extra context dumped alongside a `wait_status`/`wait_for` timeout
+    /// panic, so a CI-only failure explains itself without a follow-up run: the
+    /// daemon's own log tail, the fake harness's argv/marker files (read from
+    /// wherever the session actually ran — its worktree if it has one and the
+    /// directory still exists, else its plain workdir), and — for a Codex session —
+    /// a listing of its isolated `CODEX_HOME`'s `sessions/` tree (where the fake
+    /// writes its rollout files, and where `resume --last`'s rollout-discovery
+    /// fallback looks). Every piece is best-effort: a missing file/dir is reported
+    /// inline rather than failing the dump itself.
+    fn timeout_diagnostics(&self, last: Option<&Session>) -> String {
+        use std::fmt::Write as _;
+
+        let mut out = String::new();
+        let _ = writeln!(out, "--- daemon log (last 40 lines) ---");
+        let log = self.daemon_log();
+        let tail_start = log.lines().count().saturating_sub(40);
+        for line in log.lines().skip(tail_start) {
+            let _ = writeln!(out, "{line}");
+        }
+
+        let Some(session) = last else {
+            let _ = writeln!(out, "(no session was ever observed — nothing more to dump)");
+            return out;
+        };
+
+        let dir = session
+            .worktree_path
+            .as_deref()
+            .map(Path::new)
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| Path::new(&session.workdir));
+        let _ = writeln!(out, "--- fake harness files in {} ---", dir.display());
+        for file in [
+            "pulpo-fake-argv.json",
+            "pulpo-fake-state.json",
+            "pulpo-fake-scenario.txt",
+            "pulpo-fake-env.txt",
+            "pulpo-fake-codex-env.json",
+        ] {
+            let path = dir.join(file);
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let _ = writeln!(out, "{file}:\n{content}");
+                }
+                Err(error) => {
+                    let _ = writeln!(out, "{file}: <unavailable: {error}>");
+                }
+            }
+        }
+
+        if session.harness.as_deref() == Some("codex") {
+            let sessions_dir = self
+                .data_dir
+                .join("harness")
+                .join(session.id.to_string())
+                .join("codex-home")
+                .join("sessions");
+            let _ = writeln!(out, "--- ls -R {} ---", sessions_dir.display());
+            let _ = write!(out, "{}", list_dir_recursive(&sessions_dir));
+        }
+
+        out
     }
 
     /// `pulpo stop <name> [--purge]`. Asserts the CLI itself reported success —
@@ -670,6 +791,26 @@ impl Daemon {
             .unwrap_or_else(|e| panic!("respawn pulpod: {e}"));
         self.child = Some(child);
         self.wait_healthy(Duration::from_secs(20));
+    }
+
+    /// Try to start a *second* `pulpod` pointed at this same config/data dir while
+    /// this daemon is still running — for the single-instance-lock scenario (S19).
+    /// Unlike `restart_daemon`, this daemon's own `child` is left untouched; the
+    /// second process is spawned, waited on (it must exit quickly — the
+    /// single-instance lock check happens before `state.db` is even opened, well
+    /// before the port bind this data dir's config would otherwise conflict on),
+    /// and its output returned for the caller to assert on.
+    #[must_use]
+    pub fn try_start_second_instance(&self, timeout: Duration) -> std::process::Output {
+        let mut cmd = Command::new(&self.pulpod_bin);
+        cmd.arg("--config")
+            .arg(&self.config_path)
+            .env("HOME", &self.home_dir)
+            .env("PATH", &self.path_env)
+            .env("TMUX_TMPDIR", &self.tmux_tmp)
+            .env_remove("PULPO_URL")
+            .stdin(Stdio::null());
+        run_with_timeout(cmd, timeout)
     }
 }
 

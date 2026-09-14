@@ -1,4 +1,5 @@
 mod core;
+pub mod lock;
 mod rows;
 mod schedules;
 mod session_interventions;

@@ -232,21 +232,41 @@ pub struct RecoveredUnusableDb {
 
 /// Open (creating if absent) and migrate the database at
 /// `{data_dir}/state.db`, recovering automatically from an unusable database
-/// instead of crash-looping on it.
+/// instead of crash-looping on it — but only when the failure means the file
+/// itself is corrupt or on a schema this binary can't read (see
+/// [`is_quarantine_worthy`]). Anything else (a lock held by another process,
+/// an I/O failure, a failed pre-migration backup copy) is *not* quarantined:
+/// the file could be a perfectly healthy database, and renaming a healthy
+/// database out from under a process that still holds a valid handle to it
+/// would be data loss (see the single-instance lock in `store::lock`, which
+/// exists precisely to keep two `pulpod`s from racing to find out).
 ///
 /// A pre-0.1.0 (pre-migration) database, a downgrade (a newer `pulpod`
 /// having applied a migration this binary doesn't know — surfaces as sqlx's
-/// `VersionMissing`), or an outright corrupt/non-SQLite file all fail here.
-/// Rather than propagating that error and refusing to start, the unusable
-/// file (and any `-wal`/`-shm` siblings) is renamed to
-/// `state.db.unusable-<UTC timestamp>` and a fresh database is opened and
-/// migrated in its place. An error is returned only if that fresh attempt
-/// *also* fails — the sole remaining "refuse to start" path.
+/// `VersionMissing`/`VersionMismatch`), or an outright corrupt/non-SQLite
+/// file all fail here in a quarantine-worthy way: the unusable file (and any
+/// `-wal`/`-shm` siblings) is renamed to `state.db.unusable-<UTC timestamp>`
+/// and a fresh database is opened and migrated in its place. An error is
+/// returned if that fresh attempt *also* fails, or if the original failure
+/// wasn't quarantine-worthy in the first place — the caller (`build_app`)
+/// treats either as "refuse to start" (exit non-zero without touching the
+/// database).
 pub async fn open_and_migrate(data_dir: &str) -> Result<(Store, Option<RecoveredUnusableDb>)> {
     match try_open_and_migrate(data_dir).await {
         Ok(store) => Ok((store, None)),
         Err(first_err) => {
             let reason = format!("{first_err:#}");
+            if !is_quarantine_worthy(&first_err) {
+                error!(
+                    reason = %reason,
+                    "store: database open/migrate failed for a reason that is neither \
+                     corruption nor a schema incompatibility (e.g. a lock held by another \
+                     process, an I/O failure, or a failed pre-migration backup) — refusing to \
+                     start rather than risk quarantining a possibly-healthy database"
+                );
+                return Err(first_err);
+            }
+
             let moved_to = quarantine_unusable_db(data_dir).with_context(|| {
                 format!("database at {data_dir}/state.db is unusable ({reason}) and could not be quarantined")
             })?;
@@ -269,6 +289,44 @@ async fn try_open_and_migrate(data_dir: &str) -> Result<Store> {
     let store = Store::new(data_dir).await?;
     store.migrate().await?;
     Ok(store)
+}
+
+/// Whether an error from [`try_open_and_migrate`] means `state.db` itself is
+/// corrupt or on a schema this binary can't read — the only classes of
+/// failure where quarantining (renaming the file out of the way and starting
+/// fresh) is safe:
+///
+/// - The legacy-schema rejection (`Store::reject_unsupported_legacy_schema`):
+///   a pre-0.1.0 database with a `sessions` table but no `_sqlx_migrations`.
+/// - SQLite reporting the file isn't a database at all, or is corrupt
+///   (`"file is not a database"` / `"malformed"` — e.g. `SQLITE_NOTADB`,
+///   `SQLITE_CORRUPT`).
+/// - `sqlx::migrate::MigrateError::VersionMissing`/`VersionMismatch`: a
+///   downgrade where a newer `pulpod` applied a migration (or changed one)
+///   that this binary's embedded migrator doesn't recognize.
+///
+/// Everything else — `"database is locked"`, a plain I/O error, a failed
+/// backup copy — returns `false`: those say nothing about the file's own
+/// integrity, so quarantining on them risks renaming a perfectly healthy
+/// database out from under a process that still holds a valid handle to it.
+fn is_quarantine_worthy(err: &anyhow::Error) -> bool {
+    // sqlx's migrator returns its own error type directly (`MIGRATOR.run(..).await?`
+    // in `Store::migrate`, with no added `.context()`), so it survives as the exact
+    // root of the anyhow chain here — downcast rather than string-match so a
+    // `Dirty`/`VersionTooOld`/`Execute(..)` (e.g. wrapping a "database is locked"
+    // error) variant is correctly treated as NOT quarantine-worthy.
+    if let Some(migrate_err) = err.downcast_ref::<sqlx::migrate::MigrateError>() {
+        return matches!(
+            migrate_err,
+            sqlx::migrate::MigrateError::VersionMissing(_)
+                | sqlx::migrate::MigrateError::VersionMismatch(_)
+        );
+    }
+
+    let rendered = format!("{err:#}").to_lowercase();
+    rendered.contains("unsupported legacy database schema")
+        || rendered.contains("file is not a database")
+        || rendered.contains("malformed")
 }
 
 /// Rename `{data_dir}/state.db` (and any `-wal`/`-shm` siblings) out of the
@@ -448,5 +506,75 @@ mod tests {
         std::fs::set_permissions(tmpdir.path(), perms).unwrap();
 
         assert!(result.is_err(), "expected open_and_migrate to refuse");
+    }
+
+    // -- is_quarantine_worthy: error classification (#126 follow-up) ------------
+
+    #[test]
+    fn test_is_quarantine_worthy_legacy_schema_rejection() {
+        let err = anyhow::anyhow!(
+            "unsupported legacy database schema detected; delete /data/state.db to reinitialize"
+        );
+        assert!(is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_sqlite_not_a_database() {
+        let err =
+            anyhow::anyhow!("error returned from database: (code: 26) file is not a database");
+        assert!(is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_sqlite_malformed() {
+        let err = anyhow::anyhow!(
+            "error returned from database: (code: 11) database disk image is malformed"
+        );
+        assert!(is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_migrate_version_missing() {
+        let err: anyhow::Error = sqlx::migrate::MigrateError::VersionMissing(9999).into();
+        assert!(is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_migrate_version_mismatch() {
+        let err: anyhow::Error = sqlx::migrate::MigrateError::VersionMismatch(3).into();
+        assert!(is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_false_for_locked_database() {
+        let err = anyhow::anyhow!("error returned from database: (code: 5) database is locked");
+        assert!(!is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_false_for_plain_io_error() {
+        let err = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Permission denied (os error 13)",
+        ));
+        assert!(!is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_false_for_failed_backup() {
+        let err = anyhow::anyhow!("failed to back up /data/state.db to /data/state.db.pre-0.3.1");
+        assert!(!is_quarantine_worthy(&err));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_false_for_other_migrate_error_variants() {
+        // A `MigrateError` variant other than `VersionMissing`/`VersionMismatch` —
+        // e.g. a partially-applied migration, or `Execute` wrapping a transient
+        // "database is locked" — must not be treated as corruption.
+        let dirty: anyhow::Error = sqlx::migrate::MigrateError::Dirty(1).into();
+        assert!(!is_quarantine_worthy(&dirty));
+
+        let too_old: anyhow::Error = sqlx::migrate::MigrateError::VersionTooOld(1, 2).into();
+        assert!(!is_quarantine_worthy(&too_old));
     }
 }

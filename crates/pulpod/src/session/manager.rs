@@ -500,21 +500,51 @@ impl SessionManager {
     /// — rather than silently replaying the original command as a brand new
     /// conversation. Falls back further still to the plain original command when the
     /// adapter has neither (or the session predates harness adapters entirely).
-    async fn resolve_resume_command(&self, session: &Session, effective_workdir: &str) -> String {
+    ///
+    /// Refuses (`Err`) rather than guess when that fallback is cwd-scoped
+    /// (`HarnessAdapter::fallback_resume_is_cwd_scoped`) and `effective_workdir` isn't
+    /// where the harness's conversation actually ran (`original_resume_workdir`) — the
+    /// session's worktree was removed, `effective_resume_workdir` silently substituted
+    /// the plain `workdir`, and running e.g. `claude --continue` there would resume
+    /// whatever conversation happens to be most recent *in that other directory*,
+    /// which has nothing to do with this session.
+    async fn resolve_resume_command(
+        &self,
+        session: &Session,
+        effective_workdir: &str,
+    ) -> Result<String> {
         let adapter = session
             .harness
             .as_deref()
             .and_then(|id| self.harness_registry.get(id))
             .unwrap_or_else(|| self.harness_registry.resolve(&session.command));
 
-        let base_command = session
+        let exact_resume = session
             .harness_session_id
             .as_deref()
             .and_then(|harness_session_id| {
                 adapter.resume_command(&session.command, harness_session_id)
-            })
-            .or_else(|| adapter.fallback_resume_command(&session.command))
-            .unwrap_or_else(|| session.command.clone());
+            });
+
+        let base_command = if let Some(cmd) = exact_resume {
+            cmd
+        } else if let Some(cmd) = adapter.fallback_resume_command(&session.command) {
+            let original_workdir = Self::original_resume_workdir(session);
+            if adapter.fallback_resume_is_cwd_scoped() && effective_workdir != original_workdir {
+                let harness_id = adapter.id();
+                let session_name = session.name.as_str();
+                bail!(
+                    "cannot resume '{session_name}': its original workdir \
+                     ({original_workdir}) is gone and no {harness_id} session id is known — \
+                     {harness_id}'s fallback resume runs from the current directory \
+                     ({effective_workdir}) instead and could silently continue an unrelated \
+                     conversation there; start a new session instead"
+                );
+            }
+            cmd
+        } else {
+            session.command.clone()
+        };
 
         let session_id = session.id.to_string();
         let harness_ctx = harness::SpawnContext {
@@ -543,7 +573,7 @@ impl SessionManager {
             )
             .await;
 
-        apply_extra_env(&spawn_plan.command, &spawn_plan.env)
+        Ok(apply_extra_env(&spawn_plan.command, &spawn_plan.env))
     }
 
     async fn refresh_backend_session_id(&self, session: &Session) {
@@ -583,6 +613,20 @@ impl SessionManager {
             .filter(|p| std::path::Path::new(p).exists())
             .cloned()
             .unwrap_or_else(|| session.workdir.clone())
+    }
+
+    /// The workdir a harness's own conversation actually ran in — the worktree if
+    /// the session used one, else the plain `workdir` — regardless of whether that
+    /// worktree still exists on disk. Contrast with [`effective_resume_workdir`],
+    /// which silently substitutes `workdir` once the worktree is gone: comparing
+    /// the two is exactly how `resolve_resume_command` detects that substitution
+    /// happened, to refuse a cwd-scoped fallback resume rather than let it run
+    /// somewhere else.
+    fn original_resume_workdir(session: &Session) -> &str {
+        session
+            .worktree_path
+            .as_deref()
+            .unwrap_or(session.workdir.as_str())
     }
 
     /// The new tmux session id for a session being resumed (backend already dead) —
@@ -643,7 +687,7 @@ impl SessionManager {
         self.clear_harness_heuristic_state(session).await;
         let command = self
             .resolve_resume_command(session, effective_workdir)
-            .await;
+            .await?;
         self.recreate_backend_session(session, effective_workdir, create_id, &command)?;
         self.refresh_backend_session_id(session).await;
         Ok(())
@@ -4605,6 +4649,163 @@ mod tests {
         assert!(create_call.contains("--continue"));
         assert!(create_call.contains("-e "));
         assert!(!create_call.contains("--session-id"));
+    }
+
+    // -- fallback resume refused when its worktree is gone (#128 follow-up) ------
+
+    #[test]
+    fn test_original_resume_workdir_prefers_worktree_path_even_if_gone() {
+        // Unlike `effective_resume_workdir`, this does not check whether the path
+        // still exists on disk — it reports where the harness conversation
+        // actually ran, so callers can detect the "silently substituted" case.
+        let session = Session {
+            workdir: "/repo".into(),
+            worktree_path: Some("/repo/.worktrees/gone".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            SessionManager::original_resume_workdir(&session),
+            "/repo/.worktrees/gone"
+        );
+    }
+
+    #[test]
+    fn test_original_resume_workdir_falls_back_to_workdir_without_worktree() {
+        let session = Session {
+            workdir: "/repo".into(),
+            worktree_path: None,
+            ..Default::default()
+        };
+        assert_eq!(SessionManager::original_resume_workdir(&session), "/repo");
+    }
+
+    /// Build a session (harness set, no known `harness_session_id`) whose
+    /// `worktree_path` points at a directory that has already been removed —
+    /// `effective_resume_workdir` will fall back to `real_workdir` (which does
+    /// exist, so `resume_session`'s workdir validation passes), exactly the
+    /// "worktree gone" case `resolve_resume_command`'s refusal guards against.
+    fn worktree_gone_session(
+        name: &str,
+        harness: &str,
+        command: &str,
+        real_workdir: &std::path::Path,
+        removed_worktree_path: String,
+    ) -> Session {
+        Session {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            workdir: real_workdir.to_string_lossy().into_owned(),
+            worktree_path: Some(removed_worktree_path),
+            command: command.into(),
+            harness: Some(harness.into()),
+            harness_session_id: None,
+            status: SessionStatus::Lost,
+            backend_session_id: Some(name.into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_claude_fallback_refuses_when_worktree_gone() {
+        // Claude's `--continue` fallback means "the most recent conversation in
+        // the current working directory" — if the session's worktree was removed
+        // and `effective_resume_workdir` silently falls back to the plain
+        // `workdir`, running `--continue` there could resume a completely
+        // unrelated conversation. Must refuse instead of guessing.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let real_workdir = tempfile::tempdir().unwrap();
+        let removed_worktree = tempfile::tempdir().unwrap();
+        let removed_worktree_path = removed_worktree.path().to_str().unwrap().to_owned();
+        drop(removed_worktree); // the worktree no longer exists on disk
+
+        let session = worktree_gone_session(
+            "claude-worktree-gone",
+            "claude",
+            "claude -p 'fix'",
+            real_workdir.path(),
+            removed_worktree_path,
+        );
+        mgr.store().insert_session(&session).await.unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let error = mgr
+            .resume_session(&session.id.to_string())
+            .await
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("worktree"), "{message}");
+        assert!(message.contains("claude"), "{message}");
+        assert!(message.contains("start a new session"), "{message}");
+
+        let calls = backend.calls.lock().unwrap();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("create:")),
+            "must not spawn a fallback resume from the wrong directory: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_pi_fallback_refuses_when_worktree_gone() {
+        // pi's `-c`/`--continue` fallback is documented (pi.rs's module doc) as
+        // scoped to `(cwd, sessionDir)` — "most recent session in this cwd" —
+        // the same cwd-dependent shape as Claude's `--continue`, so it must be
+        // refused the same way when the worktree is gone.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let real_workdir = tempfile::tempdir().unwrap();
+        let removed_worktree = tempfile::tempdir().unwrap();
+        let removed_worktree_path = removed_worktree.path().to_str().unwrap().to_owned();
+        drop(removed_worktree);
+
+        let session = worktree_gone_session(
+            "pi-worktree-gone",
+            "pi",
+            "pi -p 'fix'",
+            real_workdir.path(),
+            removed_worktree_path,
+        );
+        mgr.store().insert_session(&session).await.unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let error = mgr
+            .resume_session(&session.id.to_string())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("start a new session"));
+
+        let calls = backend.calls.lock().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("create:")));
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_codex_fallback_still_works_when_worktree_gone() {
+        // Codex's `resume --last` fallback is keyed by this session's own
+        // isolated CODEX_HOME (under data_dir/harness/<session_id>/), never by
+        // cwd — so unlike Claude/pi it must NOT be refused just because the
+        // original worktree is gone. See also S16's e2e extension of this case.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let real_workdir = tempfile::tempdir().unwrap();
+        let removed_worktree = tempfile::tempdir().unwrap();
+        let removed_worktree_path = removed_worktree.path().to_str().unwrap().to_owned();
+        drop(removed_worktree);
+
+        let session = worktree_gone_session(
+            "codex-worktree-gone",
+            "codex",
+            "codex -p 'fix'",
+            real_workdir.path(),
+            removed_worktree_path,
+        );
+        mgr.store().insert_session(&session).await.unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(create_call.contains("resume"));
+        assert!(create_call.contains("--last"));
     }
 
     #[tokio::test]
