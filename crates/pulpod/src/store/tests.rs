@@ -635,11 +635,15 @@ async fn test_open_and_migrate_recovers_from_downgrade_version_missing() {
 async fn test_open_and_migrate_refuses_without_quarantine_when_backup_fails() {
     let tmpdir = tempfile::tempdir().unwrap();
     let dir = tmpdir.path().to_str().unwrap();
-    // A database with pending migrations (8, 9) so `migrate()` attempts a
+    // A database with pending migrations (8, 9, 10) so `migrate()` attempts a
     // pre-migration backup at all.
     store_at_migration_0007_in(dir).await;
 
-    let backup_path = format!("{dir}/state.db.pre-{}", env!("CARGO_PKG_VERSION"));
+    // Backups are named after the highest *applied* migration
+    // (`backup_before_migrating`), so for a 0007-shaped fixture the copy targets
+    // `state.db.pre-m7`. Occupy that exact path with a directory so the copy
+    // fails deterministically on every platform.
+    let backup_path = format!("{dir}/state.db.pre-m7");
     std::fs::create_dir(&backup_path).unwrap();
 
     // `Store` isn't `Debug`, so `.unwrap_err()` (which needs `T: Debug` to format the
