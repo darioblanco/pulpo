@@ -160,6 +160,32 @@ pub fn read_fake_state(workdir: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&content).ok()
 }
 
+/// Read `<workdir>/pulpo-fake-codex-env.json` (written by `fake-codex` at startup) —
+/// its own check of whether `auth.json` and the symlinked real-home entries the
+/// Codex adapter seeds into the isolated `CODEX_HOME` (`AGENTS.md`, `skills`, ...)
+/// actually exist/resolve. `None` when the file doesn't exist yet.
+#[must_use]
+pub fn read_fake_codex_env(workdir: &Path) -> Option<serde_json::Value> {
+    let content = std::fs::read_to_string(workdir.join("pulpo-fake-codex-env.json")).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Poll `read_fake_codex_env` until it appears, or panic after `timeout`.
+pub fn wait_for_fake_codex_env(workdir: &Path, timeout: Duration) -> serde_json::Value {
+    let start = Instant::now();
+    loop {
+        if let Some(value) = read_fake_codex_env(workdir) {
+            return value;
+        }
+        if start.elapsed() > timeout {
+            panic!(
+                "timed out after {timeout:?} waiting for pulpo-fake-codex-env.json at {workdir:?}"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Poll `read_fake_state` until `pred` accepts it, or panic after `timeout`.
 pub fn wait_for_fake_state(
     workdir: &Path,
@@ -263,17 +289,30 @@ impl Daemon {
 
         let pulpod_bin = debug_bin("pulpod");
         let pulpo_bin = debug_bin("pulpo");
-        let fake_claude_bin = debug_bin("fake-claude");
-        let claude_link = fakebin_dir.join("claude");
-        std::fs::copy(&fake_claude_bin, &claude_link).expect("stage fake claude binary");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&claude_link)
-                .expect("stat staged fake claude binary")
-                .permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&claude_link, perms).expect("chmod fake claude binary");
+        // Stage every fake harness binary under `fakebin_dir`, named exactly like the
+        // real CLI it imitates — `HarnessRegistry` resolves a command by the basename
+        // of argv[0], so a scenario using `daemon.fake_bin("codex")`'s path (not the
+        // bare word) reaches the Codex adapter the same way spawning real `codex`
+        // would.
+        for (bin_name, harness_name) in [
+            ("fake-claude", "claude"),
+            ("fake-codex", "codex"),
+            ("fake-pi", "pi"),
+        ] {
+            let fake_bin = debug_bin(bin_name);
+            let link = fakebin_dir.join(harness_name);
+            std::fs::copy(&fake_bin, &link)
+                .unwrap_or_else(|e| panic!("stage {bin_name} binary: {e}"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&link)
+                    .unwrap_or_else(|e| panic!("stat staged {bin_name} binary: {e}"))
+                    .permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&link, perms)
+                    .unwrap_or_else(|e| panic!("chmod {bin_name} binary: {e}"));
+            }
         }
 
         let port = free_port();
@@ -364,12 +403,38 @@ impl Daemon {
         daemon
     }
 
-    /// Absolute path to the staged fake harness binary, named `claude` so the
-    /// daemon's Claude adapter matches it by basename — pass this (not the bare
-    /// word `claude`) as the spawned command's argv0 in every scenario.
+    /// Absolute path to a staged fake harness binary, named `claude`/`codex`/`pi` so
+    /// the daemon's harness registry matches it by basename — pass this (not the
+    /// bare harness name) as the spawned command's argv0 in every scenario.
+    #[must_use]
+    pub fn fake_bin(&self, harness: &str) -> PathBuf {
+        self.fakebin_dir.join(harness)
+    }
+
+    /// Absolute path to the staged fake Claude Code binary (`fake_bin("claude")`).
     #[must_use]
     pub fn fake_claude_bin(&self) -> PathBuf {
-        self.fakebin_dir.join("claude")
+        self.fake_bin("claude")
+    }
+
+    /// Absolute path to the staged fake Codex binary (`fake_bin("codex")`).
+    #[must_use]
+    pub fn fake_codex_bin(&self) -> PathBuf {
+        self.fake_bin("codex")
+    }
+
+    /// Absolute path to the staged fake pi binary (`fake_bin("pi")`).
+    #[must_use]
+    pub fn fake_pi_bin(&self) -> PathBuf {
+        self.fake_bin("pi")
+    }
+
+    /// The daemon's own stdout/stderr log so far — useful for debugging a scenario
+    /// failure (a `tracing::warn!` the daemon logged but never surfaced through the
+    /// HTTP API/session state).
+    #[must_use]
+    pub fn daemon_log(&self) -> String {
+        std::fs::read_to_string(&self.log_path).unwrap_or_default()
     }
 
     fn wait_healthy(&self, timeout: Duration) {

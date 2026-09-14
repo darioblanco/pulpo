@@ -492,8 +492,14 @@ impl SessionManager {
     /// (`resume_command`), use that instead of the original command — then run it
     /// through `prepare_spawn` again so hooks are re-injected (a fresh `--settings`
     /// file; `ClaudeAdapter` never re-adds `--session-id` once `--resume` is present).
-    /// Falls back to the plain original command when the adapter has no resume
-    /// support, or the session predates harness adapters.
+    ///
+    /// When no `harness_session_id` is known at all (a legacy row from before this
+    /// session learned its id, or a hook/rollout that never reported one), falls back
+    /// to the adapter's `fallback_resume_command` — the harness's own "most recent
+    /// conversation here" flag (`claude --continue`, `codex resume --last`, `pi -c`)
+    /// — rather than silently replaying the original command as a brand new
+    /// conversation. Falls back further still to the plain original command when the
+    /// adapter has neither (or the session predates harness adapters entirely).
     async fn resolve_resume_command(&self, session: &Session, effective_workdir: &str) -> String {
         let adapter = session
             .harness
@@ -507,6 +513,7 @@ impl SessionManager {
             .and_then(|harness_session_id| {
                 adapter.resume_command(&session.command, harness_session_id)
             })
+            .or_else(|| adapter.fallback_resume_command(&session.command))
             .unwrap_or_else(|| session.command.clone());
 
         let session_id = session.id.to_string();
@@ -4507,6 +4514,97 @@ mod tests {
         assert!(create_call.contains("echo hello"));
         assert!(!create_call.contains("--resume"));
         drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_claude_without_harness_session_id_uses_continue_fallback() {
+        // The user's own --session-id made prepare_spawn a full no-op at spawn time
+        // (see claude.rs's IDENTITY_FLAGS), so pulpo never minted/learned one — resume
+        // must fall back to `--continue` (most recent conversation) rather than
+        // re-running the bare original command as a brand new one.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(harness_req(
+                "claude-user-picked-id",
+                "claude --session-id user-chosen",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+        assert!(session.harness_session_id.is_none());
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .await
+            .unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(create_call.contains("--continue"));
+        assert!(create_call.contains("--settings"));
+        assert!(!create_call.contains("--resume"));
+        assert!(!create_call.contains("--session-id"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_codex_without_harness_session_id_uses_resume_last_fallback() {
+        // Codex never presets its own session id at spawn — harness_session_id is
+        // only known once a SessionStart hook fires, which never happens under
+        // MockBackend. Resume must still target this exact session's own thread via
+        // `resume --last` rather than starting a brand new one.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(harness_req("codex-to-resume", "codex -p 'fix'"))
+            .await
+            .unwrap();
+        assert_eq!(session.harness.as_deref(), Some("codex"));
+        assert!(session.harness_session_id.is_none());
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .await
+            .unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(create_call.contains("resume"));
+        assert!(create_call.contains("--last"));
+        assert!(create_call.contains("--dangerously-bypass-hook-trust"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_pi_without_harness_session_id_uses_continue_fallback() {
+        // A pi session predating harness adapters (or a manually-cleared row): no
+        // harness_session_id at all. Resume must fall back to `-c`/`--continue`
+        // rather than minting a brand new session id.
+        let (mgr, backend, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(harness_req("pi-legacy-row", "pi -p 'fix'"))
+            .await
+            .unwrap();
+        assert_eq!(session.harness.as_deref(), Some("pi"));
+        assert!(session.harness_session_id.is_some());
+        sqlx::query("UPDATE sessions SET harness_session_id = NULL, status = 'lost' WHERE id = ?")
+            .bind(session.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(create_call.contains("--continue"));
+        assert!(create_call.contains("-e "));
+        assert!(!create_call.contains("--session-id"));
     }
 
     #[tokio::test]

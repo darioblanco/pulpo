@@ -12,14 +12,21 @@ publish = false
 name = "pulpo_e2e"
 path = "src/lib.rs"
 
-# Fake harness binaries imitating a coding agent CLI's surface (Claude Code today;
-# designed so a fake-codex/fake-pi is one more file). Dev-only tooling for the
-# scenario suite below — never part of a release build (no
-# `[package.metadata.dist]` entry, and `publish = false` above keeps it out of
+# Fake harness binaries imitating a coding agent CLI's surface (Claude Code, Codex,
+# pi). Dev-only tooling for the scenario suite below — never part of a release build
+# (no `[package.metadata.dist]` entry, and `publish = false` above keeps it out of
 # any published/release artifact).
 [[bin]]
 name = "fake-claude"
 path = "src/bin/fake-claude.rs"
+
+[[bin]]
+name = "fake-codex"
+path = "src/bin/fake-codex.rs"
+
+[[bin]]
+name = "fake-pi"
+path = "src/bin/fake-pi.rs"
 
 [dependencies]
 # Path-only: this crate is never published, so no version pin (a pin here is not
@@ -28,6 +35,7 @@ pulpo-common = { path = "../pulpo-common" }
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+toml.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 tempfile = "3"
 
