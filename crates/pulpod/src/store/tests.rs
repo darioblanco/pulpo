@@ -488,12 +488,15 @@ async fn test_migrate_is_idempotent() {
 
 #[tokio::test]
 async fn test_migrate_backs_up_before_running_pending_migrations() {
-    let store = store_at_migration_0007().await;
-    let backup_path = format!(
-        "{}/state.db.pre-{}",
-        store.data_dir,
-        env!("CARGO_PKG_VERSION")
-    );
+    // Named after the highest migration already applied rather than
+    // `CARGO_PKG_VERSION` — see `Store::backup_before_migrating`'s doc comment for
+    // why. `store_at_migration_0009` (unlike `store_at_migration_0007`, which
+    // skips only the single `0008` file and so still applies every migration
+    // *after* it, landing on whatever the newest migration happens to be) excludes
+    // `0010` and everything would-be-after it, so it reliably leaves the highest
+    // applied version at exactly 9.
+    let store = store_at_migration_0009().await;
+    let backup_path = format!("{}/state.db.pre-m9", store.data_dir);
     assert!(!std::path::Path::new(&backup_path).exists());
 
     store.migrate().await.unwrap();
@@ -506,12 +509,8 @@ async fn test_migrate_backs_up_before_running_pending_migrations() {
 
 #[tokio::test]
 async fn test_migrate_backup_overwrites_stale_same_version_file() {
-    let store = store_at_migration_0007().await;
-    let backup_path = format!(
-        "{}/state.db.pre-{}",
-        store.data_dir,
-        env!("CARGO_PKG_VERSION")
-    );
+    let store = store_at_migration_0009().await;
+    let backup_path = format!("{}/state.db.pre-m9", store.data_dir);
     std::fs::write(&backup_path, b"stale placeholder").unwrap();
 
     store.migrate().await.unwrap();

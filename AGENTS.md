@@ -141,7 +141,9 @@ These are mandatory for all code changes:
 
 2,300+ unit tests at 98% coverage still missed four real user-facing bugs (idle
 threshold never read, hooks only reaching the default port, interventions deleting
-a *shared* worktree, a Ready session bouncing back on resume) — every one of them a
+a *shared* worktree, a session snapping back to the old `ready` status (the
+six-state model's name for what ADR 0009 folded into `done`) on resume) — every one
+of them a
 gap *between* units (config → watchdog, harness → session manager, intervention →
 worktree cleanup), the kind a `MockBackend`-based "flow" test asserts past because
 the mock never disagrees with the code driving it. The fix isn't more unit tests;
@@ -211,8 +213,8 @@ under a temp `bin/` dir named exactly like the real CLI it imitates (`claude`/
 `kill_tmux_server`/`cleanup`/`fake_bin(harness)` (plus `fake_claude_bin`/
 `fake_codex_bin`/`fake_pi_bin` shorthands).
 
-**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 21 `#[test]` functions across
-18 numbered scenarios — S7, S13, and S16 each cover two): S1 spawn
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 22 `#[test]` functions across
+19 numbered scenarios — S7, S13, and S16 each cover two): S1 spawn
 reaches Working with harness metadata; S2 a permission prompt sets `status_reason =
 needs_input:permission` and `pulpo input` resolves it; S3 a clean exit resolves
 straight to Done (reason `exited`, no more Ready in between) and `pulpo resume`
@@ -264,11 +266,19 @@ the whole `done`-session story for `pulpo attach`/`resume` together: attaching a
 the old `Ready`-with-alive-fallback-shell window `attach` used to be able to reach)
 with an error naming the status and hinting at `pulpo resume`/`pulpo logs`, and
 `pulpo resume` on that same session recreates the backend via the harness's own
-resume command (`claude --resume <id>`), continuing the same conversation. S19
-starts a second `pulpod` against the same data directory while the first is
-still running and asserts it exits non-zero without touching the first's
-`state.db` — the single-instance lock `store::lock` exists specifically because
-the database is opened well before the port is bound (see [Release and
+resume command (`claude --resume <id>`), continuing the same conversation. S18
+proves the watchdog resolves a dead backend on its own, eagerly, without anyone
+polling the session endpoint: a generic command prints a final line and exits
+non-zero, and the test waits only on the webhook sink for the resulting
+`lifecycle.done` delivery (with the real `exit_code`) before ever calling `GET
+/sessions/{name}` — proving the watchdog's own idle-check tick (not just the lazy
+`get_session`/`list_sessions` path) resolves it — then confirms via `pulpo logs`
+that the final printed line survived the pane closing (the per-session pipe-pane
+log fallback, `capture_session_output` being on by default). S19 starts a second
+`pulpod` against the same data directory while the first is still running and
+asserts it exits non-zero without touching the first's `state.db` — the
+single-instance lock `store::lock` exists specifically because the database is
+opened well before the port is bound (see [Release and
 Distribution](docs/operations/release-and-distribution.md) "Single-instance
 lock").
 
@@ -634,7 +644,7 @@ pulpo/
 │       │   ├── bin/fake-codex.rs # Fake Codex CLI/hook/notify surface (isolated CODEX_HOME, rollout files)
 │       │   ├── bin/fake-pi.rs    # Fake pi CLI surface (--session-id idempotency, pulpo hook pi --event)
 │       │   └── lib.rs            # Scenario harness: boots an isolated pulpod + private tmux server
-│       └── tests/scenarios.rs    # S1-S13, S14-S16, S17: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, db recovery, Codex/pi, resume fallbacks, attach/resume on done, ...
+│       └── tests/scenarios.rs    # S1-S13, S14-S16, S17, S18, S19: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, db recovery, Codex/pi, resume fallbacks, attach/resume on done, watchdog eager resolution, single-instance lock, ...
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars

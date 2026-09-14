@@ -292,10 +292,13 @@ pub struct NodeConfig {
     #[serde(default = "default_log_retain_days")]
     pub log_retain_days: u32,
     /// Capture each session's full terminal output to `{data_dir}/logs/{id}.log`
-    /// via `tmux pipe-pane`. Off by default: the capture is unbounded and writes
-    /// every byte an agent prints, which fills the disk on long/chatty sessions.
-    /// Enable only for debugging — the watchdog uses tmux scrollback for the live
-    /// tail, and the last output snapshot is persisted in the database regardless.
+    /// via `tmux pipe-pane`. On by default since ADR 0009: `wrap_command` no
+    /// longer keeps a fallback shell open after the agent exits, so tmux tears a
+    /// session's pane down the instant it ends — this pipe-pane log is the only
+    /// place a session's very last lines of output survive that. Set to `false`
+    /// to disable if the unbounded per-byte capture becomes a disk-usage concern
+    /// on long/chatty sessions; the daemon still works fine without it, it just
+    /// loses a `done` session's final output once its pane is gone.
     #[serde(default = "default_capture_session_output")]
     pub capture_session_output: bool,
 }
@@ -328,7 +331,7 @@ const fn default_log_retain_days() -> u32 {
 }
 
 const fn default_capture_session_output() -> bool {
-    false
+    true
 }
 
 fn default_data_dir() -> String {

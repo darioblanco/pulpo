@@ -925,6 +925,44 @@ impl WebhookSink {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+
+    /// Poll for the first delivered event matching `pred`, panicking after
+    /// `timeout` with every event received so far for debuggability. Use this
+    /// (instead of `wait_for_event`'s plain "first ever") whenever more than one
+    /// event could plausibly be delivered before the one under test — e.g. a
+    /// session's initial `lifecycle.working` event arriving before the
+    /// `lifecycle.done` a test actually cares about.
+    #[must_use]
+    pub fn wait_for_matching(
+        &self,
+        timeout: Duration,
+        mut pred: impl FnMut(&serde_json::Value) -> bool,
+    ) -> serde_json::Value {
+        let start = Instant::now();
+        loop {
+            {
+                let received = self
+                    .received
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(value) = received.iter().find(|v| pred(v)).cloned() {
+                    return value;
+                }
+            }
+            if start.elapsed() > timeout {
+                let received = self
+                    .received
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                panic!(
+                    "timed out after {timeout:?} waiting for a matching webhook delivery; \
+                     received so far: {received:#?}"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 }
 
 fn read_http_request_body(stream: &mut std::net::TcpStream) -> Option<Vec<u8>> {

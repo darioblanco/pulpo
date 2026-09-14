@@ -55,13 +55,13 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ### Working/Waiting → Done
 - **Trigger**: The wrapper's `{id}.code` exit-marker file appears (written the moment the agent command finishes, containing its exit code) and the wrapper shell then exits immediately — there is no more lingering fallback shell keeping the backend alive after the agent process ends (see [Exit Markers](#exit-markers) below) — or the session's shell otherwise exits normally (the user typed `exit` in a bare-shell session, or an explicit `pulpo stop`/watchdog intervention ended it).
-- **Detection**: The watchdog checks the exit markers (deterministic) before any output scraping or idle logic. Dead-backend classification is now simply: exit marker present → `done` (`status_reason = exited`, `exit_code` persisted from the marker) — unless an explicit stop or watchdog intervention already recorded a more specific reason (`stopped`, `idle_timeout`, `budget_exceeded`, `memory_pressure`) — no marker → `lost` (see below).
+- **Detection**: The watchdog's own idle-check tick calls `is_alive()` on every `working`/`waiting` session *before* attempting any output capture, scraping, or idle logic — a dead backend is resolved (and its `lifecycle` event/webhook fired) within that same tick, not whenever something next happens to call the API. The same resolution also runs lazily on `get_session`/`list_sessions` (whichever notices a dead backend first wins) and eagerly again at startup via `resume_lost_sessions`. Dead-backend classification is then simply: exit marker present → `done` (`status_reason = exited`, `exit_code` persisted from the marker) — unless an explicit stop or watchdog intervention already recorded a more specific reason (`stopped`, `idle_timeout`, `budget_exceeded`, `memory_pressure`) — no marker → `lost` (see below).
 - **Harness-driven sessions**: a `SessionEnded` hook event leaves the status alone — the agent process is typically still in the middle of exiting when the hook fires — **unless** the `.code` exit marker has already landed by the time the event is processed, in which case the session moves straight to `done`/`exited` immediately. Otherwise the ordinary dead-backend classification above catches it on the watchdog's next tick, and `exit_code` still ends up recorded the same way either way.
 - **Side effects**: SSE event emitted.
 
 ### Working/Waiting → Lost
 - **Trigger**: `is_alive()` returns false for a session that was `working` or `waiting` **and no exit marker exists** — the tmux process died without the wrapper running to completion (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
-- **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is gone the markers are consulted; with none present the session is marked `lost`. A 5-second grace period protects freshly spawned sessions from false positives.
+- **Detection**: The same `is_alive()` check described above (the watchdog's own tick, `get_session`/`list_sessions`, or `resume_lost_sessions` at startup) finds the backend gone and consults the markers; with none present the session is marked `lost`. A 5-second grace period protects freshly spawned sessions from false positives.
 
 Sessions stay listed once they reach `done` — there is no TTL-based auto-purge. The
 session record is only reclaimed by an explicit `pulpo stop [--purge]` or `pulpo
@@ -143,6 +143,15 @@ A match moves the session straight to `waiting` with `status_reason = needs_inpu
 plain `idle`, since a `(y/n)` prompt or a `sudo password:` line really is "blocked on the
 user." Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are
 appended to the built-in list and matched the same way.
+
+### Idle-timeout breaker exempts `needs_input`
+
+`idle_timeout_secs`/`idle_action` (below) never fires on a session whose
+`status_reason` is `needs_input:<reason>` — it's blocked on a real decision from the
+operator, not "idle" in the sense this breaker means, and might legitimately sit there
+for hours waiting for a person to come back. The alert/kill action still applies to a
+plain `waiting:idle` session (sustained silence, no pending prompt) and to a
+harness-owned `working` session producing no output at all.
 
 ## Configuration
 

@@ -15,6 +15,8 @@ struct MockBackend {
     fail_capture: bool,
     fail_kill: bool,
     fail_create: bool,
+    alive: bool,
+    fail_is_alive: bool,
 }
 
 impl MockBackend {
@@ -28,6 +30,8 @@ impl MockBackend {
             fail_capture: false,
             fail_kill: false,
             fail_create: false,
+            alive: true,
+            fail_is_alive: false,
         }
     }
 
@@ -58,6 +62,24 @@ impl MockBackend {
             ..Self::new()
         }
     }
+
+    /// `is_alive()` reports the backend gone — the eager dead-backend-resolution
+    /// path this session's idle check should take.
+    fn dead() -> Self {
+        Self {
+            alive: false,
+            ..Self::new()
+        }
+    }
+
+    /// `is_alive()` itself errors (e.g. the `tmux` binary vanished) — distinct
+    /// from a clean "not alive" answer.
+    fn failing_is_alive() -> Self {
+        Self {
+            fail_is_alive: true,
+            ..Self::new()
+        }
+    }
 }
 
 impl Backend for MockBackend {
@@ -77,7 +99,10 @@ impl Backend for MockBackend {
         Ok(())
     }
     fn is_alive(&self, _: &str) -> Result<bool> {
-        Ok(true)
+        if self.fail_is_alive {
+            anyhow::bail!("is_alive check failed");
+        }
+        Ok(self.alive)
     }
     fn capture_output(&self, name: &str, _: usize) -> Result<String> {
         self.capture_calls.lock().unwrap().push(name.into());
@@ -122,6 +147,114 @@ fn make_config(interval: Duration, idle: IdleConfig) -> WatchdogRuntimeConfig {
         idle,
         extra_waiting_patterns: Vec::new(),
     }
+}
+
+// ───────────────────────────────────────────────────────────
+// Eager dead-backend resolution (HIGH follow-up on PR #129 / ADR 0009): the
+// watchdog's own idle-check tick must notice a dead backend via `is_alive()`
+// itself, resolve it through the shared `session::manager::resolve_dead_backend_session`,
+// and fire the `lifecycle` event with the session's real previous status —
+// not wait for something else to poll `GET /sessions/{id}`.
+// ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_check_idle_sessions_resolves_dead_backend_to_done_eagerly() {
+    let backend: Arc<dyn Backend> = Arc::new(MockBackend::dead());
+    let store = test_store().await;
+    let session = create_running_session(&store, "dead-backend-done").await;
+
+    let code_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+    std::fs::write(&code_path, "7").unwrap();
+
+    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
+    let ctx = ReadyContext {
+        event_tx: Some(tx),
+        node_name: "test-node".into(),
+    };
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    check_idle_sessions(&backend, &store, &idle_config, &ctx, &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Done);
+    assert_eq!(fetched.status_reason.as_deref(), Some("exited"));
+    assert_eq!(fetched.exit_code, Some(7));
+
+    let event = rx.try_recv().expect("expected a lifecycle event");
+    match event {
+        PulpoEvent::Session(se) => {
+            assert_eq!(se.status, "done");
+            assert_eq!(
+                se.previous_status.as_deref(),
+                Some("working"),
+                "must report the session's real previous status"
+            );
+        }
+        other => panic!("expected a Session event, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_check_idle_sessions_resolves_dead_backend_to_lost_eagerly() {
+    // No exit marker written — a dead backend with no evidence of a clean end
+    // resolves to `Lost`, same as the lazy `get_session`/`list_sessions` path.
+    let backend: Arc<dyn Backend> = Arc::new(MockBackend::dead());
+    let store = test_store().await;
+    let session = create_running_session(&store, "dead-backend-lost").await;
+
+    check_idle_sessions(
+        &backend,
+        &store,
+        &IdleConfig::default(),
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Lost);
+}
+
+#[tokio::test]
+async fn test_check_session_idle_is_alive_error_skips_tick_without_panicking() {
+    // `is_alive()` itself failing (as opposed to cleanly reporting "not alive")
+    // must not be treated as a dead backend — just skip this session for the
+    // tick, same as a `capture_output` failure already did before this check
+    // existed.
+    let backend: Arc<dyn Backend> = Arc::new(MockBackend::failing_is_alive());
+    let store = test_store().await;
+    let session = create_running_session(&store, "is-alive-errors").await;
+
+    check_idle_sessions(
+        &backend,
+        &store,
+        &IdleConfig::default(),
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Working);
 }
 
 #[tokio::test]
@@ -432,6 +565,59 @@ async fn test_idle_detection_kill_action() {
             .lock()
             .unwrap()
             .contains(&"kill-idle".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn test_idle_timeout_does_not_kill_needs_input_session() {
+    // A session parked on `waiting:needs_input:<reason>` is blocked on a real
+    // decision from the operator (a permission prompt), not "idle" in the sense
+    // `idle_timeout_secs` means — it must never be force-stopped by the same
+    // breaker that kills a session nobody's touched. Same fixture shape as
+    // `test_idle_detection_kill_action` (well past the timeout), except for the
+    // `status_reason`.
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "needs-input-not-killed".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Waiting,
+        status_reason: Some("needs_input:permission".into()),
+        backend_session_id: Some("needs-input-not-killed".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Kill,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend.clone();
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Waiting);
+    assert_eq!(
+        fetched.status_reason.as_deref(),
+        Some("needs_input:permission")
+    );
+    assert!(
+        backend.kill_calls.lock().unwrap().is_empty(),
+        "idle-timeout must never kill a session waiting on operator input"
     );
 }
 

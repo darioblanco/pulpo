@@ -257,9 +257,12 @@ disk. See [Plan Then Build](../guides/plan-then-build.md).
 
 ### Stop / Resume / Cleanup
 
-`POST /api/v1/sessions/:id/stop?purge=true` → `204 No Content`; `404` if the session
-doesn't exist, `409 Conflict` covers no stop case today (stop is idempotent-safe on an
-already-stopped session).
+`POST /api/v1/sessions/:id/stop?purge=true` → `204 No Content` when this call actually
+stopped a live session; `200 OK` when the session was already `done`/`lost` — a no-op on
+status (it does **not** overwrite an existing `status_reason` like `exited` or
+`budget_exceeded` with the generic `stopped`), though `?purge=true` still removes the
+record either way. `404` if the session doesn't exist; `409 Conflict` covers no stop case
+today (stop is idempotent-safe on an already-terminal session).
 
 `POST /api/v1/sessions/:id/resume` → `200 OK` with the updated `Session`; `400 Bad
 Request` if the session is `Working`/`Waiting`/`Starting` (cannot be resumed — still
@@ -280,8 +283,8 @@ Removes a single session outright: purges the row, its intervention events, exit
 markers, session log, and git worktree/harness dir — the same purge helper
 `POST /api/v1/sessions/:id/stop?purge=true` and `POST /api/v1/sessions/cleanup` use.
 → `204 No Content`; `404` if the session doesn't exist; `409 Conflict` if it's
-currently `Working`/`Waiting` — stop it first (`pulpo stop`). `pulpo rm <name-or-id>`
-(alias `remove`) is the CLI equivalent.
+currently `Starting`/`Working`/`Waiting` — stop it first (`pulpo stop`). `pulpo rm
+<name-or-id>` (alias `remove`) is the CLI equivalent.
 
 ### Output
 

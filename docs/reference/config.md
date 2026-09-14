@@ -13,7 +13,7 @@ Pre-`sqlx` legacy databases are unsupported, but `pulpod` never crash-loops on o
 unusable `state.db` (corrupt, an unsupported legacy schema, or a downgrade) is quarantined
 as `state.db.unusable-<UTC timestamp>` and a fresh database is created in its place
 automatically — no manual deletion needed. Every startup against an existing database also
-backs it up to `state.db.pre-<version>` before migrating. See
+backs it up to `state.db.pre-m<migration>` before migrating. See
 [Release and Distribution](../operations/release-and-distribution.md) "Upgrading `pulpod`"
 for the full recovery/backup behavior.
 
@@ -33,7 +33,7 @@ until you edit it out.
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"` |
 | `default_command` | string | — | Default command when spawn has no explicit command |
 | `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
-| `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
+| `capture_session_output` | bool | `true` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. On by default since ADR 0009 — `wrap_command` no longer keeps a fallback shell open after the agent exits, so tmux tears a session's pane down the instant it ends, and this log is the only place a `done` session's final lines survive that. Set to `false` if the unbounded per-byte capture becomes a disk-usage concern on long/chatty sessions. |
 
 Every pulpo-managed session gets `PULPO_URL=http://127.0.0.1:<port>` exported alongside
 `PULPO_SESSION_ID`/`PULPO_SESSION_NAME` — `pulpo hook` reads it to reach the daemon, so

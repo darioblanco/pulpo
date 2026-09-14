@@ -47,6 +47,12 @@ pub struct SessionEvent {
     pub total_output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_cost_usd: Option<f64>,
+    /// The agent's own process exit code, when known — set once a session
+    /// resolves to `done` via an exit marker (`{id}.code`). `None` for every
+    /// other status, and for a `done` session with no marker (e.g. an explicit
+    /// `pulpo stop`/intervention, or a `lost` session with no clean end).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -141,6 +147,9 @@ pub struct EventSessionRef {
     pub cost_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u64>,
+    /// The agent's own process exit code, when known — see [`SessionEvent::exit_code`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 /// The canonical, forward-facing event envelope.
@@ -238,6 +247,7 @@ impl Event {
                     pr_url: se.pr_url.clone(),
                     cost_usd: se.session_cost_usd,
                     total_tokens: sum_tokens(se.total_input_tokens, se.total_output_tokens),
+                    exit_code: se.exit_code,
                 }),
                 payload: serde_json::json!({}),
             }),

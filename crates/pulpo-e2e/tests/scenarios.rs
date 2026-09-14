@@ -1306,6 +1306,7 @@ fn s17_attach_on_done_errors_with_resume_hint_and_resume_recreates_with_harness_
     // tears itself down — no manual "exit" step, no intermediate Ready.
     let session = daemon.wait_status("s17-attach-done", SessionStatus::Done, SHORT);
     assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    assert_eq!(session.exit_code, Some(0));
     let harness_session_id = session
         .harness_session_id
         .clone()
@@ -1361,5 +1362,86 @@ fn s17_attach_on_done_errors_with_resume_hint_and_resume_recreates_with_harness_
     assert!(
         argv.iter().any(|a| a == harness_session_id.as_str()),
         "expected the exact harness session id in argv: {argv:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S18 — watchdog resolves a dead backend without anyone polling, and the
+// session's final output survives the pane closing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s18_watchdog_resolves_dead_backend_eagerly_and_preserves_final_output() {
+    // Regression test for a Fable review finding on PR #129: `check_and_mark_stale`
+    // only ran lazily off `get_session`/`list_sessions` — the watchdog's own tick
+    // never called it, so a session whose backend died went undetected (stuck
+    // `working` forever, no `lifecycle.done` webhook) unless something happened to
+    // poll it. Every other scenario in this suite calls `daemon.wait_status`/
+    // `wait_for`, which polls `GET /sessions/{name}` every 150ms — exactly the
+    // kind of polling that was masking this bug. This test asserts the daemon's
+    // own dead-backend resolution *without ever polling the session endpoint*:
+    // it waits only on the webhook sink for the `lifecycle.done` delivery, and
+    // only fetches the session afterward, to confirm the DB state matches.
+    let webhook = WebhookSink::start();
+    let daemon = Daemon::start(DaemonConfig {
+        webhook_url: Some(webhook.url()),
+        // The daemon's default `check_interval_secs` in this harness is already 1s
+        // (see `DaemonConfig::default`), so the watchdog's own eager check kicks in
+        // within a couple of ticks — no override needed here.
+        ..DaemonConfig::default()
+    });
+    let (_dir, workdir) = temp_workdir();
+
+    // A generic (harness-less) command: a brief pause (giving `pulpod`'s own
+    // `create_session` → `setup_logging` pipe-pane attach a moment to happen
+    // before anything is printed — pipe-pane only captures output produced
+    // *after* it attaches, not retroactively, see `backend::tmux`'s own
+    // `test_pipe_pane_captures_output`), then prints a distinctive final line
+    // and exits immediately with a non-zero code. `wrap_command` writes the
+    // `.code` exit marker and its own wrapper shell exits right behind it —
+    // there is no more lingering fallback shell (ADR 0009), so tmux tears the
+    // pane down in the same instant. Any live tmux capture attempt made after
+    // that will find nothing; only the pipe-pane log (now on by default —
+    // `capture_session_output`) still has "s18-final-output-marker".
+    let output = daemon.spawn(
+        "s18-dead-backend",
+        &workdir,
+        &[],
+        &["sh", "-c", "sleep 1; echo s18-final-output-marker; exit 3"],
+    );
+    assert!(output.status.success());
+
+    // No `daemon.session(...)`/`wait_status`/`wait_for` calls above this line —
+    // the webhook delivery below is the only thing this test waits on to learn
+    // the session finished.
+    let delivered = webhook.wait_for_matching(MEDIUM, |event| {
+        event["type"] == "lifecycle"
+            && event["subtype"] == "done"
+            && event["session"]["name"] == "s18-dead-backend"
+    });
+    assert_eq!(
+        delivered["session"]["exit_code"],
+        serde_json::json!(3),
+        "expected the real exit code on the lifecycle.done event, got: {delivered:#?}"
+    );
+    assert_eq!(delivered["session"]["status"], serde_json::json!("done"));
+
+    // Only now, after the event already proved the daemon resolved this on its
+    // own, fetch the session and its logs to confirm the rest of the DB state
+    // and that the final output survived the pane closing.
+    let session = daemon
+        .session("s18-dead-backend")
+        .expect("session should exist");
+    assert_eq!(session.status, SessionStatus::Done);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    assert_eq!(session.exit_code, Some(3));
+
+    let logs_output = daemon.pulpo(&["logs", "s18-dead-backend"]);
+    assert!(logs_output.status.success());
+    let logs = String::from_utf8_lossy(&logs_output.stdout);
+    assert!(
+        logs.contains("s18-final-output-marker"),
+        "expected the session's final printed line to survive via the pipe-pane \
+         log fallback, got: {logs}"
     );
 }

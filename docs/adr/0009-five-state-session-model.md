@@ -57,3 +57,24 @@ Consequences below for the specifics.
 - Collapsing `ready`/`stopped` into `done` means the two are no longer top-level-state
   distinguishable without inspecting `status_reason` — any tooling that used to branch on
   `ready` vs. `stopped` specifically now needs to read `status_reason` instead.
+- **The idle-timeout breaker exempts `needs_input`.** A session parked on
+  `waiting:needs_input:<reason>` is blocked on a real decision from the operator (a
+  permission/approval prompt), not "idle" in the sense `idle_timeout_secs` means — it
+  might sit there for five minutes or five hours waiting for a person, and force-stopping
+  it would destroy work that was correctly paused, not stuck. `idle_timeout_secs`'s
+  alert/kill action still applies to plain `waiting:idle` (sustained silence, no pending
+  prompt) and to a harness-owned `working` session producing no output at all. See
+  `watchdog::idle::check_session_idle`.
+- **Removing the `Ready` sweep required the watchdog to take over dead-backend
+  resolution itself**, not just the lazy `get_session`/`list_sessions`/`resume_lost_sessions`
+  paths: `wrap_command` closing the pane the instant the agent exits means a session's
+  backend can die between watchdog ticks with nobody polling the API to notice. The
+  watchdog's own idle-check tick now calls `is_alive()` on every `working`/`waiting`
+  session before any output capture, resolving a dead one (and firing its `lifecycle`
+  event/webhook) within that same tick via the same shared
+  `session::manager::resolve_dead_backend_session` the lazy paths use — see
+  [Session Lifecycle](../operations/session-lifecycle.md) "Working/Waiting → Done"/"→
+  Lost". The same function also best-effort-preserves a session's final output (a live
+  tmux capture attempt, then — since that almost never catches a cleanly-closed pane —
+  the per-session pipe-pane log), which is why `capture_session_output` defaults to
+  `true` as of this model (see `docs/reference/config.md`).

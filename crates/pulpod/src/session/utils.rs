@@ -187,6 +187,24 @@ pub fn remove_session_log(data_dir: &str, id: &str) -> bool {
     path.exists() && std::fs::remove_file(&path).is_ok()
 }
 
+/// Read the last `lines` lines of a session's pipe-pane log file
+/// (`{data_dir}/logs/{id}.log`, only written when `capture_session_output` is
+/// enabled). Returns an empty string when the file doesn't exist or can't be
+/// read — this is always a best-effort fallback, never a hard dependency.
+///
+/// Used both by `SessionManager::capture_output` (a live tmux capture failing,
+/// e.g. because the session's own backend is already gone) and by
+/// `resolve_dead_backend_session` (a `done` session's pane closes the instant
+/// its wrapped command exits — ADR 0009 — so this log, written continuously
+/// while the pane was alive, is the only reliable source of its final lines).
+pub fn read_log_tail(data_dir: &str, id: &str, lines: usize) -> String {
+    let log_path = session_log_path(data_dir, id);
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let mut tail: Vec<&str> = content.lines().rev().take(lines).collect();
+    tail.reverse();
+    tail.join("\n")
+}
+
 /// Directory holding per-session worktrees (`{data_dir}/worktrees`).
 pub fn worktrees_dir(data_dir: &str) -> PathBuf {
     Path::new(data_dir).join("worktrees")

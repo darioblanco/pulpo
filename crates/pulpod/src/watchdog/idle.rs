@@ -50,11 +50,13 @@ pub(super) async fn check_idle_sessions(
     // longer keeps a fallback shell alive after the agent exits, so there is no more
     // persistent "done but still alive" backend state to sweep for a lagging exit
     // marker. A `Working`/`Waiting` session's dead backend (and its exit marker) is
-    // now discovered and resolved to `Done`/`Lost` in one step by
-    // `SessionManager::resolve_dead_backend_session` (driven lazily by the next
-    // `get_session`/`list_sessions` call, or eagerly by `resume_lost_sessions` on
-    // startup) — see `docs/operations/session-lifecycle.md`. `Done` is a true
-    // terminal status: nothing here revisits it.
+    // resolved to `Done`/`Lost` by the shared `session::manager::resolve_dead_backend_session`
+    // — called eagerly, right here, by `check_session_idle`'s own `is_alive()`
+    // pre-check on every tick (so the `lifecycle` event/webhook fires within one
+    // tick even with no API traffic at all), and also lazily by the next
+    // `get_session`/`list_sessions` call or by `resume_lost_sessions` on startup,
+    // for whichever of those happens to notice first. `Done` is a true terminal
+    // status: nothing here revisits it. See `docs/operations/session-lifecycle.md`.
 }
 
 /// Resolve the effective Active→Idle threshold (seconds) for a session: the
@@ -85,6 +87,33 @@ pub(super) async fn check_session_idle(
     extra_waiting_patterns: &[String],
 ) {
     let backend_id = resolve_backend_id(session, backend.as_ref());
+
+    // Eager dead-backend resolution (ADR 0009 follow-up): a session's backend can
+    // die between ticks — the agent exits, and `wrap_command` no longer keeps a
+    // fallback shell open, so tmux tears the pane down in the same instant. Without
+    // this pre-check, a `capture_output` failure below was the only signal, and
+    // nothing on this path ever turned that into a `Done`/`Lost` transition — the
+    // session sat in `Working`/`Waiting` until something else happened to call
+    // `GET /sessions/{id}` (see `session::manager::resolve_dead_backend_session`'s
+    // doc comment for the full story). Checking liveness explicitly, before trying
+    // to capture output at all, means this tick itself resolves it and fires the
+    // `lifecycle` event/webhook — not some future, possibly-never-arriving poll.
+    match backend.is_alive(&backend_id) {
+        Ok(true) => {}
+        Ok(false) => {
+            resolve_and_report_dead_session(store, backend, &backend_id, session, ready_ctx).await;
+            return;
+        }
+        #[allow(unused_variables)]
+        Err(error) => {
+            debug!(
+                "Idle check: failed to check liveness for {}: {error}",
+                session.name
+            );
+            return;
+        }
+    }
+
     let current_output = match backend.capture_output(&backend_id, 500) {
         Ok(output) => output,
         #[allow(unused_variables)]
@@ -177,6 +206,25 @@ pub(super) async fn check_session_idle(
         }
     }
 
+    // A session parked on `waiting:needs_input:<reason>` is blocked on a real
+    // decision from the operator (a permission/approval prompt) — that's not
+    // "idle" in the sense `idle_timeout_secs` means, it's waiting on a person who
+    // might come back in five minutes or five hours. Only a session genuinely
+    // stuck with no activity (`waiting:idle`, or a harness-owned `working`
+    // producing no output at all) is subject to the idle-timeout alert/kill
+    // action — exempt `needs_input` from it entirely rather than have the
+    // breaker forcibly stop a session that's correctly doing exactly what it
+    // should: waiting for you.
+    let blocked_on_operator = session.status == SessionStatus::Waiting
+        && session
+            .status_reason
+            .as_deref()
+            .and_then(status_reason::needs_input_reason)
+            .is_some();
+    if blocked_on_operator {
+        return;
+    }
+
     handle_idle_session(
         backend,
         store,
@@ -187,6 +235,53 @@ pub(super) async fn check_session_idle(
         ready_ctx,
     )
     .await;
+}
+
+/// A session's backend just failed `is_alive()` — resolve it to `Done`/`Lost` via
+/// the shared `session::manager::resolve_dead_backend_session` and, on success,
+/// emit the `lifecycle` event/webhook with the session's *real* previous status
+/// (never a hardcoded guess). Best-effort: a failure here is logged and simply
+/// leaves the session for the next tick (or the lazy `get_session`/`list_sessions`
+/// path) to retry — never a hard error that would abort the whole watchdog tick.
+#[cfg_attr(coverage, allow(unused_variables))]
+async fn resolve_and_report_dead_session(
+    store: &Store,
+    backend: &Arc<dyn Backend>,
+    backend_id: &str,
+    session: &Session,
+    ready_ctx: &ReadyContext,
+) {
+    let previous = session.status;
+    let mut updated = session.clone();
+    if let Err(error) = crate::session::manager::resolve_dead_backend_session(
+        store,
+        backend.as_ref(),
+        backend_id,
+        &mut updated,
+    )
+    .await
+    {
+        coverage_warn!(
+            "Idle check: failed to resolve dead backend for {}: {error}",
+            session.name
+        );
+        return;
+    }
+    info!(
+        "Session {} backend is gone, resolved {previous} -> {}",
+        session.name, updated.status
+    );
+    if let Some(tx) = &ready_ctx.event_tx {
+        let event = build_session_event(
+            &updated,
+            updated.status,
+            updated.status_reason.as_deref(),
+            Some(previous),
+            &ready_ctx.node_name,
+            updated.output_snapshot.clone(),
+        );
+        let _ = tx.send(PulpoEvent::Session(event));
+    }
 }
 
 /// React to fresh output on a session: revert Idle→Active and clear `idle_since`.

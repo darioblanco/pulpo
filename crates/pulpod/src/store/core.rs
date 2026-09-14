@@ -46,7 +46,7 @@ impl Store {
         self.warn_before_dropping_secrets().await?;
         self.warn_before_dropping_push_subscriptions().await?;
         if self.has_pending_migrations().await? {
-            self.backup_before_migrating()?;
+            self.backup_before_migrating().await?;
         }
         MIGRATOR.run(&self.pool).await?;
         self.warm_up_after_migrating().await;
@@ -99,16 +99,29 @@ impl Store {
         Ok(MIGRATOR.iter().any(|m| !applied.contains(&m.version)))
     }
 
-    /// Copy `state.db` to `state.db.pre-<current daemon version>` before
+    /// Copy `state.db` to `state.db.pre-m<highest applied migration>` before
     /// [`MIGRATOR::run`] modifies it in place — migrations can be
     /// irreversible (0008 drops `secrets`, 0009 drops `push_subscriptions`),
     /// so an operator upgrading across several releases at once always has a
-    /// pre-migration snapshot to fall back to. Overwrites a same-named
-    /// backup from a previous run at the same version, and prunes down to
-    /// the [`MAX_PRE_MIGRATION_BACKUPS`] most recent backups afterward.
-    fn backup_before_migrating(&self) -> Result<()> {
+    /// pre-migration snapshot to fall back to.
+    ///
+    /// Named after the migration version rather than `CARGO_PKG_VERSION`:
+    /// `release-please` only bumps the crate version at release time, so two
+    /// PRs landing between releases (each adding a migration) would otherwise
+    /// both back up to the exact same `state.db.pre-<version>` name and
+    /// silently clobber each other's snapshot. The highest applied migration
+    /// number is monotonic and unique to what's actually about to be
+    /// rewritten, regardless of release cadence. Overwrites a same-named
+    /// backup from a previous run at the same migration level, and prunes
+    /// down to the [`MAX_PRE_MIGRATION_BACKUPS`] most recent backups afterward.
+    async fn backup_before_migrating(&self) -> Result<()> {
         let db_path = format!("{}/state.db", self.data_dir);
-        let backup_path = format!("{db_path}.pre-{}", env!("CARGO_PKG_VERSION"));
+        let highest_applied: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(0);
+        let backup_path = format!("{db_path}.pre-m{highest_applied}");
         std::fs::copy(&db_path, &backup_path)
             .with_context(|| format!("failed to back up {db_path} to {backup_path}"))?;
         info!(backup = %backup_path, "store: backed up database before running pending migrations");
@@ -438,7 +451,7 @@ mod tests {
         let store = test_store().await;
         for i in 0..5 {
             std::fs::write(
-                format!("{}/state.db.pre-0.{i}.0", store.data_dir),
+                format!("{}/state.db.pre-m{i}", store.data_dir),
                 format!("backup-{i}"),
             )
             .unwrap();
@@ -455,12 +468,8 @@ mod tests {
             .filter(|name| name.starts_with("state.db.pre-"))
             .collect();
         assert_eq!(remaining.len(), MAX_PRE_MIGRATION_BACKUPS);
-        // The three most recently written backups (0.2.0, 0.3.0, 0.4.0) survive.
-        for kept in [
-            "state.db.pre-0.2.0",
-            "state.db.pre-0.3.0",
-            "state.db.pre-0.4.0",
-        ] {
+        // The three most recently written backups (m2, m3, m4) survive.
+        for kept in ["state.db.pre-m2", "state.db.pre-m3", "state.db.pre-m4"] {
             assert!(remaining.contains(&kept.to_owned()), "{remaining:?}");
         }
     }
@@ -468,11 +477,33 @@ mod tests {
     #[tokio::test]
     async fn test_prune_old_backups_noop_under_the_cap() {
         let store = test_store().await;
-        std::fs::write(format!("{}/state.db.pre-0.1.0", store.data_dir), b"a").unwrap();
+        std::fs::write(format!("{}/state.db.pre-m1", store.data_dir), b"a").unwrap();
 
         store.prune_old_backups().unwrap();
 
-        assert!(Path::new(&format!("{}/state.db.pre-0.1.0", store.data_dir)).exists());
+        assert!(Path::new(&format!("{}/state.db.pre-m1", store.data_dir)).exists());
+    }
+
+    #[tokio::test]
+    async fn test_backup_before_migrating_names_backup_after_highest_applied_migration() {
+        // Regression test: the backup filename used to be
+        // `state.db.pre-<CARGO_PKG_VERSION>`, which collides across every PR that
+        // lands between two `release-please` releases (the crate version only
+        // bumps at release time). Naming it after the highest already-applied
+        // migration version is monotonic and unique to what's about to change,
+        // regardless of release cadence. `test_store()` runs every migration in
+        // `MIGRATOR` (currently through 0010) — bump the expected suffix here
+        // when a new migration file is added.
+        let store = test_store().await;
+
+        store.backup_before_migrating().await.unwrap();
+
+        let backup_path = format!("{}/state.db.pre-m10", store.data_dir);
+        assert!(
+            Path::new(&backup_path).exists(),
+            "expected a backup named after migration 0010, the highest applied \
+             version after test_store()'s full migration run"
+        );
     }
 
     #[tokio::test]

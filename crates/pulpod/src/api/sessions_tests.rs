@@ -309,6 +309,51 @@ async fn test_stop_with_purge() {
 }
 
 #[tokio::test]
+async fn test_stop_on_already_done_session_returns_ok_not_no_content() {
+    // Regression test for the `stop` handler's `200`/`204` distinction: a
+    // session already `done` must not be re-stopped (see
+    // `SessionManager::stop_session`), and the handler must map that no-op to
+    // `200 OK` rather than the `204 No Content` a real stop returns, so the CLI
+    // can tell the two apart.
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "already-done".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let session = resp.session;
+    state
+        .store
+        .update_session_status(&session.id.to_string(), SessionStatus::Done, Some("exited"))
+        .await
+        .unwrap();
+
+    let query = StopQuery { purge: None };
+    let result = stop(
+        State(state.clone()),
+        Path(session.id.to_string()),
+        Query(query),
+    )
+    .await;
+    assert_eq!(result.unwrap(), StatusCode::OK);
+
+    // status_reason must survive untouched — not overwritten with "stopped".
+    let Json(fetched) = get(State(state), Path(session.id.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(fetched.status_reason.as_deref(), Some("exited"));
+}
+
+#[tokio::test]
 async fn test_remove_not_found() {
     let state = test_state().await;
     let result = remove(State(state), Path("nonexistent".into())).await;
@@ -460,6 +505,51 @@ async fn test_output_for_session() {
     assert!(result.is_ok());
     let Json(val) = result.unwrap();
     assert_eq!(val["output"], "");
+}
+
+#[tokio::test]
+async fn test_output_for_done_session_uses_persisted_snapshot() {
+    // Regression test: a `done` session's pane is already gone (ADR 0009), so a
+    // live tmux capture always comes back empty — worse, the tmux backend's own
+    // `capture_output` doesn't propagate `tmux capture-pane` failing as an `Err`
+    // (it returns `Ok("")`), so `SessionManager::capture_output`'s log-tail
+    // fallback never even triggers. The `output` handler must use the
+    // already-persisted `output_snapshot` (computed by
+    // `resolve_dead_backend_session`, which does try the log-tail fallback)
+    // directly for a `done` session instead of re-deriving it.
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "output-done-test".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let session = resp.session;
+
+    state
+        .store
+        .update_session_status(&session.id.to_string(), SessionStatus::Done, Some("exited"))
+        .await
+        .unwrap();
+    state
+        .store
+        .update_session_output_snapshot(&session.id.to_string(), "final line survived")
+        .await
+        .unwrap();
+
+    let query = OutputQuery { lines: Some(50) };
+    let result = output(State(state), Path(session.id.to_string()), Query(query)).await;
+    assert!(result.is_ok());
+    let Json(val) = result.unwrap();
+    assert_eq!(val["output"], "final line survived");
 }
 
 #[tokio::test]
@@ -750,6 +840,48 @@ async fn test_output_capture_fallback_to_log() {
     assert!(result.is_ok());
     let Json(val) = result.unwrap();
     assert_eq!(val["output"], "");
+}
+
+#[tokio::test]
+async fn test_output_capture_fallback_to_log_when_addressed_by_name() {
+    // Regression test: the pipe-pane log fallback is always keyed by the
+    // session's *UUID* (`SessionManager::create_session` writes to
+    // `logs/<uuid>.log`), but the `output` handler used to pass the URL path's
+    // own `id` string straight through to `capture_output` — which is the
+    // session's *name* for every real `pulpo logs <name>` call. The fallback
+    // silently found nothing for the single most common way this endpoint is
+    // actually addressed.
+    let state = capture_fail_state().await;
+    let req = CreateSessionRequest {
+        name: "cap-err-by-name".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let session = resp.session;
+
+    let log_dir = format!("{}/logs", state.store.data_dir());
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::write(
+        format!("{log_dir}/{}.log", session.id),
+        "final output line\n",
+    )
+    .unwrap();
+
+    let query = OutputQuery { lines: Some(50) };
+    // Addressed by *name*, exactly like `pulpo logs cap-err-by-name` does.
+    let result = output(State(state), Path("cap-err-by-name".into()), Query(query)).await;
+    assert!(result.is_ok());
+    let Json(val) = result.unwrap();
+    assert_eq!(val["output"], "final output line");
 }
 
 #[tokio::test]

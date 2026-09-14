@@ -320,6 +320,9 @@ async fn store_exact_usage(store: &Store, session: &Session, exact: &ExactUsage)
 /// metadata. `reason` is the *new* `status_reason` to pair with `status` — `session`
 /// itself still carries the pre-transition status/reason, so callers pass the target
 /// status/reason explicitly rather than reading `session.status`/`status_reason`.
+/// `session.exit_code` is used as-is — callers resolving a dead backend update it on
+/// `session` themselves before calling this, so it always reflects the transition
+/// being reported here rather than a stale pre-transition value.
 pub(super) fn build_session_event(
     session: &Session,
     status: SessionStatus,
@@ -346,6 +349,7 @@ pub(super) fn build_session_event(
         total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
         total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
         session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+        exit_code: session.exit_code,
         ..Default::default()
     }
 }

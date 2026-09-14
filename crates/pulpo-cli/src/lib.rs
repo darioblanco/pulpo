@@ -1231,13 +1231,25 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
-                let action = if *purge {
-                    "stopped and purged"
+                // `200 OK` means the session was already done/lost — a no-op on
+                // status (see `SessionManager::stop_session`) — vs. `204 No
+                // Content` for an actual live-session stop; word the message
+                // accordingly rather than claiming "stopped" for a session that
+                // already finished on its own.
+                let already_done = resp.status() == reqwest::StatusCode::OK;
+                let message = if already_done {
+                    if *purge {
+                        format!("Session {name} was already done (purged).")
+                    } else {
+                        format!("Session {name} already done.")
+                    }
+                } else if *purge {
+                    format!("Session {name} stopped and purged.")
                 } else {
-                    "stopped"
+                    format!("Session {name} stopped.")
                 };
                 match ok_or_api_error(resp).await {
-                    Ok(_) => results.push(format!("Session {name} {action}.")),
+                    Ok(_) => results.push(message),
                     Err(e) => results.push(format!("Error stopping {name}: {e}")),
                 }
             }
@@ -2372,6 +2384,40 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("stopped and purged"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_stop_on_already_done_session_prints_already_done() {
+        // The daemon's `stop` handler returns `200 OK` (vs. `204 No Content` for
+        // an actual stop) when the session was already `done`/`lost` — the CLI
+        // must word its message accordingly instead of implying it just stopped
+        // a live session.
+        use axum::{Router, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{name}/stop",
+            post(|| async { axum::http::StatusCode::OK }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::Stop {
+                names: vec!["test-session".into()],
+                purge: false,
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(
+            result.contains("already done"),
+            "expected 'already done' wording, got: {result}"
+        );
+        assert!(!result.to_lowercase().contains("stopped."));
     }
 
     #[tokio::test]
