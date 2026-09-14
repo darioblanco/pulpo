@@ -86,6 +86,22 @@ pub struct SessionInterventionEvent {
     pub timestamp: String,
 }
 
+/// A daemon-level event not tied to any particular session — currently just
+/// the database being found unusable at startup and quarantined (see
+/// `pulpod::store::open_and_migrate`). Kept generic (a free-form `subtype` +
+/// `message`) so future daemon-level notices don't each need a new
+/// `PulpoEvent` variant.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DaemonEvent {
+    pub node_name: String,
+    /// `db_unusable` today; more subtypes may be added later.
+    pub subtype: String,
+    /// Human-readable summary, e.g. "database was unusable (...) — quarantined
+    /// to state.db.unusable-<timestamp> and started fresh".
+    pub message: String,
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
@@ -94,6 +110,7 @@ pub enum PulpoEvent {
     SessionDeleted(SessionDeletedEvent),
     UsageAlert(UsageAlertEvent),
     Intervention(SessionInterventionEvent),
+    Daemon(DaemonEvent),
 }
 
 /// Session reference embedded in the canonical [`Event`] envelope.
@@ -253,6 +270,17 @@ impl Event {
                     payload: serde_json::Value::Object(payload),
                 })
             }
+            PulpoEvent::Daemon(d) => Some(Self {
+                schema_version: 1,
+                event_id: Uuid::new_v4().to_string(),
+                event_type: "daemon".into(),
+                subtype: d.subtype.clone(),
+                severity: "critical".into(),
+                occurred_at: rfc3339_or_now(&d.timestamp),
+                node: node.to_string(),
+                session: None,
+                payload: serde_json::json!({ "message": d.message }),
+            }),
             // Housekeeping — not an externally-forwarded "important event".
             PulpoEvent::SessionDeleted(_) => None,
         }
@@ -752,6 +780,68 @@ mod tests {
         let event: Event = serde_json::from_str(json).unwrap();
         assert_eq!(event.payload, serde_json::Value::Null);
         assert!(event.session.is_none());
+    }
+
+    fn daemon_event() -> PulpoEvent {
+        PulpoEvent::Daemon(DaemonEvent {
+            node_name: "mac-mini".into(),
+            subtype: "db_unusable".into(),
+            message: "database was unusable — quarantined and started fresh".into(),
+            timestamp: "2026-06-15T12:00:00Z".into(),
+        })
+    }
+
+    #[test]
+    fn test_daemon_event_serialize_roundtrip() {
+        let event = DaemonEvent {
+            node_name: "n".into(),
+            subtype: "db_unusable".into(),
+            message: "m".into(),
+            timestamp: "t".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: DaemonEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "n");
+        assert_eq!(deserialized.subtype, "db_unusable");
+        assert_eq!(deserialized.message, "m");
+    }
+
+    #[test]
+    fn test_daemon_event_debug_clone_default() {
+        let event = DaemonEvent::default();
+        let cloned = event.clone();
+        assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_pulpo_event_daemon_serialize() {
+        let json = serde_json::to_string(&daemon_event()).unwrap();
+        assert!(json.contains("\"kind\":\"daemon\""));
+        assert!(json.contains("\"subtype\":\"db_unusable\""));
+    }
+
+    #[test]
+    fn test_pulpo_event_roundtrip_daemon() {
+        let json = serde_json::to_string(&daemon_event()).unwrap();
+        let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            &deserialized,
+            PulpoEvent::Daemon(d) if d.subtype == "db_unusable" && d.node_name == "mac-mini"
+        ));
+    }
+
+    #[test]
+    fn test_from_pulpo_event_daemon() {
+        let event = Event::from_pulpo_event(&daemon_event(), "mac-mini").unwrap();
+        assert_eq!(event.event_type, "daemon");
+        assert_eq!(event.subtype, "db_unusable");
+        assert_eq!(event.severity, "critical");
+        assert_eq!(event.node, "mac-mini");
+        assert!(event.session.is_none());
+        assert_eq!(
+            event.payload["message"],
+            "database was unusable — quarantined and started fresh"
+        );
     }
 
     #[test]

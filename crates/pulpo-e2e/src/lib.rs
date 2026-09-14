@@ -241,6 +241,15 @@ impl Daemon {
     /// if it never becomes healthy.
     #[must_use]
     pub fn start(cfg: DaemonConfig) -> Self {
+        Self::start_with_seed(cfg, |_data_dir| {})
+    }
+
+    /// Like [`Daemon::start`], but calls `seed_data_dir` with the (empty,
+    /// already-created) data dir path *before* `pulpod` is spawned — for
+    /// scenarios that need a pre-existing `state.db` in place when the
+    /// daemon first boots (e.g. S13's unusable/downgraded database).
+    #[must_use]
+    pub fn start_with_seed(cfg: DaemonConfig, seed_data_dir: impl FnOnce(&Path)) -> Self {
         let root = tempfile::tempdir().expect("create root tempdir");
         let home_dir = root.path().join("home");
         let data_dir = root.path().join("data");
@@ -250,6 +259,7 @@ impl Daemon {
             std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create {dir:?}: {e}"));
         }
         std::fs::create_dir_all(home_dir.join(".claude").join("projects")).ok();
+        seed_data_dir(&data_dir);
 
         let pulpod_bin = debug_bin("pulpod");
         let pulpo_bin = debug_bin("pulpo");

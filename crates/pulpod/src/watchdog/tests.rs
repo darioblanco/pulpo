@@ -1079,7 +1079,10 @@ async fn test_idle_transition_emits_sse_event() {
             assert_eq!(se.session_name, "idle-sse");
             assert!(se.output_snippet.is_some());
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
+        PulpoEvent::SessionDeleted(_)
+        | PulpoEvent::UsageAlert(_)
+        | PulpoEvent::Intervention(_)
+        | PulpoEvent::Daemon(_) => {
             panic!("expected session event")
         }
     }
@@ -1133,7 +1136,10 @@ async fn test_active_transition_emits_sse_event() {
             assert_eq!(se.previous_status, Some("idle".into()));
             assert_eq!(se.session_name, "active-sse");
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
+        PulpoEvent::SessionDeleted(_)
+        | PulpoEvent::UsageAlert(_)
+        | PulpoEvent::Intervention(_)
+        | PulpoEvent::Daemon(_) => {
             panic!("expected session event")
         }
     }
@@ -2181,7 +2187,10 @@ async fn test_ready_transition_emits_event() {
             assert_eq!(se.previous_status, Some("active".into()));
             assert_eq!(se.node_name, "test-node");
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
+        PulpoEvent::SessionDeleted(_)
+        | PulpoEvent::UsageAlert(_)
+        | PulpoEvent::Intervention(_)
+        | PulpoEvent::Daemon(_) => {
             panic!("expected session event")
         }
     }
@@ -2283,7 +2292,10 @@ async fn test_ready_from_idle_state() {
         PulpoEvent::Session(se) => {
             assert_eq!(se.previous_status, Some("idle".into()));
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
+        PulpoEvent::SessionDeleted(_)
+        | PulpoEvent::UsageAlert(_)
+        | PulpoEvent::Intervention(_)
+        | PulpoEvent::Daemon(_) => {
             panic!("expected session event")
         }
     }

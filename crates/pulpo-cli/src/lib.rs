@@ -7,6 +7,7 @@ use pulpo_common::api::{
 };
 use pulpo_common::session::{Session, SessionStatus};
 
+mod daemon_log;
 mod format;
 mod hook;
 mod http;
@@ -925,6 +926,12 @@ async fn ensure_daemon_running(client: &reqwest::Client, url: &str, node: &str) 
             eprintln!("pulpod started.");
             return true;
         }
+    }
+    // The health-check timeout above gives no clue why pulpod never came up
+    // (e.g. it exited immediately after logging a fatal startup error) — tail
+    // its own log for the operator instead of leaving them to go find it.
+    for line in daemon_log::tail_daemon_error_lines(3) {
+        eprintln!("pulpod log: {line}");
     }
     eprintln!("pulpod did not start in time.");
     false

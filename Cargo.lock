@@ -1695,12 +1695,16 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "dirs",
  "pulpo-common",
  "reqwest",
  "serde",
  "serde_json",
  "shell-words",
+ "shellexpand",
+ "tempfile",
  "tokio",
+ "toml",
  "uuid",
 ]
 

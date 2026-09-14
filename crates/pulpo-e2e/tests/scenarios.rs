@@ -614,3 +614,94 @@ fn s12_spawn_quoted_prompt_reaches_harness_intact() {
         "full argv: {argv:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// S13 — an unusable database recovers instead of crash-looping
+// ---------------------------------------------------------------------------
+
+/// Assert the data dir has a quarantined `state.db.unusable-*` file, then
+/// prove the fresh database left in its place is actually usable through the
+/// real CLI.
+fn assert_recovered_and_usable(daemon: &Daemon) {
+    let quarantined = std::fs::read_dir(&daemon.data_dir)
+        .expect("read data dir")
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("state.db.unusable-")
+        });
+    assert!(
+        quarantined,
+        "expected a quarantined state.db.unusable-* file in {:?}",
+        daemon.data_dir
+    );
+
+    let output = daemon.pulpo(&["ls", "--all"]);
+    assert!(
+        output.status.success(),
+        "pulpo ls --all failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Build a real SQLite file at `path` with a legitimate `_sqlx_migrations`
+/// table (the same schema sqlx itself creates) carrying one row for a
+/// migration version (9999) far ahead of anything this binary's embedded
+/// migrator knows — simulating a database a *newer* `pulpod` already
+/// migrated, now opened by an *older* binary after a downgrade. Shells out to
+/// the system `sqlite3` (also relied on being present the way `tmux` is for
+/// this whole suite — see `CLAUDE.md`'s "Running it" note).
+fn seed_downgraded_database(path: &std::path::Path) {
+    let sql = "\
+        CREATE TABLE _sqlx_migrations (\n\
+            version BIGINT PRIMARY KEY,\n\
+            description TEXT NOT NULL,\n\
+            installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n\
+            success BOOLEAN NOT NULL,\n\
+            checksum BLOB NOT NULL,\n\
+            execution_time BIGINT NOT NULL\n\
+        );\n\
+        INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)\n\
+        VALUES (9999, 'from the future', 1, x'00', 0);\n";
+    let status = std::process::Command::new("sqlite3")
+        .arg(path)
+        .arg(sql)
+        .status()
+        .expect("run sqlite3 to seed a downgraded database");
+    assert!(status.success(), "sqlite3 seed command failed");
+}
+
+/// Regression test for the owner's 0.0.39 -> 0.3.0 upgrade incident: the
+/// daemon refused a pre-migration database ("unsupported legacy database
+/// schema detected"), exited 1, and launchd restarted it 14 times — the CLI
+/// only ever reported "pulpod did not start in time", with the real cause
+/// sitting in a log file nobody looked at. `pulpod` now quarantines an
+/// unusable database (renaming it to `state.db.unusable-<timestamp>`) and
+/// starts fresh instead of exiting. This case: an outright garbage/corrupt
+/// `state.db` (not a SQLite file at all).
+#[test]
+fn s13_garbage_database_recovers_and_starts_fresh() {
+    let daemon = Daemon::start_with_seed(DaemonConfig::default(), |data_dir| {
+        std::fs::write(data_dir.join("state.db"), b"not a sqlite database")
+            .expect("seed garbage state.db");
+    });
+
+    // `Daemon::start_with_seed` already waits for the daemon to become
+    // healthy (panicking with its log tailed in if it never does) — reaching
+    // here already proves the daemon didn't crash-loop on the garbage file.
+    assert_recovered_and_usable(&daemon);
+}
+
+/// Same recovery, for the other failure mode called out in `CLAUDE.md`: a
+/// downgrade, where `MIGRATOR.run()` fails with sqlx's `VersionMissing`
+/// rather than the legacy-schema check.
+#[test]
+fn s13_downgraded_database_recovers_and_starts_fresh() {
+    let daemon = Daemon::start_with_seed(DaemonConfig::default(), |data_dir| {
+        seed_downgraded_database(&data_dir.join("state.db"));
+    });
+
+    assert_recovered_and_usable(&daemon);
+}

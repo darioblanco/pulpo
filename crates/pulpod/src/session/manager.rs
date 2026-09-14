@@ -1301,7 +1301,8 @@ mod tests {
             PulpoEvent::Session(se) => se,
             PulpoEvent::SessionDeleted(_)
             | PulpoEvent::UsageAlert(_)
-            | PulpoEvent::Intervention(_) => {
+            | PulpoEvent::Intervention(_)
+            | PulpoEvent::Daemon(_) => {
                 panic!("expected session event")
             }
         }
@@ -2563,7 +2564,10 @@ mod tests {
                 assert_eq!(se.session_name, "purge-event");
                 assert_eq!(se.node_name, "test-node");
             }
-            PulpoEvent::Session(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
+            PulpoEvent::Session(_)
+            | PulpoEvent::UsageAlert(_)
+            | PulpoEvent::Intervention(_)
+            | PulpoEvent::Daemon(_) => {
                 panic!("expected session_deleted event")
             }
         }
