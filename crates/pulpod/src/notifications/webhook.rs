@@ -168,7 +168,6 @@ mod tests {
             url: url.into(),
             events: vec![],
             min_severity: None,
-            secret: None,
         }
     }
 
@@ -609,7 +608,6 @@ mod tests {
         let config = WebhookEndpointConfig {
             events: vec![],
             min_severity: None,
-            secret: None,
             name: "leaky".into(),
             url: format!("http://127.0.0.1:1/{secret_path}"),
         };

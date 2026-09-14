@@ -6,13 +6,12 @@ Pulpo runs with zero config — all sections are optional with sensible defaults
 
 Breaking cleanup note:
 
-- truly unknown config keys now fail at startup instead of being silently ignored; a
-  short list of **retired** keys (superseded features — `watchdog.adopt_tmux`,
-  `node.tag`, `[controller]`, `[peers]`, `[inks]`, `[docker]`, `[plans]`, the three
-  `watchdog.burn_*` keys, ...) is the exception — those still load with a startup warning
-  and are ignored (see [Config Reference](/reference/config) "Retired keys"). Nothing
-  rewrites the config file on its own, so a retired key stays in the file, still
-  ignored, until you remove it by hand.
+- any config key that isn't recognized — a leftover from a superseded feature, a typo,
+  anything not documented on this page, at any nesting level — is logged once at startup
+  and ignored rather than rejected; it never fails startup (see
+  [Config Reference](/reference/config) "Unknown keys"). Nothing rewrites the config file
+  on its own, so an unknown key stays in the file, still ignored, until you remove it by
+  hand.
 - the config file is the source of truth — `pulpod` and the web UI only read it (there
   is no settings-editing API or UI). Change anything by editing the file directly and
   restarting `pulpod`.
@@ -44,8 +43,7 @@ Bind modes:
 ## Watchdog
 
 The watchdog monitors sessions for idle detection and enforces the budget breaker (there is
-no separate burn-rate ceiling — a burn-velocity governor was built and then removed; see
-[Config Reference](/reference/config) "Retired keys"):
+no separate burn-rate ceiling — a burn-velocity governor was built and then removed):
 
 ```toml
 [watchdog]
@@ -119,12 +117,11 @@ For `local` and `tailscale` modes, auth is skipped.
 There is no `[controller]` section — controller/node relay mode was removed. Every `pulpod`
 is standalone. There is also no `[peers]` section — manual peer configuration and Tailscale
 peer discovery were removed for the same reason. A leftover `[controller]`, `[peers]`, or
-`discovery_interval_secs` key from an older config still loads (it's parsed and silently
-ignored, with no startup warning) — the same silent treatment already given the retired
-`[docker]` runtime section. Remove it by hand when you're ready; `pulpod` only rewrites the
-file on its own once, the very first time it runs with no auth token yet, so a retired key
-otherwise stays in the file until you edit it out (see [Config Reference](/reference/config)
-"Retired keys").
+`discovery_interval_secs` key from an older config still loads — like any other unknown
+key, it's logged once and ignored (see [Config Reference](/reference/config) "Unknown
+keys"). Remove it by hand when you're ready; `pulpod` only rewrites the file on its own
+once, the very first time it runs with no auth token yet, so an unknown key otherwise
+stays in the file until you edit it out.
 
 To reach another machine, point the CLI or web UI at it directly (`pulpo --url <host:port>`,
 a saved web UI connection, or SSH + `pulpo attach`) — see

@@ -58,16 +58,13 @@ mod tests {
                     url: "https://legacy.com".into(),
                     events: vec![],
                     min_severity: None,
-                    secret: None,
                 }],
-                ..Default::default()
             },
             webhooks: vec![crate::config::WebhookEndpointConfig {
                 name: "hook".into(),
                 url: "https://hook.com".into(),
                 events: vec![],
                 min_severity: Some("warn".into()),
-                secret: Some("key".into()),
             }],
             ..Default::default()
         };

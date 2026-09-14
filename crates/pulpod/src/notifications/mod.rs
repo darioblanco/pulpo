@@ -121,7 +121,6 @@ mod tests {
             url: url.into(),
             events,
             min_severity: None,
-            secret: None,
         }
     }
 
