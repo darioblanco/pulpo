@@ -14,8 +14,8 @@ mod http;
 
 #[cfg_attr(coverage, allow(unused_imports))]
 use format::{
-    format_cleanup_message, format_interventions, format_schedules, format_sessions,
-    format_usage_scan, format_usage_sessions, format_worktree_sessions,
+    format_cleanup_message, format_hidden_sessions_hint, format_interventions, format_schedules,
+    format_sessions, format_usage_scan, format_usage_sessions, format_worktree_sessions,
 };
 #[cfg_attr(coverage, allow(unused_imports))]
 use http::{
@@ -138,10 +138,12 @@ pub enum Commands {
         command: Vec<String>,
     },
 
-    /// List sessions (live only by default)
+    /// List sessions (Active, Idle, Ready, and Lost by default — Stopped is
+    /// hidden; a lost session is exactly the kind worth resuming after a reboot,
+    /// so it's shown, not treated like a finished one)
     #[command(visible_alias = "ls")]
     List {
-        /// Show all sessions including stopped and lost
+        /// Show every session, including Stopped
         #[arg(short, long)]
         all: bool,
     },
@@ -1073,14 +1075,28 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             Ok(format!("Sent input to session {name}."))
         }
         Commands::List { all } => {
-            let list_url = if *all {
-                format!("{url}/api/v1/sessions")
-            } else {
-                format!("{url}/api/v1/sessions?status=creating,active,idle,ready")
-            };
-            let sessions: Vec<Session> =
-                get_json(&client, list_url, token.as_deref(), node).await?;
-            Ok(format_sessions(&sessions))
+            let sessions: Vec<Session> = get_json(
+                &client,
+                format!("{url}/api/v1/sessions"),
+                token.as_deref(),
+                node,
+            )
+            .await?;
+            if *all {
+                return Ok(format_sessions(&sessions));
+            }
+            // Default view hides only `Stopped` — a `Lost` session is exactly the
+            // kind worth resuming after a reboot (see CLAUDE.md's "no sessions"
+            // bug report), so it stays visible alongside Active/Idle/Ready.
+            let (visible, hidden): (Vec<Session>, Vec<Session>) = sessions
+                .into_iter()
+                .partition(|s| s.status != SessionStatus::Stopped);
+            let mut out = format_sessions(&visible);
+            if let Some(hint) = format_hidden_sessions_hint(hidden.len()) {
+                out.push('\n');
+                out.push_str(&hint);
+            }
+            Ok(out)
         }
         Commands::Spawn {
             workdir,
@@ -1884,6 +1900,14 @@ mod tests {
         format!(r#"{{"session":{TEST_SESSION_JSON}}}"#)
     }
 
+    /// A minimal valid `Session` JSON with the given id/name/status — for building
+    /// fake `GET /api/v1/sessions` list responses with varied statuses.
+    fn session_json(id: &str, name: &str, status: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","name":"{name}","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"{status}","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+        )
+    }
+
     /// Start a lightweight test HTTP server and return its address.
     async fn start_test_server() -> String {
         use axum::http::StatusCode;
@@ -1957,6 +1981,83 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert_eq!(result, "No sessions.");
+    }
+
+    /// Server for `pulpo ls` tests: one session in each of Active, Lost, and
+    /// Stopped so a single fixed response can prove both the default filter and
+    /// `--all`.
+    async fn start_ls_test_server() -> String {
+        use axum::{Json, Router, routing::get};
+
+        let sessions_json = format!(
+            "[{},{},{}]",
+            session_json(
+                "00000000-0000-0000-0000-000000000001",
+                "active-one",
+                "active"
+            ),
+            session_json("00000000-0000-0000-0000-000000000002", "lost-one", "lost"),
+            session_json(
+                "00000000-0000-0000-0000-000000000003",
+                "stopped-one",
+                "stopped"
+            ),
+        );
+        let app = Router::new().route(
+            "/api/v1/sessions",
+            get(move || {
+                let body = sessions_json.clone();
+                async move { Json(serde_json::from_str::<serde_json::Value>(&body).unwrap()) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    #[tokio::test]
+    async fn test_execute_list_default_hides_stopped_shows_lost() {
+        let node = start_ls_test_server().await;
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::List { all: false }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("active-one"), "{result}");
+        assert!(
+            result.contains("lost-one"),
+            "Lost sessions are the resumable ones after a reboot — must stay visible by default: {result}"
+        );
+        assert!(
+            !result.contains("stopped-one"),
+            "Stopped must be hidden by default: {result}"
+        );
+        assert!(
+            result.contains("1 stopped session(s) hidden — use --all"),
+            "must print the hidden-count hint: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_list_all_shows_everything_no_hint() {
+        let node = start_ls_test_server().await;
+        let cli = Cli {
+            url: node,
+            token: None,
+            command: Some(Commands::List { all: true }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("active-one"));
+        assert!(result.contains("lost-one"));
+        assert!(result.contains("stopped-one"));
+        assert!(
+            !result.contains("hidden"),
+            "no hint expected with --all: {result}"
+        );
     }
 
     #[tokio::test]

@@ -145,6 +145,19 @@ pub fn format_sessions(sessions: &[Session]) -> String {
     lines.join("\n")
 }
 
+/// Trailing hint line for `pulpo ls` when stopped sessions are hidden by default
+/// (see `Commands::List`): reports how many were hidden and how to see them.
+/// `None` when nothing was hidden — no hint line needed.
+pub fn format_hidden_sessions_hint(hidden_count: usize) -> Option<String> {
+    if hidden_count == 0 {
+        None
+    } else {
+        Some(format!(
+            "{hidden_count} stopped session(s) hidden — use --all"
+        ))
+    }
+}
+
 /// Format intervention events as a table.
 pub fn format_interventions(events: &[InterventionEventResponse]) -> String {
     if events.is_empty() {
@@ -873,6 +886,27 @@ mod tests {
             by_repo: vec![],
         };
         assert!(format_usage_scan(&r).contains("No local agent history"));
+    }
+
+    #[test]
+    fn test_format_hidden_sessions_hint_none_when_zero() {
+        assert_eq!(format_hidden_sessions_hint(0), None);
+    }
+
+    #[test]
+    fn test_format_hidden_sessions_hint_singular() {
+        assert_eq!(
+            format_hidden_sessions_hint(1),
+            Some("1 stopped session(s) hidden — use --all".to_owned())
+        );
+    }
+
+    #[test]
+    fn test_format_hidden_sessions_hint_plural() {
+        assert_eq!(
+            format_hidden_sessions_hint(3),
+            Some("3 stopped session(s) hidden — use --all".to_owned())
+        );
     }
 
     #[test]
