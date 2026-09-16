@@ -1,5 +1,6 @@
 pub mod webhook;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pulpo_common::event::{Event, PulpoEvent};
@@ -8,40 +9,62 @@ use tracing::{info, warn};
 
 use crate::config::WebhookEndpointConfig;
 
-/// Maximum number of webhook deliveries in flight at once, across every
-/// endpoint. Each event can spawn one delivery task per admitting endpoint —
-/// with no cap, a burst of events (or many configured endpoints) could spawn
-/// unboundedly many concurrent outbound requests. Beyond this cap, a delivery
-/// is dropped (and logged) rather than queued, matching the existing
-/// "in-memory queue, best-effort, no durable outbox" contract `deliver`
-/// already documents: a dropped delivery here is no worse than one that
-/// exhausts its retries.
+/// Total delivery-concurrency budget, split evenly across every configured
+/// endpoint (see [`build_endpoint_semaphores`]) rather than pooled as one
+/// endpoint-wide semaphore. A single shared pool meant one endpoint that's down
+/// — each delivery attempt against it occupies a permit for the whole
+/// connect/request timeout plus [`webhook::RETRY_DELAYS`] backoff before giving
+/// up — could exhaust the *entire* budget and starve every other, healthy
+/// endpoint's deliveries too. Each endpoint still gets at least 1 permit even
+/// when there are more endpoints configured than this budget, so the actual
+/// combined capacity can exceed this nominal total once endpoint count is high
+/// — a looser bound than the exact global cap this replaces, traded for
+/// isolating one endpoint's failures from every other's.
 pub(crate) const MAX_CONCURRENT_DELIVERIES: usize = 16;
 
+/// Build one independent semaphore per configured endpoint (keyed by name),
+/// each capped at an equal share of [`MAX_CONCURRENT_DELIVERIES`] — at least 1,
+/// even when there are more endpoints than the budget allows. Rebuilt once per
+/// dispatcher-loop run; a webhook config change needs a daemon restart like
+/// every other watchdog/notification setting.
+fn build_endpoint_semaphores(webhooks: &[WebhookEndpointConfig]) -> HashMap<String, Arc<Semaphore>> {
+    let per_endpoint = (MAX_CONCURRENT_DELIVERIES / webhooks.len().max(1)).max(1);
+    webhooks
+        .iter()
+        .map(|w| (w.name.clone(), Arc::new(Semaphore::new(per_endpoint))))
+        .collect()
+}
+
 /// Spawn a detached, best-effort delivery task for every webhook endpoint
-/// whose filter admits `event`, bounded by `semaphore` (see
-/// [`MAX_CONCURRENT_DELIVERIES`]). Delivery (including retries) happens
-/// concurrently with the caller — this is the "in-memory queue": nothing is
-/// persisted, so a delivery that's still retrying when the daemon exits is
-/// simply lost. Returns the number of deliveries actually spawned (an
-/// admitting endpoint dropped for lack of a permit is not counted).
+/// whose filter admits `event`, bounded by that endpoint's own semaphore in
+/// `semaphores` (see [`build_endpoint_semaphores`]). Delivery (including
+/// retries) happens concurrently with the caller — this is the "in-memory
+/// queue": nothing is persisted, so a delivery that's still retrying when the
+/// daemon exits is simply lost. Returns the number of deliveries actually
+/// spawned (an admitting endpoint dropped for lack of a permit is not
+/// counted).
 fn dispatch_webhooks(
     client: &reqwest::Client,
     webhooks: &[WebhookEndpointConfig],
     event: &Event,
-    semaphore: &Arc<Semaphore>,
+    semaphores: &HashMap<String, Arc<Semaphore>>,
 ) -> usize {
+    let per_endpoint_cap = (MAX_CONCURRENT_DELIVERIES / webhooks.len().max(1)).max(1);
     let mut spawned = 0;
     for w in webhooks {
         if !webhook::webhook_wants(w, event) {
             continue;
         }
+        let Some(semaphore) = semaphores.get(&w.name) else {
+            continue;
+        };
         let Ok(permit) = Arc::clone(semaphore).try_acquire_owned() else {
             warn!(
                 webhook = %w.name,
                 event = %format!("{}.{}", event.event_type, event.subtype),
-                max_concurrent = MAX_CONCURRENT_DELIVERIES,
-                "Dropping webhook delivery: max concurrent deliveries reached"
+                event_id = %event.event_id,
+                max_concurrent = per_endpoint_cap,
+                "Dropping webhook delivery: max concurrent deliveries reached for this endpoint"
             );
             continue;
         };
@@ -71,7 +94,7 @@ pub async fn run_dispatcher_loop(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let client = webhook::build_client();
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES));
+    let semaphores = build_endpoint_semaphores(&webhooks);
     loop {
         tokio::select! {
             result = rx.recv() => {
@@ -80,7 +103,7 @@ pub async fn run_dispatcher_loop(
                         let Some(event) = Event::from_pulpo_event(&pulpo_event, &node_name) else {
                             continue;
                         };
-                        dispatch_webhooks(&client, &webhooks, &event, &semaphore);
+                        dispatch_webhooks(&client, &webhooks, &event, &semaphores);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(missed = n, "Event dispatcher lagged, skipping events");
@@ -124,10 +147,43 @@ mod tests {
         }
     }
 
-    /// A freshly-full semaphore at the production cap, for tests that don't care
-    /// about the concurrency limit itself.
-    fn test_semaphore() -> Arc<Semaphore> {
-        Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES))
+    // --- build_endpoint_semaphores ---
+
+    #[test]
+    fn test_build_endpoint_semaphores_splits_capacity_evenly() {
+        let webhooks = vec![
+            webhook_config("a", "http://127.0.0.1:1/a", vec![]),
+            webhook_config("b", "http://127.0.0.1:1/b", vec![]),
+        ];
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        assert_eq!(semaphores.len(), 2);
+        assert_eq!(
+            semaphores["a"].available_permits(),
+            MAX_CONCURRENT_DELIVERIES / 2
+        );
+        assert_eq!(
+            semaphores["b"].available_permits(),
+            MAX_CONCURRENT_DELIVERIES / 2
+        );
+    }
+
+    #[test]
+    fn test_build_endpoint_semaphores_at_least_one_permit_with_many_endpoints() {
+        // More endpoints than the shared budget: each still gets at least 1
+        // permit rather than being starved down to 0 by integer division.
+        let webhooks: Vec<_> = (0..MAX_CONCURRENT_DELIVERIES * 4)
+            .map(|i| webhook_config(&format!("hook-{i}"), "http://127.0.0.1:1/hook", vec![]))
+            .collect();
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        assert_eq!(semaphores.len(), webhooks.len());
+        for semaphore in semaphores.values() {
+            assert_eq!(semaphore.available_permits(), 1);
+        }
+    }
+
+    #[test]
+    fn test_build_endpoint_semaphores_empty_webhooks_is_empty_map() {
+        assert!(build_endpoint_semaphores(&[]).is_empty());
     }
 
     // --- dispatch_webhooks ---
@@ -145,7 +201,8 @@ mod tests {
             ), // filtered out
         ];
 
-        let n = dispatch_webhooks(&client, &webhooks, &event, &test_semaphore());
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        let n = dispatch_webhooks(&client, &webhooks, &event, &semaphores);
         assert_eq!(n, 1);
     }
 
@@ -158,10 +215,8 @@ mod tests {
             webhook_config("b", "http://127.0.0.1:1/b", vec![]),
         ];
 
-        assert_eq!(
-            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
-            2
-        );
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 2);
     }
 
     #[tokio::test]
@@ -169,7 +224,7 @@ mod tests {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
         assert_eq!(
-            dispatch_webhooks(&client, &[], &event, &test_semaphore()),
+            dispatch_webhooks(&client, &[], &event, &build_endpoint_semaphores(&[])),
             0
         );
     }
@@ -183,18 +238,16 @@ mod tests {
             "http://127.0.0.1:1/a",
             vec!["stopped".into()],
         )];
-        assert_eq!(
-            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
-            0
-        );
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 0);
     }
 
     #[tokio::test]
-    async fn test_dispatch_drops_when_no_permits_available() {
-        // Simulate every concurrency slot already being in use (e.g. a flood of
-        // prior events still delivering to slow endpoints): a saturated semaphore
-        // must make `dispatch_webhooks` drop the delivery — not spawn it anyway,
-        // and not block waiting for a permit to free up.
+    async fn test_dispatch_drops_when_no_permits_available_for_that_endpoint() {
+        // Simulate one endpoint's concurrency slot already being in use (e.g. a
+        // flood of prior events still delivering to it): a saturated per-endpoint
+        // semaphore must make `dispatch_webhooks` drop the delivery for THAT
+        // endpoint only — not spawn it anyway, and not block waiting for a permit.
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
         let webhooks = vec![
@@ -202,39 +255,50 @@ mod tests {
             webhook_config("b", "http://127.0.0.1:1/b", vec![]),
         ];
 
-        let semaphore = Arc::new(Semaphore::new(1));
-        // Hold the single permit ourselves so the semaphore is fully saturated.
-        let held = Arc::clone(&semaphore).try_acquire_owned().unwrap();
-        assert_eq!(semaphore.available_permits(), 0);
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        // Saturate every permit "a" owns ourselves.
+        let a_semaphore = semaphores.get("a").unwrap().clone();
+        let mut held = Vec::new();
+        while let Ok(permit) = Arc::clone(&a_semaphore).try_acquire_owned() {
+            held.push(permit);
+        }
+        assert_eq!(a_semaphore.available_permits(), 0);
 
-        let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphore);
-        assert_eq!(spawned, 0, "no permits available -> nothing spawned");
+        let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphores);
+        assert_eq!(spawned, 1, "a's delivery is dropped, b's still spawns");
         assert_eq!(
-            semaphore.available_permits(),
+            a_semaphore.available_permits(),
             0,
             "a dropped delivery must not touch the semaphore"
         );
 
         drop(held);
-        assert_eq!(semaphore.available_permits(), 1);
+        assert!(a_semaphore.available_permits() > 0);
     }
 
     #[tokio::test]
-    async fn test_dispatch_flood_never_exceeds_concurrency_cap() {
-        // A burst of far more admitting endpoints than the cap allows must still
-        // spawn no more than `MAX_CONCURRENT_DELIVERIES` deliveries at once —
-        // regardless of how many endpoints admit the event.
+    async fn test_dispatch_one_dead_endpoint_does_not_starve_others() {
+        // Regression for the bug a single shared semaphore had: saturating one
+        // endpoint's own budget must never reduce another, healthy endpoint's
+        // ability to receive deliveries in the same dispatch call.
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
-        let webhooks: Vec<_> = (0..MAX_CONCURRENT_DELIVERIES * 4)
-            .map(|i| webhook_config(&format!("hook-{i}"), "http://127.0.0.1:1/hook", vec![]))
-            .collect();
+        let webhooks = vec![
+            webhook_config("dead", "http://127.0.0.1:1/dead", vec![]),
+            webhook_config("healthy", "http://127.0.0.1:1/healthy", vec![]),
+        ];
 
-        let semaphore = test_semaphore();
-        let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphore);
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        let dead_semaphore = semaphores.get("dead").unwrap().clone();
+        let mut held = Vec::new();
+        while let Ok(permit) = Arc::clone(&dead_semaphore).try_acquire_owned() {
+            held.push(permit);
+        }
 
-        assert_eq!(spawned, MAX_CONCURRENT_DELIVERIES);
-        assert_eq!(semaphore.available_permits(), 0);
+        for _ in 0..5 {
+            let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphores);
+            assert_eq!(spawned, 1, "the healthy endpoint keeps receiving deliveries");
+        }
     }
 
     fn usage_alert_pulpo_event() -> PulpoEvent {
@@ -266,10 +330,8 @@ mod tests {
                 vec!["lifecycle.*".into()],
             ),
         ];
-        assert_eq!(
-            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
-            1
-        );
+        let semaphores = build_endpoint_semaphores(&webhooks);
+        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 1);
     }
 
     // --- dispatcher loop ---

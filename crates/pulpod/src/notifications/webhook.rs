@@ -42,7 +42,15 @@ fn build_client_with_timeouts(connect: Duration, total: Duration) -> reqwest::Cl
         .connect_timeout(connect)
         .timeout(total)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .unwrap_or_else(|error| {
+            warn!(
+                %error,
+                "notifications: failed to build an HTTP client with timeouts — falling back \
+                 to a client with none; a hung endpoint could then block a delivery (and its \
+                 concurrency permit) indefinitely"
+            );
+            reqwest::Client::new()
+        })
 }
 
 /// Whether an endpoint config wants the given canonical event.
