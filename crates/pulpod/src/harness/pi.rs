@@ -145,6 +145,57 @@ const RESUME_CONFLICT_FLAGS: &[&str] =
 /// (`pi -c ...` / `pi --continue ...`) is exactly what this exists to keep hooked up.
 const CONTINUE_FLAGS: &[&str] = &["--continue", "-c"];
 
+/// pi flags documented/tested elsewhere in this adapter to take a value —
+/// mirrors Claude's/Codex's own `VALUE_FLAGS` (`claude.rs`/`codex.rs`): the
+/// token immediately following one of these is that flag's value, never a
+/// trailing positional prompt argument. Bounded by today's known/tested flags
+/// — an undocumented value-taking flag added later could be misread as ending
+/// in a bare positional, but the failure mode is limited to [`strip_prompt`]
+/// keeping one extra token it should have dropped, never breaking a working
+/// command.
+const VALUE_FLAGS: &[&str] = &["-e", "--model"];
+
+/// pi's prompt flag — the prompt is `-p`'s value (or, less commonly, a bare
+/// trailing positional with neither). [`HarnessAdapter::resume_command`] and
+/// [`HarnessAdapter::fallback_resume_command`] must strip it: replaying the
+/// original prompt as a new turn on `--session-id`/`--continue` would silently
+/// resubmit whatever the very first spawn said — mirrors the fix already
+/// applied to Claude's and Codex's own positional-prompt handling
+/// (`claude.rs::strip_prompt`/`codex.rs::strip_trailing_positionals`).
+const PROMPT_FLAGS: &[&str] = &["-p"];
+
+/// Remove `-p <value>` and any trailing positional prompt argument from
+/// `tokens[start..]` in place, never touching anything at or past a literal
+/// `--` separator (see [`flag_scan_region`]) — that's always a literal
+/// positional argument, never pulpo's own flag or the prompt this strips.
+fn strip_prompt(tokens: &mut Vec<String>, start: usize) {
+    for flag in PROMPT_FLAGS {
+        strip_flag_with_value(tokens, flag);
+    }
+    let scan_end = flag_scan_region(tokens).len();
+    let mut positional = vec![false; scan_end.saturating_sub(start)];
+    let mut skip_next_as_value = false;
+    for (offset, token) in tokens[start..scan_end.max(start)].iter().enumerate() {
+        if skip_next_as_value {
+            skip_next_as_value = false;
+        } else if VALUE_FLAGS.contains(&token.as_str()) {
+            skip_next_as_value = true;
+        } else if !token.starts_with('-') {
+            positional[offset] = true;
+        }
+    }
+    let trailing_positionals = positional
+        .iter()
+        .rev()
+        .take_while(|is_positional| **is_positional)
+        .count();
+    let region_end = scan_end.max(start);
+    let cutoff = region_end - trailing_positionals;
+    // Remove only the trailing-positional-prompt tokens found before the `--`
+    // separator (if any) — never the separator itself or anything after it.
+    tokens.drain(cutoff..region_end);
+}
+
 /// `pi`'s own subcommands (verified via `pi --help`, 0.85.1: `install`, `remove`,
 /// `uninstall`, `update`, `list`, `config`, `auth`). Each one is dispatched by
 /// `main.js` matching `args[0]` *before* pi's normal chat-session argument parser
@@ -249,6 +300,10 @@ impl HarnessAdapter for PiAdapter {
         }
 
         strip_flag_with_value(&mut tokens, "--session-id");
+        // Drop the original prompt (`-p <value>`, or a bare trailing
+        // positional) — reopening the session by id must not replay the very
+        // first turn's prompt as a new one. See `strip_prompt`.
+        strip_prompt(&mut tokens, pi_idx + 1);
         tokens.splice(
             (pi_idx + 1)..=pi_idx,
             ["--session-id".to_owned(), harness_session_id.to_owned()],
@@ -272,8 +327,24 @@ impl HarnessAdapter for PiAdapter {
         }
 
         strip_flag_with_value(&mut tokens, "--session-id");
+        // Same reasoning as `resume_command`: `--continue` picks up the most
+        // recent session in this cwd — replaying the original prompt on top
+        // of it would silently resubmit the very first turn as a new one.
+        strip_prompt(&mut tokens, pi_idx + 1);
         tokens.splice((pi_idx + 1)..=pi_idx, ["--continue".to_owned()]);
         Some(shell_words::join(&tokens))
+    }
+
+    /// pi's `--session-id <id>` is documented (see this module's doc comment) as
+    /// idempotent create-or-open *scoped to `(cwd, sessionDir)`* — unlike Claude's
+    /// `--resume <id>`/Codex's `resume <id>`, which are both keyed globally.
+    /// Running pi's exact resume from a directory other than the one the
+    /// session's conversation originally ran in silently opens (or creates) a
+    /// *different* session at that id instead of erroring, so
+    /// `session::manager::resolve_resume_command` must refuse it the same way it
+    /// already refuses a cwd-scoped fallback resume when the worktree is gone.
+    fn resume_is_cwd_scoped(&self) -> bool {
+        true
     }
 
     fn parse_event(&self, raw: &Value) -> Result<Option<HarnessEvent>> {
@@ -905,9 +976,27 @@ mod tests {
     }
 
     #[test]
-    fn test_resume_command_preserves_print_prompt_arg() {
+    fn test_resume_command_strips_print_prompt_arg() {
+        // The original prompt must be dropped — reopening the session by id
+        // must not replay it as a brand new turn.
         let cmd = PiAdapter.resume_command("pi -p 'prompt'", "sid-1").unwrap();
-        assert_eq!(cmd, "pi --session-id sid-1 -p prompt");
+        assert_eq!(cmd, "pi --session-id sid-1");
+    }
+
+    #[test]
+    fn test_resume_command_strips_trailing_positional_prompt_without_flag() {
+        let cmd = PiAdapter
+            .resume_command("pi fix the bug", "sid-1")
+            .unwrap();
+        assert_eq!(cmd, "pi --session-id sid-1");
+    }
+
+    #[test]
+    fn test_resume_command_strips_prompt_but_preserves_other_flags() {
+        let cmd = PiAdapter
+            .resume_command("pi --model x -p hi", "sid-1")
+            .unwrap();
+        assert_eq!(cmd, "pi --session-id sid-1 --model x");
     }
 
     #[test]
@@ -924,10 +1013,7 @@ mod tests {
             .resume_command("env FOO=bar pi -p hi", "sid-1")
             .unwrap();
         let tokens = shell_words::split(&cmd).unwrap();
-        assert_eq!(
-            tokens,
-            ["env", "FOO=bar", "pi", "--session-id", "sid-1", "-p", "hi"]
-        );
+        assert_eq!(tokens, ["env", "FOO=bar", "pi", "--session-id", "sid-1"]);
     }
 
     #[test]
@@ -1016,7 +1102,21 @@ mod tests {
             .fallback_resume_command("env FOO=bar pi -p hi")
             .unwrap();
         let tokens = shell_words::split(&cmd).unwrap();
-        assert_eq!(tokens, ["env", "FOO=bar", "pi", "--continue", "-p", "hi"]);
+        assert_eq!(tokens, ["env", "FOO=bar", "pi", "--continue"]);
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_print_prompt_arg() {
+        let cmd = PiAdapter.fallback_resume_command("pi -p hi").unwrap();
+        assert_eq!(cmd, "pi --continue");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_prompt_but_preserves_other_flags() {
+        let cmd = PiAdapter
+            .fallback_resume_command("pi --model x -p hi")
+            .unwrap();
+        assert_eq!(cmd, "pi --continue --model x");
     }
 
     #[test]

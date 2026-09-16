@@ -36,6 +36,48 @@ const IDENTITY_FLAGS: &[&str] = &["--session-id", "--settings"];
 /// target and a preset id on the same invocation.
 const RESUME_FLAGS: &[&str] = &["--resume", "-r", "--continue", "-c"];
 
+/// Claude Code flags documented/tested elsewhere in this adapter to take a
+/// value — mirrors Codex's own `VALUE_FLAGS` (`codex.rs`): the token
+/// immediately following one of these is that flag's value, never a trailing
+/// positional prompt argument. Bounded by today's known/tested flags — an
+/// undocumented value-taking flag added later could be misread as ending in a
+/// bare positional, but the failure mode is limited to [`strip_prompt`] keeping
+/// one extra token it should have dropped, never breaking a working command.
+const VALUE_FLAGS: &[&str] = &["--model", "--fallback-model"];
+
+/// Claude Code's headless prompt flag — the prompt is `-p`/`--print`'s value
+/// (or, less commonly, a bare trailing positional with neither). `resume_command`
+/// and `fallback_resume_command` must strip it: replaying the original prompt as
+/// a new turn on `--resume`/`--continue` would silently resubmit whatever the
+/// very first spawn said, mirroring the fix already applied to the Codex
+/// adapter's own positional-prompt handling (`codex.rs::strip_trailing_positionals`).
+const PROMPT_FLAGS: &[&str] = &["-p", "--print"];
+
+/// Remove `-p`/`--print <value>` and any trailing positional prompt argument
+/// from `tokens[start..]` in place. See [`PROMPT_FLAGS`]/[`VALUE_FLAGS`].
+fn strip_prompt(tokens: &mut Vec<String>, start: usize) {
+    for flag in PROMPT_FLAGS {
+        strip_flag_with_value(tokens, flag);
+    }
+    let mut positional = vec![false; tokens.len().saturating_sub(start)];
+    let mut skip_next_as_value = false;
+    for (offset, token) in tokens[start..].iter().enumerate() {
+        if skip_next_as_value {
+            skip_next_as_value = false;
+        } else if VALUE_FLAGS.contains(&token.as_str()) {
+            skip_next_as_value = true;
+        } else if !token.starts_with('-') {
+            positional[offset] = true;
+        }
+    }
+    let trailing_positionals = positional
+        .iter()
+        .rev()
+        .take_while(|is_positional| **is_positional)
+        .count();
+    tokens.truncate(tokens.len() - trailing_positionals);
+}
+
 /// The `Notification` matcher regex installed in pulpo's own settings file — every
 /// notification "kind" pulpo's Claude adapter currently understands.
 const NOTIFICATION_MATCHER: &str =
@@ -104,6 +146,11 @@ impl HarnessAdapter for ClaudeAdapter {
         strip_optional_value_flag(&mut tokens, "--resume");
         strip_optional_value_flag(&mut tokens, "-r");
         tokens.retain(|t| t != "--continue" && t != "-c");
+        // Drop the original prompt (`-p`/`--print <value>`, or a bare trailing
+        // positional) — `--resume` continues the existing conversation, and
+        // replaying the very first turn's prompt as a new one would silently
+        // resubmit it. See `strip_prompt`.
+        strip_prompt(&mut tokens, claude_idx + 1);
         tokens.splice(
             (claude_idx + 1)..=claude_idx,
             ["--resume".to_owned(), harness_session_id.to_owned()],
@@ -125,6 +172,10 @@ impl HarnessAdapter for ClaudeAdapter {
         strip_optional_value_flag(&mut tokens, "--resume");
         strip_optional_value_flag(&mut tokens, "-r");
         tokens.retain(|t| t != "--continue" && t != "-c");
+        // Same reasoning as `resume_command`: `--continue` picks up the most
+        // recent conversation — replaying the original prompt on top of it would
+        // silently resubmit the very first turn as a new one.
+        strip_prompt(&mut tokens, claude_idx + 1);
         tokens.splice((claude_idx + 1)..=claude_idx, ["--continue".to_owned()]);
         Some(shell_words::join(&tokens))
     }
@@ -609,24 +660,26 @@ mod tests {
 
     #[test]
     fn test_resume_command_plain() {
+        // The original prompt (`-p hi`) must be dropped — replaying it would
+        // resubmit it as a brand new turn on top of the resumed conversation.
         let cmd = ClaudeAdapter
             .resume_command("claude -p hi", "sid-1")
             .unwrap();
-        assert_eq!(cmd, "claude --resume sid-1 -p hi");
+        assert_eq!(cmd, "claude --resume sid-1");
     }
 
     #[test]
     fn test_resume_command_strips_pulpo_inserted_flags() {
         let original = "claude --session-id old-sid --settings /tmp/x.json -p hi";
         let cmd = ClaudeAdapter.resume_command(original, "sid-new").unwrap();
-        assert_eq!(cmd, "claude --resume sid-new -p hi");
+        assert_eq!(cmd, "claude --resume sid-new");
     }
 
     #[test]
     fn test_resume_command_strips_equals_form_flags() {
         let original = "claude --session-id=old-sid --settings=/tmp/x.json -p hi";
         let cmd = ClaudeAdapter.resume_command(original, "sid-new").unwrap();
-        assert_eq!(cmd, "claude --resume sid-new -p hi");
+        assert_eq!(cmd, "claude --resume sid-new");
     }
 
     #[test]
@@ -635,10 +688,33 @@ mod tests {
             .resume_command("env FOO=bar claude -p hi", "sid-1")
             .unwrap();
         let tokens = shell_words::split(&cmd).unwrap();
-        assert_eq!(
-            tokens,
-            ["env", "FOO=bar", "claude", "--resume", "sid-1", "-p", "hi"]
-        );
+        assert_eq!(tokens, ["env", "FOO=bar", "claude", "--resume", "sid-1"]);
+    }
+
+    #[test]
+    fn test_resume_command_strips_print_long_form_and_value() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude --print hi", "sid-1")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-1");
+    }
+
+    #[test]
+    fn test_resume_command_strips_trailing_positional_prompt_without_flag() {
+        // A prompt can also be given as a bare positional with neither `-p` nor
+        // `--print` — must still be dropped on resume.
+        let cmd = ClaudeAdapter
+            .resume_command("claude fix the bug", "sid-1")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-1");
+    }
+
+    #[test]
+    fn test_resume_command_strips_prompt_but_preserves_other_flags() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude --model opus -p hi", "sid-1")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-1 --model opus");
     }
 
     #[test]
@@ -678,35 +754,45 @@ mod tests {
         let cmd = ClaudeAdapter
             .resume_command("claude --resume=X -p hi", "sid-new")
             .unwrap();
-        assert_eq!(cmd, "claude --resume sid-new -p hi");
+        assert_eq!(cmd, "claude --resume sid-new");
     }
 
     #[test]
     fn test_resume_command_strips_bare_resume_flag_no_value() {
         // `--resume` with no value at all (e.g. the user meant to trigger Claude's
-        // interactive picker) followed directly by another flag — only the bare flag
-        // is stripped, the following flag is left alone.
+        // interactive picker) followed directly by another flag — the bare flag
+        // is stripped, and the prompt flag/value that follows it is also dropped.
         let cmd = ClaudeAdapter
             .resume_command("claude --resume -p hi", "sid-new")
             .unwrap();
-        assert_eq!(cmd, "claude --resume sid-new -p hi");
+        assert_eq!(cmd, "claude --resume sid-new");
     }
 
     // -- fallback_resume_command --
 
     #[test]
     fn test_fallback_resume_command_plain() {
+        // The original prompt must be dropped — `--continue` already picks up
+        // the most recent conversation; replaying the prompt would resubmit it.
         let cmd = ClaudeAdapter
             .fallback_resume_command("claude -p hi")
             .unwrap();
-        assert_eq!(cmd, "claude --continue -p hi");
+        assert_eq!(cmd, "claude --continue");
     }
 
     #[test]
     fn test_fallback_resume_command_strips_pulpo_inserted_flags() {
         let original = "claude --session-id old-sid --settings /tmp/x.json -p hi";
         let cmd = ClaudeAdapter.fallback_resume_command(original).unwrap();
-        assert_eq!(cmd, "claude --continue -p hi");
+        assert_eq!(cmd, "claude --continue");
+    }
+
+    #[test]
+    fn test_fallback_resume_command_strips_prompt_but_preserves_other_flags() {
+        let cmd = ClaudeAdapter
+            .fallback_resume_command("claude --model opus -p hi")
+            .unwrap();
+        assert_eq!(cmd, "claude --continue --model opus");
     }
 
     #[test]
@@ -729,10 +815,7 @@ mod tests {
             .fallback_resume_command("env FOO=bar claude -p hi")
             .unwrap();
         let tokens = shell_words::split(&cmd).unwrap();
-        assert_eq!(
-            tokens,
-            ["env", "FOO=bar", "claude", "--continue", "-p", "hi"]
-        );
+        assert_eq!(tokens, ["env", "FOO=bar", "claude", "--continue"]);
     }
 
     #[test]
@@ -753,7 +836,8 @@ mod tests {
     fn test_fallback_resume_command_then_prepare_spawn_wires_settings_only() {
         // The end-to-end shape `resolve_resume_command` produces: fallback_resume_command's
         // output run back through prepare_spawn must re-wire --settings without ever
-        // re-adding --session-id (mirrors the existing --continue/-r/-c no-op path).
+        // re-adding --session-id (mirrors the existing --continue/-r/-c no-op path),
+        // and the original prompt must stay gone through this round-trip too.
         let tmp = tempfile::tempdir().unwrap();
         let fallback = ClaudeAdapter
             .fallback_resume_command("claude -p hi")
@@ -767,7 +851,7 @@ mod tests {
         assert_eq!(tokens[1], "--settings");
         assert!(!tokens.contains(&"--session-id".to_owned()));
         assert!(tokens.contains(&"--continue".to_owned()));
-        assert!(tokens.contains(&"-p".to_owned()));
+        assert!(!tokens.contains(&"-p".to_owned()));
     }
 
     #[test]
