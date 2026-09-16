@@ -1357,19 +1357,14 @@ fn s16_claude_resume_refused_when_worktree_removed() {
 /// runs: `claude --continue ...` reaching the fake, hooks re-wired via a fresh
 /// `--settings` file.
 ///
-/// REAL PRODUCT BUG (confirmed by running this test): `harness::claude`'s
-/// `fallback_resume_command` (and `resume_command`) strip `--session-id`/
-/// `--settings`/`--resume`/`-r`/`--continue`/`-c` from the original command but
-/// never the trailing `-p <prompt>`/positional prompt, unlike Codex's own
-/// `fallback_resume_command` (which calls `strip_trailing_positionals`). The
-/// resumed argv observed here was
-/// `[..., "--settings", "<path>", "--continue", "-p", "fix the bug"]` — Claude
-/// Code would replay "fix the bug" as a brand-new turn on top of `--continue`
-/// instead of just reopening the conversation. Left `#[ignore]`d with the
-/// documented-correct assertion so the daemon-side fix
-/// (`crates/pulpod/src/harness/claude.rs`) has a red test to turn green — do not
-/// weaken the assertion to make this pass.
-#[ignore = "real bug: harness::claude::fallback_resume_command/resume_command don't strip -p/positional prompt (unlike Codex) — see doc comment above"]
+/// FIXED PRODUCT BUG: `harness::claude`'s `fallback_resume_command` (and
+/// `resume_command`) now strip the trailing `-p <prompt>`/positional prompt —
+/// same as `--session-id`/`--settings`/`--resume`/`-r`/`--continue`/`-c` — in
+/// addition to Codex's own `fallback_resume_command` (which calls
+/// `strip_trailing_positionals`). Before the fix, the resumed argv observed
+/// here was `[..., "--settings", "<path>", "--continue", "-p", "fix the
+/// bug"]` — Claude Code would have replayed "fix the bug" as a brand-new turn
+/// on top of `--continue` instead of just reopening the conversation.
 #[test]
 fn s16_claude_resume_falls_back_to_continue_when_cwd_intact() {
     let daemon = Daemon::start(DaemonConfig::default());
@@ -1424,9 +1419,9 @@ fn s16_claude_resume_falls_back_to_continue_when_cwd_intact() {
         argv.iter().any(|a| a == "--settings"),
         "hooks must still be re-injected on the fallback resume: {argv:?}"
     );
-    // This is the documented-correct behavior (unlike Codex's fallback, which
-    // strips the original trailing prompt — see the Codex S16 test above). If it
-    // fails, see this test's `#[ignore]` note for the real product bug it caught.
+    // This is the documented-correct behavior, same as Codex's own fallback,
+    // which also strips the original trailing prompt (see the Codex S16 test
+    // above).
     assert!(
         !argv.iter().any(|a| a == "fix the bug"),
         "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
@@ -1441,16 +1436,12 @@ fn s16_claude_resume_falls_back_to_continue_when_cwd_intact() {
 /// exactly like `PiAdapter::fallback_resume_command`'s doc comment describes — so
 /// no hook is ever wired at spawn time and `harness_session_id` stays unknown.
 ///
-/// REAL PRODUCT BUG (confirmed by running this test): `harness::pi`'s
-/// `fallback_resume_command` strips only `--session-id`, never the trailing
-/// `-p <prompt>`/positional prompt — same bug class as Claude's above. The
-/// resumed argv observed here was
-/// `[..., "-e", "<path>", "--continue", "--no-session", "-p", "fix the bug"]` —
-/// pi would replay "fix the bug" as a brand-new turn instead of just reopening
-/// the conversation. Left `#[ignore]`d with the documented-correct assertion so
-/// the daemon-side fix (`crates/pulpod/src/harness/pi.rs`) has a red test to turn
-/// green — do not weaken the assertion to make this pass.
-#[ignore = "real bug: harness::pi::fallback_resume_command doesn't strip -p/positional prompt (same class as Claude's) — see doc comment above"]
+/// FIXED PRODUCT BUG: `harness::pi`'s `fallback_resume_command` (and
+/// `resume_command`) now strip the trailing `-p <prompt>`/positional prompt in
+/// addition to `--session-id` — same bug class as Claude's above. Before the
+/// fix, the resumed argv observed here was `[..., "-e", "<path>", "--continue",
+/// "--no-session", "-p", "fix the bug"]` — pi would have replayed "fix the bug"
+/// as a brand-new turn instead of just reopening the conversation.
 #[test]
 fn s16_pi_resume_falls_back_to_continue_when_cwd_intact() {
     let daemon = Daemon::start(DaemonConfig::default());
@@ -1496,8 +1487,7 @@ fn s16_pi_resume_falls_back_to_continue_when_cwd_intact() {
         argv.iter().any(|a| a == "-e"),
         "hooks must still be re-injected on the fallback resume: {argv:?}"
     );
-    // This is the documented-correct behavior. If it fails, see this test's
-    // `#[ignore]` note for the real product bug it caught.
+    // This is the documented-correct behavior.
     assert!(
         !argv.iter().any(|a| a == "fix the bug"),
         "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
