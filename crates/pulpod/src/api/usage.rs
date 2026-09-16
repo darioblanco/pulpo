@@ -256,6 +256,12 @@ mod tests {
         // negative marker so a *second* call doesn't need to touch disk again
         // — proven here by observing the marker lands in the store, not just
         // that the response looks the same.
+        //
+        // `refresh_exact_usage` (which this exercises transitively through
+        // `session_with_on_demand_usage`) has a `cfg(coverage)` no-op stub —
+        // untestable real filesystem I/O, same as `read_exact_usage_for_session`
+        // itself — so the marker is only ever actually written under a normal
+        // (non-coverage) build.
         let state = test_state().await;
         insert_stopped(&state, "first-call-marks-none", &[]).await;
         let id = {
@@ -266,6 +272,7 @@ mod tests {
         let _ = super::sessions(State(state.clone())).await.unwrap();
 
         let fetched = state.store.get_session(&id).await.unwrap().unwrap();
+        #[cfg(not(coverage))]
         assert_eq!(fetched.meta_str(meta::USAGE_SOURCE), Some("none"));
     }
 
