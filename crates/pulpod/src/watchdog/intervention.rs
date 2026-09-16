@@ -87,6 +87,13 @@ pub(super) async fn stop_and_record(
         return false;
     }
 
+    // The backend is dead either way by this point (the kill above already
+    // succeeded) — reconcile the session's final cost regardless of whether
+    // this call's own CAS below wins the race to record the intervention
+    // (#127 follow-up: an intervention-stopped session is another terminal-ish
+    // transition the idle-sweep loop never revisits for cost refreshes).
+    super::refresh_exact_usage(store, session).await;
+
     // `update_session_intervention` is a compare-and-set — it only actually
     // transitions (and returns `true`) if the session was still live at the
     // moment of the write. A concurrent caller (the watchdog's own eager

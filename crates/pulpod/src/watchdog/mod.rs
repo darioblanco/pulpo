@@ -11,7 +11,10 @@ use std::time::Duration;
 use crate::harness::{HarnessRegistry, HarnessSignals};
 use idle::check_idle_sessions;
 #[cfg(test)]
-use idle::{check_session_idle, handle_active_session, handle_idle_session};
+use idle::{
+    check_session_idle, handle_active_session, handle_idle_session,
+    resolve_and_report_dead_session,
+};
 pub(crate) use metadata::refresh_exact_usage;
 use metadata::{build_session_event, detect_and_store_output_metadata};
 pub use output_patterns::detect_waiting_for_input;
@@ -129,7 +132,15 @@ async fn run_watchdog_tick(
     cfg: &WatchdogRuntimeConfig,
     ready_ctx: &ReadyContext,
 ) {
-    // `check_idle_sessions` runs first: it's what refreshes each session's
+    // Eager dead-backend detection (ADR 0009 follow-up, PR #129/#118 fix): a
+    // session's backend dying is a fact about the process, not something an
+    // operator disabling the idle-timeout ALERT/KILL breaker
+    // (`idle_timeout_secs = 0`, i.e. `cfg.idle.enabled == false`) should
+    // silently also disable detecting. This sweep runs unconditionally, every
+    // tick, regardless of `cfg.idle.enabled` — see `idle::sweep_dead_backends`.
+    idle::sweep_dead_backends(backend, store, ready_ctx).await;
+
+    // `check_idle_sessions` runs next: it's what refreshes each session's
     // `session_cost_usd` metadata for this tick (via `detect_and_store_output_metadata`
     // reading the agent's own transcript). Enforcing budgets before that would judge
     // every session against last tick's cost — a real cost breach would only ever be

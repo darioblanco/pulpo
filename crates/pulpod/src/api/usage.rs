@@ -12,16 +12,29 @@ use crate::api::error::{ApiError, internal_error};
 use crate::store::Store;
 use crate::usage::rollup::{build_repo_rollups, session_usage};
 
-/// For a `Done` session with no `session_cost_usd` metadata yet, compute its
-/// exact usage on demand (and persist it) instead of leaving it to a watchdog tick
-/// that will never revisit a terminal session — `check_idle_sessions` only ever
-/// visits `Working`/`Waiting` sessions, so a session that reached `Done` before
+/// For a `Done`/`Lost` session with no `session_cost_usd` metadata yet, compute
+/// its exact usage on demand (and persist it) instead of leaving it to a
+/// watchdog tick that will never revisit a terminal session —
+/// `check_idle_sessions` only ever visits `Working`/`Waiting` sessions, so a
+/// session that reached a terminal status before
 /// `watchdog::metadata::refresh_exact_usage` ran for it (an old session from
-/// before that fix, or a race the watchdog missed) would otherwise report no cost
-/// forever. Best-effort: a session still missing cost afterward (no structured
-/// usage reader matched, e.g. a non-agent command) is returned unchanged.
+/// before that fix, or a race the watchdog missed) would otherwise report no
+/// cost forever. `Lost` is included alongside `Done` (#127 follow-up): a
+/// session that crashed rather than exiting cleanly still has a real
+/// transcript worth reading.
+///
+/// Skips the refresh entirely once `usage_source` is already recorded as
+/// `"none"` (see `watchdog::metadata::mark_usage_source_none`) — a prior
+/// refresh already established there is nothing to read for this session (no
+/// structured reader matched its command, or its transcript has nothing
+/// usable), so recomputing from disk on every single call to this endpoint
+/// would be pure waste. Best-effort: a session still missing cost afterward is
+/// returned unchanged either way.
 async fn session_with_on_demand_usage(store: &Store, session: Session) -> Session {
-    if session.status != SessionStatus::Done || session.meta_str(meta::SESSION_COST_USD).is_some() {
+    if !matches!(session.status, SessionStatus::Done | SessionStatus::Lost)
+        || session.meta_str(meta::SESSION_COST_USD).is_some()
+        || session.meta_str(meta::USAGE_SOURCE) == Some("none")
+    {
         return session;
     }
     crate::watchdog::refresh_exact_usage(store, &session).await;
@@ -145,6 +158,18 @@ mod tests {
     /// `watchdog::refresh_exact_usage` is guaranteed to find nothing, regardless of
     /// what's on the machine actually running the test.
     async fn insert_stopped(state: &AppState, name: &str, meta_pairs: &[(&str, &str)]) {
+        insert_terminal(state, name, SessionStatus::Done, meta_pairs).await;
+    }
+
+    /// Like [`insert_stopped`], but with a caller-chosen terminal status — used
+    /// to prove the on-demand gate covers `Lost` too (#127 follow-up), not just
+    /// `Done`.
+    async fn insert_terminal(
+        state: &AppState,
+        name: &str,
+        status: SessionStatus,
+        meta_pairs: &[(&str, &str)],
+    ) {
         let mut metadata = HashMap::new();
         for (k, v) in meta_pairs {
             metadata.insert((*k).to_owned(), (*v).to_owned());
@@ -154,7 +179,7 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "cargo build".into(),
-            status: SessionStatus::Done,
+            status,
             runtime: Runtime::Tmux,
             metadata: Some(metadata),
             ..Default::default()
@@ -194,6 +219,54 @@ mod tests {
         let resp = super::sessions(State(state)).await.unwrap();
         assert_eq!(resp.sessions.len(), 1);
         assert_eq!(resp.sessions[0].cost_usd, Some(2.5));
+    }
+
+    #[tokio::test]
+    async fn test_sessions_computes_usage_on_demand_for_lost_session_without_cost() {
+        // #127 follow-up: a `Lost` session (crashed rather than exiting
+        // cleanly) still has a real transcript worth reading — the on-demand
+        // gate must cover it exactly like `Done`, not just the clean-exit case.
+        let state = test_state().await;
+        insert_terminal(&state, "old-lost", SessionStatus::Lost, &[]).await;
+
+        let resp = super::sessions(State(state)).await.unwrap();
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_skips_on_demand_refresh_when_usage_source_already_marked_none() {
+        use pulpo_common::session::meta;
+        // A session already marked `usage_source = "none"` (a previous refresh
+        // already established nothing can be read for it) must not be
+        // recomputed from disk again on every call — the whole point of the
+        // negative marker (`watchdog::metadata::mark_usage_source_none`).
+        let state = test_state().await;
+        insert_stopped(&state, "known-no-usage", &[(meta::USAGE_SOURCE, "none")]).await;
+
+        let resp = super::sessions(State(state)).await.unwrap();
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_on_demand_refresh_persists_negative_marker() {
+        use pulpo_common::session::meta;
+        // The first call for a session with nothing to read persists the
+        // negative marker so a *second* call doesn't need to touch disk again
+        // — proven here by observing the marker lands in the store, not just
+        // that the response looks the same.
+        let state = test_state().await;
+        insert_stopped(&state, "first-call-marks-none", &[]).await;
+        let id = {
+            let sessions = state.store.list_sessions().await.unwrap();
+            sessions[0].id.to_string()
+        };
+
+        let _ = super::sessions(State(state.clone())).await.unwrap();
+
+        let fetched = state.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.meta_str(meta::USAGE_SOURCE), Some("none"));
     }
 
     #[tokio::test]

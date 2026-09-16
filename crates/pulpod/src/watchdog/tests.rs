@@ -231,6 +231,98 @@ async fn test_check_idle_sessions_resolves_dead_backend_to_lost_eagerly() {
 }
 
 #[tokio::test]
+async fn test_run_watchdog_tick_resolves_dead_backend_even_when_idle_disabled() {
+    // `idle_timeout_secs = 0` (`cfg.idle.enabled == false`) disables the
+    // idle-timeout ALERT/KILL breaker — it must NOT also disable basic
+    // dead-backend detection. Before this fix, the entire eager sweep lived
+    // inside `check_idle_sessions`, itself skipped whenever idle detection was
+    // disabled, so a session's dead backend would sit unresolved until the next
+    // lazy `get_session`/`list_sessions` call.
+    let backend: Arc<dyn Backend> = Arc::new(MockBackend::dead());
+    let store = test_store().await;
+    let session = create_running_session(&store, "dead-backend-idle-disabled").await;
+
+    let idle_config = IdleConfig {
+        enabled: false,
+        ..IdleConfig::default()
+    };
+    let cfg = make_config(Duration::from_secs(10), idle_config);
+    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
+    let ctx = ReadyContext {
+        event_tx: Some(tx),
+        node_name: "test-node".into(),
+    };
+
+    run_watchdog_tick(&backend, &store, &cfg, &ctx).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fetched.status,
+        SessionStatus::Lost,
+        "the dead backend must still be resolved even with idle detection disabled"
+    );
+
+    let event = rx.try_recv().expect("expected a lifecycle event");
+    match event {
+        PulpoEvent::Session(se) => assert_eq!(se.status, "lost"),
+        other => panic!("expected a Session event, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_resolve_and_report_dead_session_skips_log_and_event_when_raced() {
+    // A concurrent caller (another watchdog tick, or a `GET`/`list_sessions` call
+    // racing this one) already resolved this session's backend-dead CAS by the
+    // time this call runs — `resolve_and_report_dead_session` must not log
+    // "resolved" or emit a stale `lifecycle` event for a transition it didn't
+    // actually make (PR #129/#118 follow-up: `Ok(false)` was previously ignored
+    // entirely).
+    let backend: Arc<dyn Backend> = Arc::new(MockBackend::dead());
+    let store = test_store().await;
+    let session = create_running_session(&store, "raced-dead-backend").await;
+
+    // Simulate the race directly: the row is already terminal (`Done`) by the
+    // time this call's own CAS runs, even though the in-memory `session` value
+    // below (an older snapshot, as a caller iterating `list_sessions()` would
+    // hold) still says `Working`.
+    store
+        .update_session_status(&session.id.to_string(), SessionStatus::Done, None)
+        .await
+        .unwrap();
+
+    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
+    let ctx = ReadyContext {
+        event_tx: Some(tx),
+        node_name: "test-node".into(),
+    };
+
+    resolve_and_report_dead_session(
+        &store,
+        &backend,
+        &resolve_backend_id(&session, backend.as_ref()),
+        &session,
+        &ctx,
+    )
+    .await;
+
+    assert!(
+        rx.try_recv().is_err(),
+        "must not emit a lifecycle event for a transition this call didn't make"
+    );
+    // The row's real status (set by the "concurrent winner") must be left alone.
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Done);
+}
+
+#[tokio::test]
 async fn test_check_session_idle_is_alive_error_skips_tick_without_panicking() {
     // `is_alive()` itself failing (as opposed to cleanly reporting "not alive")
     // must not be treated as a dead backend — just skip this session for the

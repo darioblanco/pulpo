@@ -216,12 +216,27 @@ fn push_quota_window(
 /// filesystem read this wraps) — untestable I/O under coverage, so this delegates
 /// to a no-op stub there. [`store_exact_usage`], the persistence half, stays
 /// coverage-included and is unit-tested directly with a synthetic `ExactUsage`.
+///
+/// The filesystem read itself runs in [`tokio::task::spawn_blocking`]: this is
+/// called from request-handler contexts too (`api::usage::session_with_on_demand_usage`),
+/// where synchronous file I/O on the async worker thread would otherwise briefly
+/// stall every other request that worker is serving. When nothing is found,
+/// persists a negative `usage_source = "none"` marker via
+/// [`mark_usage_source_none`] so a session with no exact usage to read (an
+/// unsupported harness, or a transcript with nothing usable) isn't re-read from
+/// disk on every subsequent on-demand call.
 #[cfg(not(coverage))]
 pub(crate) async fn refresh_exact_usage(store: &Store, session: &Session) {
-    let exact_usage =
-        crate::usage::read_exact_usage_for_session(session, std::path::Path::new(store.data_dir()));
-    if let Some(exact) = exact_usage {
-        store_exact_usage(store, session, &exact).await;
+    let session_owned = session.clone();
+    let data_dir = store.data_dir().to_owned();
+    let exact_usage = tokio::task::spawn_blocking(move || {
+        crate::usage::read_exact_usage_for_session(&session_owned, std::path::Path::new(&data_dir))
+    })
+    .await
+    .unwrap_or(None);
+    match exact_usage {
+        Some(exact) => store_exact_usage(store, session, &exact).await,
+        None => mark_usage_source_none(store, session).await,
     }
 }
 
@@ -229,6 +244,26 @@ pub(crate) async fn refresh_exact_usage(store: &Store, session: &Session) {
 /// [`crate::usage::read_exact_usage_for_session`]'s matching stub.
 #[cfg(coverage)]
 pub(crate) async fn refresh_exact_usage(_store: &Store, _session: &Session) {}
+
+/// Persist a negative usage marker (`usage_source = "none"`) so a session whose
+/// exact usage genuinely can't be read (no structured reader matched its
+/// command, or its agent transcript has nothing usable) isn't re-read from disk
+/// on every subsequent on-demand call (`api::usage::session_with_on_demand_usage`).
+/// Only fills in an absent value — never overwrites a `usage_source` a previous,
+/// successful read already recorded (e.g. before a session was resumed and its
+/// transcript still has the earlier run's data).
+async fn mark_usage_source_none(store: &Store, session: &Session) {
+    if session.meta_str(meta::USAGE_SOURCE).is_some() {
+        return;
+    }
+    let _ = store
+        .batch_update_session_metadata(
+            &session.id.to_string(),
+            &[(meta::USAGE_SOURCE, "none")],
+            &[],
+        )
+        .await;
+}
 
 /// Store exact usage read from the agent's own session files.
 ///
@@ -383,8 +418,11 @@ mod tests {
     /// doc comment for why: the idle-sweep loop alone only ever revisits
     /// `Active`/`Idle` sessions). A session whose command isn't agent-shaped (no
     /// structured usage reader matches) is the deterministic, environment-independent
-    /// case: both the real reader and the `cfg(coverage)` stub must leave its
-    /// metadata untouched.
+    /// case: `session_cost_usd`/token metadata stays unset either way (real reader
+    /// or the `cfg(coverage)` stub), but under a normal (non-coverage) build the
+    /// real reader still persists the negative `usage_source = "none"` marker (see
+    /// `mark_usage_source_none`) so `api::usage::session_with_on_demand_usage`
+    /// doesn't re-read this session's disk files on every future call.
     #[tokio::test]
     async fn test_refresh_exact_usage_noop_for_non_agent_command() {
         let store = test_store().await;
@@ -399,6 +437,43 @@ mod tests {
             .unwrap();
         assert!(refreshed.meta_str(meta::SESSION_COST_USD).is_none());
         assert!(refreshed.meta_str(meta::TOTAL_INPUT_TOKENS).is_none());
+        #[cfg(not(coverage))]
+        assert_eq!(refreshed.meta_str(meta::USAGE_SOURCE), Some("none"));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_exact_usage_does_not_overwrite_existing_usage_source() {
+        // A session that already has a real `usage_source` recorded (from an
+        // earlier successful read) must not have it clobbered with the
+        // negative marker just because a later refresh call finds nothing new
+        // — `mark_usage_source_none` only ever fills in an absent value.
+        let store = test_store().await;
+        let session = insert_session(&store, "generic-cmd-2").await;
+        store
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[(meta::USAGE_SOURCE, "claude-jsonl")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let session = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        refresh_exact_usage(&store, &session).await;
+
+        let refreshed = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            refreshed.meta_str(meta::USAGE_SOURCE),
+            Some("claude-jsonl")
+        );
     }
 
     #[test]

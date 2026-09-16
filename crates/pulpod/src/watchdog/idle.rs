@@ -12,6 +12,53 @@ use super::{
 use crate::backend::Backend;
 use crate::store::Store;
 
+/// Eagerly detect and resolve a dead backend for every `Working`/`Waiting`
+/// session, entirely independent of whether idle-timeout detection/action is
+/// enabled — a session's backend dying is a fact about the process itself, not
+/// something an operator disabling the idle-timeout ALERT/KILL breaker
+/// (`idle_timeout_secs = 0`) should silently also disable detecting. Called
+/// unconditionally, every watchdog tick, from `run_watchdog_tick` — *before*
+/// the `if cfg.idle.enabled` gate that guards `check_idle_sessions` (PR
+/// #129/#118 follow-up: the sweep used to live entirely inside
+/// `check_session_idle`, itself only ever reached when idle detection was
+/// enabled).
+///
+/// Harmless overlap with `check_session_idle`'s own identical `is_alive()`
+/// pre-check when idle detection *is* enabled: this sweep runs first and
+/// re-fetches nothing afterward, so a session it just resolved to
+/// `Done`/`Lost` no longer matches `check_idle_sessions`' own fresh
+/// `Working`/`Waiting` fetch a moment later.
+pub(super) async fn sweep_dead_backends(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    ready_ctx: &ReadyContext,
+) {
+    let sessions = super::list_sessions_or_warn(store, "Dead-backend sweep").await;
+    for session in &sessions {
+        if !matches!(
+            session.status,
+            SessionStatus::Working | SessionStatus::Waiting
+        ) {
+            continue;
+        }
+        let backend_id = resolve_backend_id(session, backend.as_ref());
+        match backend.is_alive(&backend_id) {
+            Ok(true) => {}
+            Ok(false) => {
+                resolve_and_report_dead_session(store, backend, &backend_id, session, ready_ctx)
+                    .await;
+            }
+            #[allow(unused_variables)]
+            Err(error) => {
+                debug!(
+                    "Dead-backend sweep: failed to check liveness for {}: {error}",
+                    session.name
+                );
+            }
+        }
+    }
+}
+
 pub(super) async fn check_idle_sessions(
     backend: &Arc<dyn Backend>,
     store: &Store,
@@ -243,8 +290,17 @@ pub(super) async fn check_session_idle(
 /// (never a hardcoded guess). Best-effort: a failure here is logged and simply
 /// leaves the session for the next tick (or the lazy `get_session`/`list_sessions`
 /// path) to retry — never a hard error that would abort the whole watchdog tick.
+///
+/// `resolve_dead_backend_session` is itself a compare-and-set: `Ok(false)` means
+/// a concurrent caller (another watchdog tick, or a `GET`/`list_sessions` racing
+/// this one) already resolved the session first. Neither the "resolved" info log
+/// nor the `lifecycle` event may fire in that case — the session's real status is
+/// whatever that concurrent winner set, not `updated`'s stale, unmodified copy of
+/// `session`, and logging/emitting here would be a duplicate for a transition
+/// this call didn't actually make (see the doc comment on
+/// `session::manager::resolve_dead_backend_session` itself).
 #[cfg_attr(coverage, allow(unused_variables))]
-async fn resolve_and_report_dead_session(
+pub(super) async fn resolve_and_report_dead_session(
     store: &Store,
     backend: &Arc<dyn Backend>,
     backend_id: &str,
@@ -253,7 +309,7 @@ async fn resolve_and_report_dead_session(
 ) {
     let previous = session.status;
     let mut updated = session.clone();
-    if let Err(error) = crate::session::manager::resolve_dead_backend_session(
+    let transitioned = match crate::session::manager::resolve_dead_backend_session(
         store,
         backend.as_ref(),
         backend_id,
@@ -261,9 +317,19 @@ async fn resolve_and_report_dead_session(
     )
     .await
     {
-        coverage_warn!(
-            "Idle check: failed to resolve dead backend for {}: {error}",
-            session.name
+        Ok(transitioned) => transitioned,
+        Err(error) => {
+            coverage_warn!(
+                "Idle check: failed to resolve dead backend for {}: {error}",
+                session.name
+            );
+            return;
+        }
+    };
+    if !transitioned {
+        debug!(
+            session = %session.name,
+            "Idle check: dead backend already resolved concurrently, skipping duplicate log/event"
         );
         return;
     }
