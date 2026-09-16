@@ -8,7 +8,7 @@ enabled = true
 check_interval_secs = 10        # How often to check sessions (default: 10)
 
 # Idle detection
-idle_threshold_secs = 60         # Seconds of unchanged output before Active→Idle (default: 60)
+idle_threshold_secs = 60         # Seconds of unchanged output before Working→Waiting (default: 60)
                                  # Increase to 120+ for agents that think for long periods
 idle_timeout_secs = 600          # Seconds idle before action triggers (default: 600)
 idle_action = "alert"            # "alert" (mark idle) or "kill" (terminate session)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Attach to a running session and send input.
 #
-# When an agent is waiting for input (Idle state), you can:
+# When an agent is waiting for input (Waiting state), you can:
 # 1. Attach to the tmux session and type directly
 # 2. Send text remotely via `pulpo input`
 set -euo pipefail

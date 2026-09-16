@@ -16,7 +16,6 @@ documentation.
 
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
-| [0000](0000-template.md) | Template | — | — |
 | [0001](0001-hook-driven-agent-state.md) | Hook-driven agent state instead of scrollback scraping | Accepted | 2026-09-10 |
 | [0002](0002-meter-and-breaker-box-positioning.md) | The meter-and-breaker-box positioning, and what was cut to get there | Accepted | 2026-06 – 2026-09-11 |
 | [0003](0003-scenario-tests-as-behavior-gate.md) | Scenario tests as the behavior gate; unit tests for logic; 98% coverage as a decay guard | Accepted | 2026-09-13 |
@@ -26,6 +25,11 @@ documentation.
 | [0007](0007-rust-stays-go-decision-deferred.md) | Rust stays for now; a Go rewrite is deferred until after a real dogfood test | Accepted | 2026-09-13 |
 | [0008](0008-unknown-config-keys-warn-and-are-ignored.md) | Unknown config keys warn and are ignored | Implemented | 2026-09-14 |
 | [0009](0009-five-state-session-model.md) | Five-state session model: starting / working / waiting / done / lost | Implemented | 2026-09-14 |
+
+## Template
+
+[0000](0000-template.md) is not a numbered decision — it's the blank MADR-style
+template new ADRs are copied from (see "Recording Decisions" in `AGENTS.md`).
 
 See also [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) for
 the strategic narrative these decisions sit inside, and `AGENTS.md` → "record decisions

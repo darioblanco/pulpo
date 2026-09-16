@@ -39,9 +39,15 @@ still running. Start a fresh session with `pulpo spawn` instead.
 
 When `pulpod` starts, it checks all previously running sessions:
 - If the tmux session is still alive → stays **working**/**waiting** (backend ID upgraded to tmux `$N` ID)
-- If the tmux session is gone → re-created automatically, stays **working**
+- If the tmux session is gone and its exit marker is present → resolves to **done**
+  (`status_reason = exited`), retroactively, even if the agent finished while the
+  daemon was down
+- If the tmux session is gone and no exit marker exists → marked **lost**
 
-If auto-resume fails, sessions are marked **lost** and appear in `pulpo list` for manual resume.
+Both **done** and **lost** sessions show up in `pulpo list` (`lost` by default; `done`
+needs `--all`) and are resumable with `pulpo resume` — there is no separate "auto-resume"
+step that recreates a live backend on your behalf at startup; `pulpo resume` is what
+actually restarts one.
 
 ## Interventions
 

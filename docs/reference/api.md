@@ -71,14 +71,17 @@ the file and restart `pulpod`; see [Configuration](../guides/configuration.md).
 **`GET /api/v1/notifications`** → `NotificationsConfigResponse`:
 
 ```json
-{ "webhooks": [ { "name": "ops", "url": "https://example.com/hooks/pulpo", "events": ["lifecycle.*"], "min_severity": "warn" } ] }
+{ "webhooks": [ { "name": "ops", "url": "https://example.com/***", "events": ["lifecycle.*"], "min_severity": "warn" } ] }
 ```
 
 `webhooks` is the union of the top-level `[[webhooks]]` list and the deprecated
 `[[notifications.webhooks]]` list (top-level entries first) — see
 [Config Reference § webhooks](config.md#webhooks). Each entry's `min_severity`
-key is omitted entirely (not `null`) when the endpoint sets no floor. The per-endpoint
-`secret` field is never echoed back — request signing was removed (see
+key is omitted entirely (not `null`) when the endpoint sets no floor. `url` is
+masked (scheme and host kept, path/query redacted) since a Slack/Discord-style
+webhook URL embeds its secret in the path — the same thing a failed delivery's
+log line already redacts (see [Webhooks](#webhooks) below). The per-endpoint
+`secret` field is never echoed back either — request signing was removed (see
 [Webhooks](#webhooks) below).
 
 ## Auth
@@ -150,7 +153,7 @@ table, or an unrecognized model).
 | GET | `/api/v1/sessions` | List sessions (`?status=`, `?search=`, `?sort=`, `?order=`) |
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details (`:id` resolves by UUID or name) |
-| DELETE | `/api/v1/sessions/:id` | Remove a single session outright (only when not `Working`/`Waiting`) |
+| DELETE | `/api/v1/sessions/:id` | Remove a single session outright (refuses `Starting`/`Working`/`Waiting`; a `Starting` session is only removable once its backend is confirmed dead) |
 | POST | `/api/v1/sessions/:id/stop` | Stop a running session (`?purge=true` to also remove the record) |
 | POST | `/api/v1/sessions/:id/resume` | Resume a done or lost session |
 | GET | `/api/v1/sessions/:id/output?lines=<n>` | Get captured terminal output (default 100 lines) |
@@ -172,10 +175,10 @@ Every endpoint that returns a session (`list`, `get`, `create`, `resume`, `hando
 | `id` | UUID | Session id |
 | `name` | string | Unique, kebab-case |
 | `workdir` | string | Working directory |
-| `command` | string | The (possibly harness-rewritten) command actually run |
+| `command` | string | The original command as given at spawn/schedule time — **not** the harness-rewritten form actually executed; the rewrite (adding `--session-id`, hook flags, etc.) is re-derived from this stored original at spawn/resume time |
 | `description` | string \| null | Free-text note set at spawn time |
 | `status` | string | `starting` \| `working` \| `waiting` \| `done` \| `lost` (see [Session Lifecycle](../operations/session-lifecycle.md)). Old six-state text (`creating`, `active`, `idle`, `ready`, `stopped`, `killed`) still deserializes on input, aliased onto the new states, for back-compat with older clients/stored data |
-| `status_reason` | string \| null | Why the session is in `status` — only ever set for `waiting` (`idle` \| `needs_input:<reason>`) and `done` (`exited` \| `stopped` \| `idle_timeout` \| `budget_exceeded` \| `memory_pressure`); `null` for `starting`/`working`/`lost` |
+| `status_reason` | string \| null | Why the session is in `status` — only ever set for `waiting` (`idle` \| `needs_input:<reason>`) and `done` (`exited` \| `stopped` \| `idle_timeout` \| `budget_exceeded` \| `memory_pressure` — historical only, the intervention producing it was removed in September 2026, see [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) "Removed"); `null` for `starting`/`working`/`lost` |
 | `exit_code` | number \| null | The agent process's exit code, once known (recorded from the `.code` exit marker, or from a hook-reported `SessionEnded` for harness-managed sessions) |
 | `backend_session_id` | string \| null | tmux `$N` id |
 | `output_snapshot` | string \| null | Last captured output (persisted snapshot; live tail comes from `output`/`stream`) |
@@ -283,8 +286,11 @@ Removes a single session outright: purges the row, its intervention events, exit
 markers, session log, and git worktree/harness dir — the same purge helper
 `POST /api/v1/sessions/:id/stop?purge=true` and `POST /api/v1/sessions/cleanup` use.
 → `204 No Content`; `404` if the session doesn't exist; `409 Conflict` if it's
-currently `Starting`/`Working`/`Waiting` — stop it first (`pulpo stop`). `pulpo rm
-<name-or-id>` (alias `remove`) is the CLI equivalent.
+currently `Working`/`Waiting`, or `Starting` with a backend that's still alive —
+stop it first (`pulpo stop`). A `Starting` session whose backend is already
+confirmed dead (crashed between insert and finalize) is removable directly, since
+there's no live backend left to stop. `pulpo rm <name-or-id>` (alias `remove`) is
+the CLI equivalent.
 
 ### Output
 
@@ -409,7 +415,7 @@ an invalid cron or `runtime: "docker"`. Returns `200 OK` with the updated `Sched
 ## Events (SSE)
 
 `GET /api/v1/events` — a `text/event-stream` connection, no request body, kept alive
-with a 15-second ping. Each frame's `event:` field names one of four variants, and
+with a 15-second ping. Each frame's `event:` field names one of five variants, and
 `data:` is that variant's own struct serialized as JSON (**not** the canonical webhook
 envelope described under [Webhooks](#webhooks) — SSE carries the raw internal event):
 
@@ -454,6 +460,19 @@ session:
 | `reason` | string | — |
 | `timestamp` | RFC 3339 string | — |
 
+**`daemon`** (`DaemonEvent`) — a daemon-level event not tied to any one session:
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `node_name` | string | — |
+| `subtype` | string | `db_unusable` (today's only subtype) |
+| `message` | string | Human-readable description of what happened |
+| `timestamp` | RFC 3339 string | — |
+
+Fired once at startup, only when an unusable `state.db` is quarantined and replaced
+with a fresh database — see [Release and Distribution](../operations/release-and-distribution.md)
+"The daemon never crash-loops on a bad database".
+
 ```bash
 curl -N http://localhost:7433/api/v1/events
 ```
@@ -464,9 +483,9 @@ curl -N http://localhost:7433/api/v1/events
 [Config Reference § webhooks](config.md#webhooks) for the config fields). There
 is no webhook management API — endpoints are configured in `config.toml` only.
 
-Every session/usage-alert/intervention event that isn't purely internal housekeeping
-(`session_deleted` is never forwarded) is converted to one canonical envelope and POSTed
-to every endpoint whose filter admits it:
+Every session/usage-alert/intervention/daemon event that isn't purely internal
+housekeeping (`session_deleted` is never forwarded) is converted to one canonical
+envelope and POSTed to every endpoint whose filter admits it:
 
 ```json
 {
@@ -481,6 +500,7 @@ to every endpoint whose filter admits it:
     "id": "sess-1",
     "name": "fix-auth",
     "status": "done",
+    "exit_code": 0,
     "git_branch": "feat/x",
     "pr_url": "https://github.com/org/repo/pull/9",
     "cost_usd": 2.5,
@@ -490,17 +510,33 @@ to every endpoint whose filter admits it:
 }
 ```
 
+A `daemon` event carries no `session` key at all (it isn't session-scoped) and its
+`payload` is just the human-readable message:
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "d4b1e0aa-...",
+  "type": "daemon",
+  "subtype": "db_unusable",
+  "severity": "critical",
+  "occurred_at": "2026-09-16T03:00:00Z",
+  "node": "mac-mini",
+  "payload": { "message": "state.db failed its integrity check; quarantined as state.db.unusable-20260916T030000.123Z and replaced with a fresh database" }
+}
+```
+
 | Field | Type | Description |
 |-------|------|--------------|
 | `schema_version` | number | Always `1` |
 | `event_id` | UUID | Fresh per event; the idempotency key for at-least-once delivery (dedupe retries of the *same* event on it — there is no durable outbox, so an event that exhausts retries is simply dropped, not redelivered later) |
-| `type` | string | `lifecycle` \| `usage_alert` \| `intervention` (`fleet` is reserved from an earlier multi-node design; nothing emits it today) |
-| `subtype` | string | For `lifecycle`: the new session status (`starting`/`working`/`waiting`/`done`/`lost`). For `usage_alert`: `alert_kind`. For `intervention`: the `InterventionCode` string |
-| `severity` | string | `info` \| `warn` \| `critical` — the value `min_severity` filters on. Lifecycle: `lost`→critical, `waiting`→warn, `done`→info if `status_reason` is `exited` (a clean end, same as the old `ready`'s severity) else warn (an explicit stop or an intervention code, same as the old `stopped`'s severity), else (`starting`/`working`) info. Usage alert: always `warn`. Intervention: `budget_exceeded`/`memory_pressure`→critical, else warn |
+| `type` | string | `lifecycle` \| `usage_alert` \| `intervention` \| `daemon` (`fleet` is reserved from an earlier multi-node design; nothing emits it today) |
+| `subtype` | string | For `lifecycle`: the new session status (`starting`/`working`/`waiting`/`done`/`lost`). For `usage_alert`: `alert_kind`. For `intervention`: the `InterventionCode` string. For `daemon`: `db_unusable` (today's only value) |
+| `severity` | string | `info` \| `warn` \| `critical` — the value `min_severity` filters on. Lifecycle: `lost`→critical, `waiting`→warn, `done`→info if `status_reason` is `exited` (a clean end, same as the old `ready`'s severity) else warn (an explicit stop or an intervention code, same as the old `stopped`'s severity), else (`starting`/`working`) info. Usage alert: always `warn`. Intervention: `budget_exceeded`/`memory_pressure`→critical, else warn. Daemon: `db_unusable`→critical (today's only subtype) |
 | `occurred_at` | RFC 3339 string | — |
 | `node` | string | Emitting node's name |
-| `session` | object \| omitted | `{ id, name, status, ink?, git_branch?, pr_url?, cost_usd?, total_tokens? }` — present for session-scoped events |
-| `payload` | object | Type-specific extras: `usage_alert` carries `cost_usd`/`budget_usd` (each omitted if absent); `intervention` carries `intervention_reason`; `lifecycle` is always `{}` |
+| `session` | object \| omitted | `{ id, name, status, exit_code?, ink?, git_branch?, pr_url?, cost_usd?, total_tokens? }` — present for session-scoped events; omitted entirely for `daemon` (not session-scoped) |
+| `payload` | object | Type-specific extras: `usage_alert` carries `cost_usd`/`budget_usd` (each omitted if absent); `intervention` carries `intervention_reason`; `daemon` carries `{ message }`; `lifecycle` is always `{}` |
 
 **Request**: `POST` to the endpoint's `url`, `Content-Type: application/json`,
 `User-Agent: pulpo/<version>`, `X-Pulpo-Event: <type>.<subtype>`,

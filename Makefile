@@ -10,6 +10,7 @@ setup: hooks
 	rustup component add rustfmt clippy llvm-tools-preview
 	cargo install cargo-llvm-cov
 	cargo install cargo-sweep --locked
+	cargo install mdbook --version 0.5.4 --locked
 	cd web && npm install
 	@echo "Setup complete."
 
@@ -50,10 +51,6 @@ dev-stop:
 # Run the web UI dev server (port 5173, proxies /api to pulpod)
 dev-web:
 	cd web && npm run dev
-
-# Run the docs preview server on a different port (5174) for testing docs changes
-doc-preview:
-	cd web && PORT=5174 npm run dev -- --host 0.0.0.0 --port 5174
 
 # ─── Docs (mdBook) ─────────────────────────────────────────────────────────
 # make docs        → build the mdBook docs site to docs/book/

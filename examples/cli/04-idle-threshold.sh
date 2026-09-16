@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Per-session idle threshold — control when sessions transition to Idle.
+# Per-session idle threshold — control when sessions transition to Waiting.
 #
-# By default, sessions go Active→Idle after 60s of unchanged output.
+# By default, sessions go Working→Waiting after 60s of unchanged output.
 # Override per session with --idle-threshold:
 #   0     = never go idle (useful for long-thinking agents)
-#   120   = 2 minutes of silence before idle
+#   120   = 2 minutes of silence before waiting
 #   None  = use the global default from config
 set -euo pipefail
 

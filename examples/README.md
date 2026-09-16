@@ -56,7 +56,7 @@ Most scripts use these environment variables:
 | `cli/02-spawn-and-detach.sh` | Spawn without attaching (for scripts/CI) |
 | `cli/04-idle-threshold.sh` | Per-session idle control (never idle, custom threshold) |
 | `cli/05-attach-and-input.sh` | Attach to a running session, send input |
-| `cli/06-recovery.sh` | Resume lost/ready/stopped sessions after crash, reboot, or stop |
+| `cli/06-recovery.sh` | Resume lost/done sessions after crash, reboot, or stop |
 | `cli/09-scheduled-sessions.sh` | Cron-based recurring agent runs |
 | `cli/10-batch-spawn.sh` | Spawn multiple sessions in parallel |
 

@@ -40,8 +40,9 @@ level is overwritten on a later run, and only the 3 most recent
 logged at `INFO`.
 
 To restore a backup: stop `pulpod`, move the backup over `state.db` (and
-remove any `state.db-wal`/`state.db-shm` files so SQLite doesn't try to
-replay a mismatched write-ahead log), then start `pulpod` again.
+remove any `state.db-journal` file — or, in WAL mode, `state.db-wal`/
+`state.db-shm` — so SQLite doesn't try to replay a mismatched journal/write-ahead
+log against the restored file), then start `pulpod` again.
 
 ### The daemon never crash-loops on a bad database — but only quarantines a bad one
 
@@ -65,8 +66,10 @@ only ever safe when the file is actually the problem:
 
 For any of those:
 
-1. The unusable file (and any `state.db-wal`/`state.db-shm` siblings) is
-   renamed to `state.db.unusable-<UTC timestamp>` in the same data dir.
+1. The unusable file (and any `state.db-journal`/`state.db-wal`/`state.db-shm`
+   siblings) is renamed to `state.db.unusable-<UTC timestamp>` — millisecond
+   precision, so two quarantines in the same second never collide — in the same
+   data dir.
 2. An `ERROR`-level log line records why and where it was moved.
 3. A `daemon` event (`db_unusable` subtype, `critical` severity) is emitted on
    the same event bus session/intervention events use, so a configured
@@ -94,8 +97,8 @@ SQLite file (or, for the corrupt-file case, whatever bytes were actually
 there) — nothing pulpo-specific reads it back. To look at it:
 
 ```bash
-sqlite3 ~/.pulpo/state.db.unusable-20260914T120000Z ".tables"
-sqlite3 ~/.pulpo/state.db.unusable-20260914T120000Z "SELECT * FROM sessions LIMIT 5;"
+sqlite3 ~/.pulpo/state.db.unusable-20260914T120000.123Z ".tables"
+sqlite3 ~/.pulpo/state.db.unusable-20260914T120000.123Z "SELECT * FROM sessions LIMIT 5;"
 ```
 
 If `sqlite3` reports "file is not a database," the original file was already

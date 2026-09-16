@@ -37,7 +37,12 @@ pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests
 
 This auto-attaches to the tmux session. Detach with `Ctrl-b d` to return to your shell. Use `--detach` / `-d` to skip auto-attach.
 
-No agent is required — `pulpo spawn my-shell` opens a managed shell session. Everything after `--` is the command to run.
+No agent is required — `pulpo spawn my-shell` opens a managed shell session. Everything
+after `--` is the command to run, passed through as argv (no shell interpretation —
+`-- sh -c '...'` if you need a real shell string, e.g. a pipeline). See
+[CLI Reference](../reference/cli.md#spawn-options) for the full argv-vs-shell-string note;
+the REST API's and web UI's `command` field is always a shell string instead, since
+there's no `--` there to separate argv words.
 
 This is the key shift: instead of launching an agent into disposable shell
 state, you are creating a durable session Pulpo can supervise, meter, and recover.

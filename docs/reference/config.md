@@ -21,7 +21,11 @@ The config file is the source of truth: `pulpod` and the web UI only read it (se
 [`GET /api/v1/config`](api.md#node--config)). To change anything, edit the file
 by hand and restart `pulpod` — there is no API or UI to write it back, so a retired key
 you remove yourself simply stays gone; one you leave in place stays in the file (ignored)
-until you edit it out.
+until you edit it out. The one exception is the first-run auth-token bootstrap (see
+`[auth]` below): on a config with an empty `auth.token`, `pulpod` writes the
+auto-generated token into the file exactly once. That write only splices in the
+`token = "..."` line — it doesn't re-serialize the file, so every comment and every
+other key (recognized or not) survives it untouched.
 
 ## `[node]`
 
@@ -151,7 +155,9 @@ there's no durable outbox to dedupe retries against, but a receiver that wants
 idempotency can still key on it). There is no request signing; treat the URL itself as
 the shared secret, or put the endpoint behind your own auth.
 
-Event types are `lifecycle`, `intervention`, and `usage_alert`; see the
+Event types are `lifecycle`, `intervention`, `usage_alert`, and `daemon` (a daemon-level
+event not tied to any session — today just `db_unusable`, fired when an unusable
+`state.db` is quarantined, see [Release and Distribution](../operations/release-and-distribution.md)); see the
 [session lifecycle reference](../operations/session-lifecycle.md) and the linked webhook example
 for the full event catalogue. (The envelope also reserves a `fleet` type from the earlier
 multi-node design; nothing emits it today.)
@@ -169,6 +175,9 @@ Any key not documented above — including one left over from a removed feature
 `[plans.<name>]`, `[notifications.vapid]`/`.discord`, a per-webhook `secret`, a
 retired `watchdog.*` or `node.*` setting, or a plain typo) — is logged once at
 startup and ignored, at any nesting level; it never fails startup. Nothing
-rewrites the file on its own to clean these up (`pulpod` only ever saves once,
-the first time it runs with an empty `auth.token`), so an unknown key stays in
-the file, still ignored, until you edit it out by hand.
+rewrites the file on its own to clean these up: `pulpod` only ever saves once, the
+first time it runs with an empty `auth.token`, and that save splices in just the
+generated `token = "..."` line rather than re-serializing the whole file — it
+doesn't touch, reorder, or drop anything else, comments included. So an unknown
+key (and everything else you wrote) stays in the file, still ignored, until you
+edit it out by hand.
