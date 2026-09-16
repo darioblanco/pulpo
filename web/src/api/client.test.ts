@@ -462,6 +462,26 @@ describe('getConfig', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/config', { headers: {} });
     expect(result).toEqual(config);
   });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'config unavailable' })),
+      json: () => Promise.resolve({ error: 'config unavailable' }),
+    });
+
+    await expect(getConfig()).rejects.toThrow('config unavailable');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(getConfig()).rejects.toThrow('Failed to load config');
+  });
 });
 
 describe('resolveBaseUrl', () => {

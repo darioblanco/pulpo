@@ -9,16 +9,65 @@
 //! finds that log (or the Homebrew service log, if that's where it went
 //! instead) and surfaces its most recent `ERROR` lines.
 //!
+//! Only lines (or whole files) from within [`RECENCY_WINDOW_SECS`] of "now"
+//! are surfaced: `pulpod.log` is rotated hourly, so the current file can
+//! still contain an unrelated `ERROR` from much earlier in the same hour —
+//! e.g. a one-time "state.db quarantined" warning from a previous, otherwise
+//! successful start — which used to get shown as if it were today's failure
+//! cause regardless of age.
+//!
 //! `pulpo-cli` doesn't depend on the `pulpod` crate (it's the daemon binary,
 //! not a library this talks to in-process), so the daemon's data-dir default
 //! and `[node] data_dir` override are re-derived here directly from
-//! `~/.pulpo/config.toml` rather than reusing `pulpod::config`.
+//! `~/.pulpo/config.toml` rather than reusing `pulpod::config`. `pulpo-cli`'s
+//! own `Cli` has no `--config`/`PULPO_CONFIG` override of its own (only
+//! `pulpod`'s does), so there is nothing to honor here beyond the default path
+//! — but `data_dir` is still read defensively (missing file, unparseable
+//! TOML, missing key, or a blank value all fall back to the default dir
+//! rather than producing a nonsense path).
 
+use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
+
+/// How far back from "now" an `ERROR` line (or a whole log file) may be and
+/// still count as part of the *current* failed start attempt.
+/// `ensure_daemon_running` polls for at most ~5s before giving up, but this
+/// stays generous — clock skew, a slow `brew services start`, CI scheduling
+/// jitter — rather than exact.
+const RECENCY_WINDOW_SECS: i64 = 120;
+
+/// Parse a `tracing_subscriber::fmt` line's leading RFC 3339 timestamp
+/// (`2026-09-16T14:22:10.123456Z  ERROR pulpod: ...`). `None` for lines with
+/// no recognizable timestamp prefix — e.g. a raw panic message written
+/// straight to stderr, bypassing `tracing` entirely.
+fn line_timestamp(line: &str) -> Option<DateTime<Utc>> {
+    let token = line.split_whitespace().next()?;
+    DateTime::parse_from_rfc3339(token)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// Whether `ts` is within [`RECENCY_WINDOW_SECS`] of `now`. A `ts` at or after
+/// `now` (clock skew, or a timestamp minted after `now` was captured) always
+/// counts as fresh.
+fn is_recent(ts: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    now.signed_duration_since(ts) <= chrono::Duration::seconds(RECENCY_WINDOW_SECS)
+}
+
+/// Whether `path`'s own mtime is recent enough to possibly contain output
+/// from the current start attempt — a cheap whole-file skip for a log file
+/// untouched since long before now (also covers the Homebrew service log,
+/// whose lines carry no `tracing` timestamp of their own to check).
+fn file_is_recent(path: &Path, now: DateTime<Utc>) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .is_ok_and(|modified| is_recent(DateTime::<Utc>::from(modified), now))
+}
 
 /// Resolve the data dir `pulpod` would use for `home`, mirroring
 /// `pulpod::config`'s `default_data_dir()` (`~/.pulpo`) and its
-/// `[node] data_dir` override.
+/// `[node] data_dir` override. Falls back to the default dir for any
+/// unreadable/unparseable config, a missing key, or a blank value.
 fn resolve_daemon_data_dir(home: &Path) -> PathBuf {
     let default_dir = home.join(".pulpo");
     let config_path = default_dir.join("config.toml");
@@ -29,11 +78,8 @@ fn resolve_daemon_data_dir(home: &Path) -> PathBuf {
         .parse::<toml::Value>()
         .ok()
         .and_then(|value| {
-            value
-                .get("node")?
-                .get("data_dir")?
-                .as_str()
-                .map(str::to_owned)
+            let data_dir = value.get("node")?.get("data_dir")?.as_str()?.trim();
+            (!data_dir.is_empty()).then(|| data_dir.to_owned())
         })
         .map_or(default_dir, |data_dir| {
             PathBuf::from(shellexpand::tilde(&data_dir).into_owned())
@@ -63,15 +109,21 @@ fn newest_log_in(logs_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Up to `max_lines` of the most recent lines containing `ERROR` in `path`,
-/// oldest first. Empty when the file doesn't exist, can't be read, or has no
-/// `ERROR` lines.
-fn tail_error_lines_from(path: &Path, max_lines: usize) -> Vec<String> {
+/// oldest first, restricted to those within [`RECENCY_WINDOW_SECS`] of `now`
+/// (by the line's own timestamp when present, otherwise by the file's mtime).
+/// Empty when the file doesn't exist, can't be read, is too old, or has no
+/// recent `ERROR` lines.
+fn tail_error_lines_from(path: &Path, max_lines: usize, now: DateTime<Utc>) -> Vec<String> {
+    if !file_is_recent(path, now) {
+        return Vec::new();
+    }
     let Ok(contents) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
     let mut errors: Vec<&str> = contents
         .lines()
         .filter(|line| line.contains("ERROR"))
+        .filter(|line| line_timestamp(line).is_none_or(|ts| is_recent(ts, now)))
         .collect();
     let start = errors.len().saturating_sub(max_lines);
     errors
@@ -110,8 +162,9 @@ pub fn tail_daemon_error_lines(max_lines: usize) -> Vec<String> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
+    let now = Utc::now();
     for path in candidate_log_paths(&home) {
-        let lines = tail_error_lines_from(&path, max_lines);
+        let lines = tail_error_lines_from(&path, max_lines, now);
         if !lines.is_empty() {
             return lines;
         }
@@ -129,7 +182,7 @@ mod tests {
         let path = dir.path().join("pulpod.log");
         std::fs::write(&path, "INFO one\nERROR a\nINFO two\nERROR b\nERROR c\n").unwrap();
         assert_eq!(
-            tail_error_lines_from(&path, 2),
+            tail_error_lines_from(&path, 2, Utc::now()),
             vec!["ERROR b".to_string(), "ERROR c".to_string()]
         );
     }
@@ -140,14 +193,16 @@ mod tests {
         let path = dir.path().join("pulpod.log");
         std::fs::write(&path, "INFO one\nERROR only\n").unwrap();
         assert_eq!(
-            tail_error_lines_from(&path, 3),
+            tail_error_lines_from(&path, 3, Utc::now()),
             vec!["ERROR only".to_string()]
         );
     }
 
     #[test]
     fn test_tail_error_lines_from_missing_file() {
-        assert!(tail_error_lines_from(Path::new("/nonexistent/pulpod.log"), 3).is_empty());
+        assert!(
+            tail_error_lines_from(Path::new("/nonexistent/pulpod.log"), 3, Utc::now()).is_empty()
+        );
     }
 
     #[test]
@@ -155,7 +210,77 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pulpod.log");
         std::fs::write(&path, "INFO all fine\n").unwrap();
-        assert!(tail_error_lines_from(&path, 3).is_empty());
+        assert!(tail_error_lines_from(&path, 3, Utc::now()).is_empty());
+    }
+
+    #[test]
+    fn test_tail_error_lines_from_ignores_stale_file() {
+        // A log file untouched for far longer than the recency window can only
+        // contain errors from an earlier, unrelated run.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pulpod.log");
+        std::fs::write(&path, "ERROR ancient failure\n").unwrap();
+        let far_future = Utc::now() + chrono::Duration::seconds(RECENCY_WINDOW_SECS + 3600);
+        assert!(tail_error_lines_from(&path, 3, far_future).is_empty());
+    }
+
+    #[test]
+    fn test_tail_error_lines_from_filters_stale_lines_by_own_timestamp() {
+        // Same (fresh) file, but one ERROR line's own timestamp is old (e.g. a
+        // one-time warning from earlier in this hourly-rotated file) and one is
+        // fresh — only the fresh one should surface.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pulpod.log");
+        let now = Utc::now();
+        let old_ts = (now - chrono::Duration::seconds(RECENCY_WINDOW_SECS + 60)).to_rfc3339();
+        let fresh_ts = now.to_rfc3339();
+        std::fs::write(
+            &path,
+            format!("{old_ts}  ERROR stale quarantine warning\n{fresh_ts}  ERROR real failure\n"),
+        )
+        .unwrap();
+        let lines = tail_error_lines_from(&path, 3, now);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("real failure"), "got: {lines:?}");
+    }
+
+    #[test]
+    fn test_tail_error_lines_from_keeps_untimestamped_lines_in_a_fresh_file() {
+        // A raw panic line has no `tracing` timestamp prefix — still surfaced
+        // as long as the file itself was touched recently.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pulpo.log");
+        std::fs::write(&path, "thread 'main' panicked: ERROR boom\n").unwrap();
+        let lines = tail_error_lines_from(&path, 3, Utc::now());
+        assert_eq!(
+            lines,
+            vec!["thread 'main' panicked: ERROR boom".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_line_timestamp_parses_tracing_format() {
+        let ts = line_timestamp("2026-09-16T14:22:10.123456Z  ERROR pulpod: boom");
+        assert!(ts.is_some());
+    }
+
+    #[test]
+    fn test_line_timestamp_none_without_prefix() {
+        assert!(line_timestamp("ERROR boom, no timestamp here").is_none());
+    }
+
+    #[test]
+    fn test_is_recent_true_for_future_timestamp() {
+        let now = Utc::now();
+        let future = now + chrono::Duration::seconds(30);
+        assert!(is_recent(future, now));
+    }
+
+    #[test]
+    fn test_is_recent_false_for_old_timestamp() {
+        let now = Utc::now();
+        let old = now - chrono::Duration::seconds(RECENCY_WINDOW_SECS + 1);
+        assert!(!is_recent(old, now));
     }
 
     #[test]
@@ -205,6 +330,19 @@ mod tests {
         let pulpo_dir = home.path().join(".pulpo");
         std::fs::create_dir_all(&pulpo_dir).unwrap();
         std::fs::write(pulpo_dir.join("config.toml"), "[node]\nname = \"x\"\n").unwrap();
+        assert_eq!(resolve_daemon_data_dir(home.path()), pulpo_dir);
+    }
+
+    #[test]
+    fn test_resolve_daemon_data_dir_default_when_blank_data_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let pulpo_dir = home.path().join(".pulpo");
+        std::fs::create_dir_all(&pulpo_dir).unwrap();
+        std::fs::write(
+            pulpo_dir.join("config.toml"),
+            "[node]\ndata_dir = \"   \"\n",
+        )
+        .unwrap();
         assert_eq!(resolve_daemon_data_dir(home.path()), pulpo_dir);
     }
 
@@ -278,10 +416,11 @@ mod tests {
         std::fs::create_dir_all(&logs_dir).unwrap();
         std::fs::write(logs_dir.join("pulpod.log.2026-01-01-00"), "ERROR boom\n").unwrap();
         let candidates = candidate_log_paths(home.path());
+        let now = Utc::now();
         let lines = candidates
             .iter()
             .find_map(|path| {
-                let lines = tail_error_lines_from(path, 3);
+                let lines = tail_error_lines_from(path, 3, now);
                 (!lines.is_empty()).then_some(lines)
             })
             .unwrap_or_default();

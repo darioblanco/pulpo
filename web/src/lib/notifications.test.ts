@@ -30,15 +30,11 @@ describe('detectStatusChanges', () => {
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual(
-      expect.objectContaining({
-        sessionId: '1',
-        sessionName: 'my-api',
-        from: 'working',
-        to: 'done',
-        toReason: 'exited',
-      }),
-    );
+    expect(changes[0]).toEqual({
+      sessionName: 'my-api',
+      to: 'done',
+      toReason: 'exited',
+    });
   });
 
   it('detects working → done (forced stop) transition', () => {
@@ -59,14 +55,11 @@ describe('detectStatusChanges', () => {
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual(
-      expect.objectContaining({
-        sessionId: '1',
-        sessionName: 'my-api',
-        from: 'lost',
-        to: 'working',
-      }),
-    );
+    expect(changes[0]).toEqual({
+      sessionName: 'my-api',
+      to: 'working',
+      toReason: null,
+    });
   });
 
   it('ignores sessions with no status change', () => {

@@ -142,6 +142,13 @@ pub struct WatchdogConfigResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookEndpointConfigResponse {
     pub name: String,
+    /// Masked: scheme + host + first path segment only (e.g.
+    /// `https://hooks.slack.com/services/***`), everything after that replaced
+    /// with `***`. Slack/Discord/etc. webhook URLs embed their delivery secret
+    /// directly in the path, and `GET /api/v1/notifications` is reachable by
+    /// anyone with API access — outbound delivery failures already drop the
+    /// URL entirely from logs (`reqwest::Error::without_url`); this is the same
+    /// protection applied to a response meant to stay human-readable.
     pub url: String,
     /// `<type>.<subtype>` glob filter (e.g. `lifecycle.*`). Empty ⇒ all events.
     pub events: Vec<String>,

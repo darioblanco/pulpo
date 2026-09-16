@@ -38,9 +38,31 @@ interface SessionCardProps {
   onToggleSelect?: (id: string) => void;
 }
 
+/**
+ * Truncate a command string to `maxLen` for display.
+ *
+ * Splits on Unicode code points (`Array.from`, not `.slice`/`.length`, which count
+ * UTF-16 code units and could split a surrogate pair) and backs off before an
+ * unmatched `'`/`"` so a quoted shell argument (e.g. `-p 'fix the bug'`) never gets
+ * cut mid-quote, which would otherwise leave a single trailing quote character
+ * that looks like it opens a string with no close. Uses a single `…` marker
+ * (rather than `...`) so the cut point reads unambiguously as a truncation.
+ */
 function truncateCommand(command: string, maxLen = 40): string {
-  if (command.length <= maxLen) return command;
-  return command.slice(0, maxLen) + '...';
+  const chars = Array.from(command);
+  if (chars.length <= maxLen) return command;
+
+  const isUnbalanced = (slice: string[]) => {
+    const singles = slice.filter((c) => c === "'").length;
+    const doubles = slice.filter((c) => c === '"').length;
+    return singles % 2 === 1 || doubles % 2 === 1;
+  };
+
+  let take = maxLen - 1; // reserve one column for '…'
+  while (take > 0 && isUnbalanced(chars.slice(0, take))) {
+    take--;
+  }
+  return chars.slice(0, take).join('') + '…';
 }
 
 export function SessionCard({
