@@ -69,10 +69,17 @@ pub struct ShutdownHandle {
     senders: Vec<watch::Sender<bool>>,
     /// Whether `tailscale serve` was started and needs cleanup on shutdown.
     tailscale_serve_active: bool,
-    /// The single-instance lock acquired in `build_app`, kept alive for the
-    /// daemon's whole run — dropping it (e.g. at process exit) releases the OS
-    /// `flock` so a subsequent `pulpod` can start. `None` only in tests that build
-    /// a bare `ShutdownHandle` directly rather than going through `build_app`.
+    /// The single-instance lock acquired in `build_app`. Must be kept alive for
+    /// the daemon's *entire* run, past `shutdown()` and past the graceful-shutdown
+    /// grace period `main` gives in-flight streaming connections (up to 3s) —
+    /// dropping it early (e.g. by moving this whole handle into the shutdown-signal
+    /// future, which itself returns well before the server finishes draining)
+    /// releases the OS `flock` while `pulpod` is still serving, letting a second
+    /// `pulpod` start against the same data directory and race the first for the
+    /// database in that window. `main.rs` calls [`Self::take_lock`] to hold it in
+    /// its own scope instead, separately from the rest of this handle. `None`
+    /// only in tests that build a bare `ShutdownHandle` directly rather than going
+    /// through `build_app`, or after `take_lock` has already been called once.
     pulpod_lock: Option<store::lock::SingleInstanceLock>,
 }
 
@@ -87,6 +94,15 @@ impl ShutdownHandle {
 
     fn add_sender(&mut self, tx: watch::Sender<bool>) {
         self.senders.push(tx);
+    }
+
+    /// Take ownership of the single-instance lock out of this handle, so the
+    /// caller can keep it alive in its own scope independently of the rest of
+    /// this handle's lifetime — see the field doc on `pulpod_lock` for why this
+    /// matters. `shutdown()`/dropping this handle no longer implicitly releases
+    /// the lock once this has been called.
+    pub fn take_lock(&mut self) -> Option<store::lock::SingleInstanceLock> {
+        self.pulpod_lock.take()
     }
 
     /// Signal all background loops to shut down and clean up resources.
@@ -228,29 +244,32 @@ async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
 /// Build the application from config — returns the router, listener address, and shutdown handle.
 #[allow(clippy::too_many_lines)]
 pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandle)> {
-    let mut config = config::load(&cli.config)?;
+    // `load_with_warnings` rather than `load`: `main.rs` calls `config::load`
+    // once already, before `init_tracing` runs, purely to read `data_dir` for
+    // the tracing setup — any unknown-key warning from that earlier call is
+    // silently dropped (no subscriber installed yet). Logging the warnings
+    // here instead, unconditionally, means they're visible whenever this is
+    // reached through the real startup path (after `init_tracing`) without
+    // depending on `load` happening to be called a second time by coincidence.
+    let (mut config, unknown_keys) = config::load_with_warnings(&cli.config)?;
+    for unknown_key in &unknown_keys {
+        tracing::warn!("config: unknown key '{unknown_key}' ignored");
+    }
     let port = cli.port.unwrap_or(config.node.port);
 
     // Resolve config path for saving later
     let expanded = shellexpand::tilde(&cli.config);
     let config_path = std::path::PathBuf::from(expanded.as_ref());
 
-    // Auto-generate auth token on first run
-    let config_changed = config::ensure_auth_token(&mut config);
-    if config_changed {
-        info!("Generated new auth token");
-    }
-
-    if config_changed {
-        config::save(&config, &config_path)?;
-    }
-
     // Single-instance guard: acquire an exclusive advisory lock on
-    // `{data_dir}/pulpod.lock` *before* touching `state.db` at all. Without this, a
-    // second `pulpod` accidentally started against the same data directory could
-    // race the first to open/migrate the database — and, on an unusable-database
-    // error, quarantine (rename away) a file the first, already-running instance
-    // still holds open and considers perfectly healthy. See `store::lock`.
+    // `{data_dir}/pulpod.lock` *before* touching `state.db` — or the config file
+    // itself. Without this, a second `pulpod` accidentally started against the
+    // same data directory could race the first not only to open/migrate the
+    // database (and, on an unusable-database error, quarantine — rename away —
+    // a file the first, already-running instance still holds open and
+    // considers perfectly healthy), but also to bootstrap the auth token below:
+    // two processes racing `config::save`'s first-run write could corrupt the
+    // file or clobber each other's freshly-generated token. See `store::lock`.
     std::fs::create_dir_all(config.data_dir())
         .with_context(|| format!("failed to create data directory {}", config.data_dir()))?;
     let pulpod_lock = match store::lock::try_acquire(&config.data_dir())? {
@@ -266,6 +285,20 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             anyhow::bail!(message);
         }
     };
+
+    // Auto-generate auth token on first run
+    let config_changed = config::ensure_auth_token(&mut config);
+    if config_changed {
+        info!("Generated new auth token");
+    }
+
+    if config_changed {
+        // `bootstrap_token`, not the full-struct `save`: this only ever needs
+        // to splice in the one freshly-generated `auth.token` value, and doing
+        // that via a format-preserving edit keeps every comment/unknown key
+        // already in the file intact (see its own doc comment).
+        config::bootstrap_token(&config, &config_path)?;
+    }
 
     // Never crash-loop on an unusable database (corrupt file, unsupported
     // pre-migration schema, or a downgrade's `VersionMissing`/`VersionMismatch`):
@@ -297,19 +330,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
-
-    if let Some(recovered) = recovered_db {
-        let event = PulpoEvent::Daemon(DaemonEvent {
-            node_name: node_name.clone(),
-            subtype: "db_unusable".into(),
-            message: format!(
-                "database was unusable ({}) — quarantined to {} and started fresh",
-                recovered.reason, recovered.moved_to
-            ),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        });
-        let _ = event_tx.send(event);
-    }
 
     let manager = SessionManager::new(backend, store.clone(), config.node.default_command.clone())
         .with_capture_session_output(config.node.capture_session_output)
@@ -375,7 +395,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         );
         let ready_ctx = watchdog::ReadyContext {
             event_tx: Some(event_tx.clone()),
-            node_name,
+            node_name: node_name.clone(),
         };
         tokio::spawn(watchdog::run_watchdog_loop(
             watchdog_backend,
@@ -412,6 +432,25 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         ));
         shutdown_handle.add_sender(dispatcher_shutdown_tx);
         info!("Event dispatcher started");
+    }
+
+    // Emitted only now — AFTER the webhook dispatcher above has subscribed to
+    // `event_tx` (when any webhook is configured) — not right after
+    // `open_and_migrate` returns. `tokio::sync::broadcast` drops a send with no
+    // active receivers; emitting this earlier meant a configured webhook could
+    // never actually receive `db_unusable` (its dispatcher task hadn't
+    // subscribed yet), no matter how the rest of startup proceeded.
+    if let Some(recovered) = recovered_db {
+        let event = PulpoEvent::Daemon(DaemonEvent {
+            node_name: node_name.clone(),
+            subtype: "db_unusable".into(),
+            message: format!(
+                "database was unusable ({}) — quarantined to {} and started fresh",
+                recovered.reason, recovered.moved_to
+            ),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = event_tx.send(event);
     }
 
     let state = api::AppState::with_event_tx(
@@ -587,6 +626,25 @@ mod tests {
         let handle = ShutdownHandle::new();
         // Should not panic with no senders
         handle.shutdown();
+    }
+
+    #[test]
+    fn test_shutdown_handle_take_lock_returns_it_once() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let lock = match store::lock::try_acquire(tmpdir.path().to_str().unwrap()).unwrap() {
+            store::lock::LockOutcome::Acquired(lock) => lock,
+            store::lock::LockOutcome::HeldByAnother { .. } => {
+                panic!("expected the lock to be free")
+            }
+        };
+        let mut handle = ShutdownHandle::new();
+        handle.pulpod_lock = Some(lock);
+
+        assert!(handle.take_lock().is_some());
+        assert!(
+            handle.take_lock().is_none(),
+            "a second take_lock call must find nothing left"
+        );
     }
 
     #[test]
@@ -1102,6 +1160,90 @@ events = ["killed"]
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "127.0.0.1:0");
+        handle.shutdown();
+    }
+
+    /// A minimal capture server, mirroring `notifications::mod`'s own test
+    /// helper — proves a webhook actually receives a real HTTP delivery, not
+    /// just that the dispatcher "would" have delivered something.
+    async fn capture_server() -> (String, std::sync::Arc<tokio::sync::Mutex<Vec<String>>>) {
+        let captured = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move |body: String| {
+                let captured = captured_clone.clone();
+                async move {
+                    captured.lock().await.push(body);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(axum::serve(listener, app).into_future());
+        (format!("http://{addr}/hook"), captured)
+    }
+
+    #[tokio::test]
+    async fn test_build_app_delivers_db_unusable_event_to_configured_webhook() {
+        // Regression test (#126 follow-up): the `db_unusable` event used to be
+        // sent before the webhook dispatcher subscribed to the event bus — a
+        // broadcast channel drops a send with no active receivers, so a
+        // configured webhook never actually received it no matter how startup
+        // otherwise proceeded. Proven end to end here: a real corrupt-database
+        // recovery, through `build_app`, delivered to a real HTTP endpoint.
+        let (hook_url, captured) = capture_server().await;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(data_dir.join("state.db"), b"not a sqlite database").unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+
+[[webhooks]]
+name = "ops"
+url = "{hook_url}"
+events = ["daemon.*"]
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+        };
+
+        let (_app, _addr, handle) = build_app(&cli).await.unwrap();
+
+        let bodies = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let bodies = captured.lock().await;
+                if !bodies.is_empty() {
+                    return bodies.clone();
+                }
+                drop(bodies);
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("expected the db_unusable event to be delivered to the webhook");
+
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
+        let json: serde_json::Value = serde_json::from_str(&bodies[0]).unwrap();
+        assert_eq!(json["type"], "daemon");
+        assert_eq!(json["subtype"], "db_unusable");
+
         handle.shutdown();
     }
 }
