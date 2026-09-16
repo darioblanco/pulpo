@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use crate::Cli;
+use crate::DEFAULT_DAEMON_URL;
 use crate::http::{authed_post, base_url, resolve_address, resolve_token};
 
 /// Environment variable the command wrapper (`session/manager.rs::wrap_command`)
@@ -23,20 +24,15 @@ pub const SESSION_ID_ENV: &str = "PULPO_SESSION_ID";
 /// non-default `[node].port` when `--url` was left at its default.
 pub const URL_ENV: &str = "PULPO_URL";
 
-/// `Cli::url`'s own `default_value` (see `lib.rs`). Used to detect whether the
-/// hook's caller left `--url` unset, in which case `URL_ENV` should be preferred
-/// when present.
-const DEFAULT_CLI_URL: &str = "localhost:7433";
-
 /// Resolve the daemon address a hook should talk to: an explicit `--url` (i.e.
-/// anything other than the CLI's own default) always wins. Otherwise prefer
-/// `env_url` — the caller's `PULPO_URL` environment variable, exported by
-/// `wrap_command` with the daemon's actual loopback `host:port` — so hook-driven
-/// state and resume keep working when the daemon isn't on the CLI's hardcoded
-/// default port. Falls back to the CLI default when neither is set (or `env_url`
-/// is empty).
+/// anything other than the CLI's own default, `DEFAULT_DAEMON_URL` — see
+/// `Cli::url` in `lib.rs`) always wins. Otherwise prefer `env_url` — the
+/// caller's `PULPO_URL` environment variable, exported by `wrap_command` with
+/// the daemon's actual loopback `host:port` — so hook-driven state and resume
+/// keep working when the daemon isn't on the CLI's hardcoded default port.
+/// Falls back to the CLI default when neither is set (or `env_url` is empty).
 fn resolve_hook_url(cli_url: &str, env_url: Option<&str>) -> String {
-    if cli_url == DEFAULT_CLI_URL
+    if cli_url == DEFAULT_DAEMON_URL
         && let Some(env_url) = env_url.filter(|u| !u.is_empty())
     {
         return env_url.to_owned();
@@ -266,7 +262,7 @@ mod tests {
     #[test]
     fn test_resolve_hook_url_prefers_env_when_url_is_default() {
         assert_eq!(
-            resolve_hook_url(DEFAULT_CLI_URL, Some("http://127.0.0.1:9999")),
+            resolve_hook_url(DEFAULT_DAEMON_URL, Some("http://127.0.0.1:9999")),
             "http://127.0.0.1:9999"
         );
     }
@@ -281,12 +277,12 @@ mod tests {
 
     #[test]
     fn test_resolve_hook_url_falls_back_to_default_without_env() {
-        assert_eq!(resolve_hook_url(DEFAULT_CLI_URL, None), DEFAULT_CLI_URL);
+        assert_eq!(resolve_hook_url(DEFAULT_DAEMON_URL, None), DEFAULT_DAEMON_URL);
     }
 
     #[test]
     fn test_resolve_hook_url_ignores_empty_env() {
-        assert_eq!(resolve_hook_url(DEFAULT_CLI_URL, Some("")), DEFAULT_CLI_URL);
+        assert_eq!(resolve_hook_url(DEFAULT_DAEMON_URL, Some("")), DEFAULT_DAEMON_URL);
     }
 
     // -- parse_hook_event_json --
