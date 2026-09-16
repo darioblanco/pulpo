@@ -830,9 +830,9 @@ mod tests {
         // `Execute`/`ExecuteMigration` wrapping something ordinary (a lock, a
         // transient I/O error) must NOT be treated as corruption just because
         // it's an `Execute` variant.
-        let locked: anyhow::Error = sqlx::migrate::MigrateError::Execute(
-            sqlx::Error::Protocol("database is locked".into()),
-        )
+        let locked: anyhow::Error = sqlx::migrate::MigrateError::Execute(sqlx::Error::Protocol(
+            "database is locked".into(),
+        ))
         .into();
         assert!(!is_quarantine_worthy(&locked));
 

@@ -27,7 +27,9 @@ pub(crate) const MAX_CONCURRENT_DELIVERIES: usize = 16;
 /// even when there are more endpoints than the budget allows. Rebuilt once per
 /// dispatcher-loop run; a webhook config change needs a daemon restart like
 /// every other watchdog/notification setting.
-fn build_endpoint_semaphores(webhooks: &[WebhookEndpointConfig]) -> HashMap<String, Arc<Semaphore>> {
+fn build_endpoint_semaphores(
+    webhooks: &[WebhookEndpointConfig],
+) -> HashMap<String, Arc<Semaphore>> {
     let per_endpoint = (MAX_CONCURRENT_DELIVERIES / webhooks.len().max(1)).max(1);
     webhooks
         .iter()
@@ -216,7 +218,10 @@ mod tests {
         ];
 
         let semaphores = build_endpoint_semaphores(&webhooks);
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 2);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &semaphores),
+            2
+        );
     }
 
     #[tokio::test]
@@ -239,7 +244,10 @@ mod tests {
             vec!["stopped".into()],
         )];
         let semaphores = build_endpoint_semaphores(&webhooks);
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 0);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &semaphores),
+            0
+        );
     }
 
     #[tokio::test]
@@ -297,7 +305,10 @@ mod tests {
 
         for _ in 0..5 {
             let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphores);
-            assert_eq!(spawned, 1, "the healthy endpoint keeps receiving deliveries");
+            assert_eq!(
+                spawned, 1,
+                "the healthy endpoint keeps receiving deliveries"
+            );
         }
     }
 
@@ -331,7 +342,10 @@ mod tests {
             ),
         ];
         let semaphores = build_endpoint_semaphores(&webhooks);
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event, &semaphores), 1);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &semaphores),
+            1
+        );
     }
 
     // --- dispatcher loop ---

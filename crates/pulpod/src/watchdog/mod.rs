@@ -12,8 +12,7 @@ use crate::harness::{HarnessRegistry, HarnessSignals};
 use idle::check_idle_sessions;
 #[cfg(test)]
 use idle::{
-    check_session_idle, handle_active_session, handle_idle_session,
-    resolve_and_report_dead_session,
+    check_session_idle, handle_active_session, handle_idle_session, resolve_and_report_dead_session,
 };
 pub(crate) use metadata::refresh_exact_usage;
 use metadata::{build_session_event, detect_and_store_output_metadata};

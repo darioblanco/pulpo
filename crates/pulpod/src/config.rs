@@ -412,7 +412,12 @@ pub fn bootstrap_token(config: &Config, path: &Path) -> Result<()> {
         .with_context(|| format!("Failed to read config from {}", path.display()))?;
     let mut doc = existing
         .parse::<toml_edit::DocumentMut>()
-        .with_context(|| format!("Failed to parse config at {} for token bootstrap", path.display()))?;
+        .with_context(|| {
+            format!(
+                "Failed to parse config at {} for token bootstrap",
+                path.display()
+            )
+        })?;
 
     let root = doc.as_table_mut();
     if !root.contains_key("auth") {

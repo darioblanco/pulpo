@@ -985,9 +985,7 @@ mod tests {
 
     #[test]
     fn test_resume_command_strips_trailing_positional_prompt_without_flag() {
-        let cmd = PiAdapter
-            .resume_command("pi fix the bug", "sid-1")
-            .unwrap();
+        let cmd = PiAdapter.resume_command("pi fix the bug", "sid-1").unwrap();
         assert_eq!(cmd, "pi --session-id sid-1");
     }
 

@@ -846,7 +846,14 @@ mod tests {
 
         // Create the session
         run_tmux(
-            build_create_command(&tmux, Some(&socket), session_name, "/tmp", command, user_path),
+            build_create_command(
+                &tmux,
+                Some(&socket),
+                session_name,
+                "/tmp",
+                command,
+                user_path,
+            ),
             "create test session",
         )
         .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));

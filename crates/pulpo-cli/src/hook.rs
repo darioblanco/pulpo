@@ -277,12 +277,18 @@ mod tests {
 
     #[test]
     fn test_resolve_hook_url_falls_back_to_default_without_env() {
-        assert_eq!(resolve_hook_url(DEFAULT_DAEMON_URL, None), DEFAULT_DAEMON_URL);
+        assert_eq!(
+            resolve_hook_url(DEFAULT_DAEMON_URL, None),
+            DEFAULT_DAEMON_URL
+        );
     }
 
     #[test]
     fn test_resolve_hook_url_ignores_empty_env() {
-        assert_eq!(resolve_hook_url(DEFAULT_DAEMON_URL, Some("")), DEFAULT_DAEMON_URL);
+        assert_eq!(
+            resolve_hook_url(DEFAULT_DAEMON_URL, Some("")),
+            DEFAULT_DAEMON_URL
+        );
     }
 
     // -- parse_hook_event_json --

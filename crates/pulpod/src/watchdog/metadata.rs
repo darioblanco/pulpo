@@ -470,10 +470,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            refreshed.meta_str(meta::USAGE_SOURCE),
-            Some("claude-jsonl")
-        );
+        assert_eq!(refreshed.meta_str(meta::USAGE_SOURCE), Some("claude-jsonl"));
     }
 
     #[test]

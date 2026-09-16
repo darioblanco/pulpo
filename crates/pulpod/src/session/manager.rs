@@ -848,7 +848,11 @@ impl SessionManager {
     async fn purge_session(&self, session: &Session) -> Result<()> {
         let session_id = session.id.to_string();
         if let Some(ref wt_path) = session.worktree_path {
-            if self.store.worktree_in_use_elsewhere(wt_path, &session_id).await? {
+            if self
+                .store
+                .worktree_in_use_elsewhere(wt_path, &session_id)
+                .await?
+            {
                 tracing::debug!(
                     session = %session.name,
                     path = %wt_path,
@@ -2393,7 +2397,10 @@ mod tests {
             .unwrap();
 
         let mut stale_in_memory = session; // still says `Working`
-        let transitioned = mgr.mark_session_stopped(&mut stale_in_memory).await.unwrap();
+        let transitioned = mgr
+            .mark_session_stopped(&mut stale_in_memory)
+            .await
+            .unwrap();
 
         assert!(!transitioned);
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
