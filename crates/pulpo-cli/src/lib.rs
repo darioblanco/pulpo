@@ -23,6 +23,10 @@ use http::{
     request_json, request_text, resolve_address, resolve_token,
 };
 
+/// Default `pulpod` address (`host:port`) — shared so `hook.rs`'s internal hook
+/// dispatch and `Cli`'s `--url` default don't drift out of sync.
+pub const DEFAULT_DAEMON_URL: &str = "localhost:7433";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "pulpo",

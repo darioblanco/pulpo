@@ -124,13 +124,32 @@ fn format_usage(session: &Session) -> String {
     "-".into()
 }
 
-/// Truncate a string to `max` chars with ellipsis.
+/// Truncate a string to `max` chars with an ellipsis marker.
+///
+/// Operates on `char` count throughout (never `str::len()`, which counts bytes and
+/// would both mismatch `max` for multi-byte content and risk slicing mid-codepoint):
+/// the "does this need truncating" check and the actual cut both use `chars()`, so
+/// this is char-boundary-safe for any UTF-8 input.
+///
+/// Also backs off before an unmatched `'`/`"` so a quoted shell argument (e.g. `-p
+/// 'fix the bug'`) never gets cut mid-quote, which would otherwise leave a single
+/// trailing quote character that looks like it opens a string with no close. The
+/// single `…` marker (rather than `...`) makes the cut point unambiguous at a
+/// glance and costs one fewer column.
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_owned()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(3)).collect();
-        format!("{t}...")
+    if s.chars().count() <= max {
+        return s.to_owned();
+    }
+
+    let mut take = max.saturating_sub(1); // reserve one column for '…'
+    loop {
+        let candidate: String = s.chars().take(take).collect();
+        let unbalanced =
+            candidate.matches('\'').count() % 2 == 1 || candidate.matches('"').count() % 2 == 1;
+        if !unbalanced || take == 0 {
+            return format!("{candidate}\u{2026}");
+        }
+        take -= 1;
     }
 }
 
@@ -509,6 +528,43 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_short_string_unchanged() {
+        assert_eq!(truncate("short", 50), "short");
+    }
+
+    #[test]
+    fn test_truncate_marks_cut_with_ellipsis() {
+        let result = truncate("this is a fairly long string that needs truncating", 20);
+        assert!(result.chars().count() <= 20);
+        assert!(result.ends_with('\u{2026}'));
+        assert!(!result.contains("..."));
+    }
+
+    #[test]
+    fn test_truncate_backs_off_before_unmatched_quote() {
+        // The cut point (byte-wise) would otherwise land inside the quoted
+        // argument, leaving a single dangling `'`.
+        let result = truncate("claude -p 'fix the very annoying bug in the parser'", 15);
+        let quote_count = result.matches('\'').count();
+        assert_eq!(quote_count % 2, 0, "quotes must stay balanced: {result}");
+        assert!(result.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn test_truncate_handles_double_quotes() {
+        let result = truncate("claude -p \"fix the very annoying bug in parser\"", 15);
+        let quote_count = result.matches('"').count();
+        assert_eq!(quote_count % 2, 0, "quotes must stay balanced: {result}");
+    }
+
+    #[test]
+    fn test_truncate_at_zero_falls_back_to_marker_only() {
+        // An unmatched quote right at the start still terminates cleanly.
+        let result = truncate("'this whole thing is one long quoted string", 3);
+        assert_eq!(result, "\u{2026}");
+    }
+
+    #[test]
     fn test_format_branch_without_branch() {
         let s = repo_session("/home/user/test", None);
         assert_eq!(format_branch(&s), "-");
@@ -724,7 +780,7 @@ mod tests {
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
-        assert!(output.contains("..."));
+        assert!(output.contains('\u{2026}'));
     }
 
     #[test]
@@ -1020,16 +1076,20 @@ mod tests {
     fn test_format_sessions_multibyte_command_truncation() {
         use pulpo_common::session::SessionStatus;
 
-        // Command with multi-byte chars exceeding 50 bytes; must not panic
+        // Command with more than 50 *characters* of 4-byte-each multi-byte
+        // content — must truncate on a char boundary without panicking, and
+        // the length check itself must use char count (not byte length, which
+        // would wildly overcount and either over-truncate or panic on a split
+        // codepoint).
         let sessions = vec![Session {
             name: "test".into(),
             workdir: "/tmp".into(),
-            command: "echo '\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}'".into(),
+            command: format!("echo '{}'", "\u{1F600}".repeat(60)),
             status: SessionStatus::Working,
             ..Default::default()
         }];
         let output = format_sessions(&sessions);
-        assert!(output.contains("..."));
+        assert!(output.contains('\u{2026}'));
     }
 
     #[test]
