@@ -260,10 +260,11 @@ fn rollout_dir(codex_home: &Path, now: DateTime<Utc>) -> PathBuf {
 }
 
 /// Write the leading `session_meta` line of a fresh rollout file — mirrors real
-/// Codex's shape (`"id"`, as `pulpod::usage::codex`'s own test fixtures use), plus a
-/// `"session_id"` alias matching the field name `CodexAdapter::extract_session_id`
-/// looks for in the `SessionStart` hook payload (harmless extra field: the usage
-/// reader only reads `cwd`/`timestamp` from this record).
+/// Codex's shape exactly: the session/thread id lives under `payload.id` (as
+/// `pulpod::usage::codex`'s own test fixtures use), never a `session_id` alias — real
+/// Codex's rollout header has no such field, so a fake-only alias would let
+/// [`find_last_rollout_session_id`] pass against a shape the real reader never
+/// produces.
 fn write_session_meta(path: &Path, session_id: &str, cwd: &Path, now: DateTime<Utc>) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -273,7 +274,6 @@ fn write_session_meta(path: &Path, session_id: &str, cwd: &Path, now: DateTime<U
         "type": "session_meta",
         "payload": {
             "id": session_id,
-            "session_id": session_id,
             "timestamp": now.to_rfc3339(),
             "cwd": cwd.to_string_lossy(),
             "originator": "codex_cli_rs",
@@ -318,6 +318,9 @@ fn append_token_count(path: &Path, input: u64, cached: u64, output: u64) {
 /// Find the session id of the most recently written rollout file under
 /// `<codex_home>/sessions/` (recursively) — used to resolve `resume --last` (real
 /// Codex resolves the same way: by file position, not a stored id pulpo ever learns).
+/// Reads the id from `payload.id` — real Codex's actual rollout header field (see
+/// [`write_session_meta`]) — not a fake-only `payload.session_id` alias, so this
+/// exercises the same lookup shape real Codex's own `resume --last` would.
 fn find_last_rollout_session_id(codex_home: &Path) -> Option<String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -347,7 +350,7 @@ fn find_last_rollout_session_id(codex_home: &Path) -> Option<String> {
     let value: Value = serde_json::from_str(first_line).ok()?;
     value
         .get("payload")?
-        .get("session_id")
+        .get("id")
         .and_then(Value::as_str)
         .map(str::to_owned)
 }
@@ -364,10 +367,11 @@ fn hang_forever() -> ! {
     }
 }
 
-fn base_payload(session_id: &str, cwd: &Path) -> Value {
+fn base_payload(session_id: &str, cwd: &Path, transcript_path: &Path) -> Value {
     json!({
         "session_id": session_id,
         "cwd": cwd.to_string_lossy(),
+        "transcript_path": transcript_path.to_string_lossy(),
     })
 }
 
@@ -380,7 +384,7 @@ fn run_step(
     rollout_path: &Path,
     turn: &mut u64,
 ) {
-    let mut payload = base_payload(session_id, cwd);
+    let mut payload = base_payload(session_id, cwd, rollout_path);
     let obj = payload.as_object_mut().expect("payload is an object");
 
     if let Some(("exit", arg)) = step.split_once(':') {
@@ -409,7 +413,7 @@ fn run_step(
         }
         "wait" => {
             block_on_stdin();
-            let mut working = base_payload(session_id, cwd);
+            let mut working = base_payload(session_id, cwd, rollout_path);
             working
                 .as_object_mut()
                 .expect("payload is an object")
@@ -417,7 +421,7 @@ fn run_step(
             config.fire("UserPromptSubmit", &working);
 
             *turn += 1;
-            let mut stop = base_payload(session_id, cwd);
+            let mut stop = base_payload(session_id, cwd, rollout_path);
             stop.as_object_mut().expect("payload is an object").extend([
                 ("hook_event_name".to_owned(), json!("Stop")),
                 (
@@ -436,11 +440,17 @@ fn run_step(
             *turn += 1;
             append_token_count(rollout_path, 500 * *turn, 100 * *turn, 50 * *turn);
 
+            // Codex's real `notify` payload spells these fields kebab-case (see
+            // `harness::codex`'s module doc and `parse_notify_event`/
+            // `extract_session_id`'s kebab-case tolerance) — sending only
+            // `snake_case` here would exercise a branch real Codex never takes.
             let notify_payload = json!({
                 "type": "agent-turn-complete",
-                "thread_id": session_id,
+                "thread-id": session_id,
+                "turn-id": format!("turn-{turn}"),
                 "cwd": cwd.to_string_lossy(),
-                "last_assistant_message": "Turn complete.",
+                "last-assistant-message": "Turn complete.",
+                "input-messages": [],
             });
             config.notify(&notify_payload);
         }
@@ -477,14 +487,22 @@ fn main() {
     let config = Config::load(&codex_home);
 
     let resumed = args.resume_id.is_some() || args.resume_last;
-    let session_id = args.resume_id.clone().unwrap_or_else(|| {
-        if args.resume_last {
-            find_last_rollout_session_id(&codex_home)
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-        } else {
-            uuid::Uuid::new_v4().to_string()
-        }
-    });
+    let session_id = if let Some(id) = args.resume_id.clone() {
+        id
+    } else if args.resume_last {
+        // Real Codex errors out (non-zero exit) when asked to resume the most
+        // recent thread in a `CODEX_HOME` that has no rollout at all — it has
+        // nothing to resolve `--last` against. Minting a fresh id here instead
+        // would silently paper over that case for a scenario test.
+        find_last_rollout_session_id(&codex_home).unwrap_or_else(|| {
+            eprintln!(
+                "[fake-codex] Error: no conversation to resume (resume --last with an empty CODEX_HOME)"
+            );
+            std::process::exit(1);
+        })
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
 
     // Real Codex writes a fresh rollout file every process invocation, resume
     // included (usage/codex.rs: "restarts produce new files") — independent of

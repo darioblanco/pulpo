@@ -641,17 +641,21 @@ fn s12_spawn_quoted_prompt_reaches_harness_intact() {
     let claude = daemon.fake_claude_bin();
     let claude_str = claude.to_string_lossy().into_owned();
 
+    // Deliberately packed with every shell metacharacter `wrap_command`'s quoting
+    // must survive: a single quote (breaks naive `'...'` wrapping), a double quote,
+    // a `$VAR`-shaped token (must NOT be expanded by any shell hop in between — it
+    // must reach the fake as the literal four characters `$HOME`), and a `;`
+    // (would otherwise terminate the command and run whatever follows). If any hop
+    // between the CLI and the harness process re-parses this with a shell instead
+    // of round-tripping it as data, this string comes out mangled, truncated, or
+    // (worst case) `; echo` actually runs as a second command.
+    let prompt = r#"pong's "favorite" place is $HOME; echo unexpected"#;
+
     let output = daemon.spawn(
         "s12-quoted-spawn",
         &workdir,
         &[],
-        &[
-            &claude_str,
-            "-p",
-            "Reply with exactly the word: pong",
-            "--model",
-            "haiku",
-        ],
+        &[&claude_str, "-p", prompt, "--model", "haiku"],
     );
     assert!(
         output.status.success(),
@@ -671,9 +675,9 @@ fn s12_spawn_quoted_prompt_reaches_harness_intact() {
         .unwrap_or_else(|| panic!("-p flag missing from recorded argv: {argv:?}"));
     assert_eq!(
         argv.get(p_index + 1).map(String::as_str),
-        Some("Reply with exactly the word: pong"),
-        "the prompt must survive as ONE argument, not split by a shell along the way; \
-         full argv: {argv:?}"
+        Some(prompt),
+        "the prompt must survive as ONE argument, byte-for-byte (no shell splitting, \
+         no $HOME expansion, no `;` command injection); full argv: {argv:?}"
     );
 
     let model_index = argv
@@ -684,6 +688,14 @@ fn s12_spawn_quoted_prompt_reaches_harness_intact() {
         argv.get(model_index + 1).map(String::as_str),
         Some("haiku"),
         "full argv: {argv:?}"
+    );
+
+    // Belt-and-suspenders: if `;` had actually split the command or `$HOME` had
+    // been expanded and then, say, globbed/executed, some derivative of "unexpected"
+    // or the real $HOME path could leak into argv as a stray extra element.
+    assert!(
+        !argv.iter().any(|a| a == "echo" || a == "unexpected"),
+        "the trailing `; echo unexpected` must never run as a separate command: {argv:?}"
     );
 }
 
@@ -1066,6 +1078,13 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
         "still no id learned after a clean exit with hooks disabled"
     );
 
+    // Capture this session's own isolated CODEX_HOME before resuming — the fallback
+    // must keep using it, not redirect to a fresh (empty) one.
+    let original_codex_home = wait_for_fake_codex_env(&workdir, SHORT)["codex_home"]
+        .as_str()
+        .expect("codex_home should be a string")
+        .to_owned();
+
     // Swap in a scenario that just stays up after starting (read fresh by every new
     // fake-codex process), so the resumed process is reliably observable as Working
     // rather than racing straight through "stop,exit" again before a poll catches it.
@@ -1076,9 +1095,18 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
     daemon.resume("s16-codex-fallback");
 
     daemon.wait_status("s16-codex-fallback", SessionStatus::Working, SHORT);
-    wait_for_fake_state(&workdir, SHORT, |s| {
+    let state = wait_for_fake_state(&workdir, SHORT, |s| {
         s["pid"].as_u64().is_some_and(|pid| pid != old_pid)
     });
+
+    // The core promise of "fall back to resume --last, don't start a new thread":
+    // the resumed fake-codex process must find and reopen the SAME rollout (hence
+    // the same self-generated session id) the original spawn wrote, not mint a
+    // fresh one of its own.
+    assert_eq!(
+        state["session_id"], before_resume_state["session_id"],
+        "resume must reopen the SAME Codex thread, not start a new one"
+    );
 
     let argv = read_fake_argv(&workdir).expect("resumed fake-codex should have recorded argv");
     assert!(
@@ -1097,6 +1125,15 @@ fn s16_codex_resume_without_harness_session_id_falls_back_to_resume_last() {
     assert!(
         !argv.iter().any(|a| a == "fix the bug"),
         "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
+    );
+
+    // Same isolated CODEX_HOME as the original spawn — `resume --last` is scoped to
+    // this directory, so redirecting it to a fresh one would resume nothing.
+    let env = read_fake_env(&workdir);
+    assert_eq!(
+        env.get("CODEX_HOME").map(String::as_str),
+        Some(original_codex_home.as_str()),
+        "resume must reuse the same isolated CODEX_HOME, not a fresh one"
     );
 }
 
@@ -1219,6 +1256,254 @@ fn s16_codex_resume_still_works_when_worktree_removed() {
     );
 }
 
+/// #128 follow-up, S16 sibling: unlike Codex's `resume --last` (keyed by an
+/// isolated `CODEX_HOME`, not by directory — see the test above), Claude's only
+/// fallback is `--continue`, Claude Code's own "most recent conversation in this
+/// *directory*" flag. When no `harness_session_id` is known at all AND the
+/// session's worktree has been removed, `resolve_resume_command` must refuse the
+/// resume outright (documented in `AGENTS.md`'s "Resume fallback" section and
+/// proven at the unit level by
+/// `session::manager::test_resume_session_claude_fallback_refuses_when_worktree_gone`)
+/// rather than let `--continue` silently pick up whatever conversation happens to
+/// be most recent in the fallback directory instead.
+///
+/// `harness_session_id` is forced unknown the same way real life produces a
+/// "legacy row": a user-supplied `--session-id` already on the command line makes
+/// `ClaudeAdapter::prepare_spawn`'s `IDENTITY_FLAGS` check a full no-op (`claude`'s
+/// own doc comment: "a user-supplied `--session-id` that made `prepare_spawn` a
+/// full no-op at spawn time, so pulpo never minted/learned one") — `--settings` is
+/// never injected either, so no hook ever reports one back, regardless of scenario.
+#[test]
+fn s16_claude_resume_refused_when_worktree_removed() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_repo_dir, repo_path) = temp_workdir();
+    init_git_repo(&repo_path);
+    commit_fake_scenario(&repo_path, "exit");
+
+    let claude = daemon.fake_claude_bin();
+    let claude_str = claude.to_string_lossy().into_owned();
+    let output = daemon.spawn(
+        "s16-claude-worktree-removed",
+        &repo_path,
+        &["--worktree"],
+        &[
+            &claude_str,
+            "--session-id",
+            "11111111-1111-1111-1111-111111111111",
+            "-p",
+            "fix the bug",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_for("s16-claude-worktree-removed", SHORT, |s| {
+        s.worktree_path.is_some()
+    });
+    assert_eq!(session.harness.as_deref(), Some("claude"));
+    let worktree_path = std::path::PathBuf::from(session.worktree_path.expect("worktree path"));
+    assert!(worktree_path.exists(), "expected the worktree to exist");
+
+    // Same reasoning as the plain (non-worktree) S16 Codex test above: a
+    // hooks-never-fire scenario can complete well under this suite's poll
+    // interval, so wait directly for the stable terminal state instead of the
+    // transient `Working` status.
+    let resolved = daemon.wait_for("s16-claude-worktree-removed", SHORT, |s| {
+        s.exit_code == Some(0)
+    });
+    assert_eq!(resolved.status, SessionStatus::Done);
+    assert_eq!(resolved.status_reason.as_deref(), Some("exited"));
+    assert!(
+        resolved.harness_session_id.is_none(),
+        "a user-supplied --session-id makes prepare_spawn a full no-op — no hook is \
+         ever wired to report one back"
+    );
+
+    // Simulate the worktree being removed (branch merged and cleaned up, disk
+    // wiped, ...) — `effective_resume_workdir` will now fall back to `repo_path`.
+    std::fs::remove_dir_all(&worktree_path).expect("remove worktree");
+    assert!(!worktree_path.exists());
+
+    let output = daemon.resume("s16-claude-worktree-removed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "resume must be refused (exit non-zero) when the worktree is gone and no \
+         Claude session id is known; stderr: {stderr}"
+    );
+    assert!(stderr.contains("worktree"), "{stderr}");
+    assert!(stderr.contains("claude"), "{stderr}");
+    assert!(stderr.contains("start a new session"), "{stderr}");
+
+    // A refused resume must not mutate status — still Done, exactly as documented.
+    let after = daemon
+        .session("s16-claude-worktree-removed")
+        .expect("session should still exist after a refused resume");
+    assert_eq!(
+        after.status,
+        SessionStatus::Done,
+        "a refused resume must leave status untouched"
+    );
+}
+
+/// #128 follow-up, S16 sibling: the *positive* half of the Claude `--continue`
+/// fallback — same "legacy row" setup as the test above (a user-supplied
+/// `--session-id` makes `prepare_spawn` a full no-op, so no hook ever reports a
+/// `harness_session_id` back), but the workdir is left intact, so
+/// `resolve_resume_command`'s cwd-scope guard passes and the fallback actually
+/// runs: `claude --continue ...` reaching the fake, hooks re-wired via a fresh
+/// `--settings` file.
+///
+/// REAL PRODUCT BUG (confirmed by running this test): `harness::claude`'s
+/// `fallback_resume_command` (and `resume_command`) strip `--session-id`/
+/// `--settings`/`--resume`/`-r`/`--continue`/`-c` from the original command but
+/// never the trailing `-p <prompt>`/positional prompt, unlike Codex's own
+/// `fallback_resume_command` (which calls `strip_trailing_positionals`). The
+/// resumed argv observed here was
+/// `[..., "--settings", "<path>", "--continue", "-p", "fix the bug"]` — Claude
+/// Code would replay "fix the bug" as a brand-new turn on top of `--continue`
+/// instead of just reopening the conversation. Left `#[ignore]`d with the
+/// documented-correct assertion so the daemon-side fix
+/// (`crates/pulpod/src/harness/claude.rs`) has a red test to turn green — do not
+/// weaken the assertion to make this pass.
+#[ignore = "real bug: harness::claude::fallback_resume_command/resume_command don't strip -p/positional prompt (unlike Codex) — see doc comment above"]
+#[test]
+fn s16_claude_resume_falls_back_to_continue_when_cwd_intact() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "exit");
+    let claude = daemon.fake_claude_bin();
+    let claude_str = claude.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s16-claude-fallback",
+        &workdir,
+        &[],
+        &[
+            &claude_str,
+            "--session-id",
+            "22222222-2222-2222-2222-222222222222",
+            "-p",
+            "fix the bug",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_for("s16-claude-fallback", SHORT, |s| s.exit_code == Some(0));
+    assert_eq!(session.harness.as_deref(), Some("claude"));
+    assert_eq!(session.status, SessionStatus::Done);
+    assert!(
+        session.harness_session_id.is_none(),
+        "a user-supplied --session-id makes prepare_spawn a full no-op — no hook is \
+         ever wired to report one back"
+    );
+
+    set_scenario(&workdir, "hang");
+    // Delete the original process's argv dump so `wait_for_fake_argv` can only
+    // observe the *resumed* process's own write, not a stale read of the file the
+    // very first spawn already left behind.
+    let _ = std::fs::remove_file(workdir.join("pulpo-fake-argv.json"));
+
+    daemon.resume("s16-claude-fallback");
+
+    daemon.wait_status("s16-claude-fallback", SessionStatus::Working, SHORT);
+    let argv = wait_for_fake_argv(&workdir, SHORT);
+    assert!(
+        argv.iter().any(|a| a == "--continue"),
+        "no Claude session id was ever learned — resume must fall back to \
+         --continue, not a fresh spawn: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "--settings"),
+        "hooks must still be re-injected on the fallback resume: {argv:?}"
+    );
+    // This is the documented-correct behavior (unlike Codex's fallback, which
+    // strips the original trailing prompt — see the Codex S16 test above). If it
+    // fails, see this test's `#[ignore]` note for the real product bug it caught.
+    assert!(
+        !argv.iter().any(|a| a == "fix the bug"),
+        "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
+    );
+}
+
+/// #128 follow-up, S16 sibling: the pi equivalent of the Claude `--continue`
+/// positive-fallback test above. `--no-session` is one of pi's
+/// `SESSION_SELECTION_FLAGS` that makes `prepare_spawn` a full no-op (unlike
+/// `--continue`/`-c`, which still gets hooks re-wired) — a "user-supplied
+/// session-selection flag that made prepare_spawn a full no-op at spawn time"
+/// exactly like `PiAdapter::fallback_resume_command`'s doc comment describes — so
+/// no hook is ever wired at spawn time and `harness_session_id` stays unknown.
+///
+/// REAL PRODUCT BUG (confirmed by running this test): `harness::pi`'s
+/// `fallback_resume_command` strips only `--session-id`, never the trailing
+/// `-p <prompt>`/positional prompt — same bug class as Claude's above. The
+/// resumed argv observed here was
+/// `[..., "-e", "<path>", "--continue", "--no-session", "-p", "fix the bug"]` —
+/// pi would replay "fix the bug" as a brand-new turn instead of just reopening
+/// the conversation. Left `#[ignore]`d with the documented-correct assertion so
+/// the daemon-side fix (`crates/pulpod/src/harness/pi.rs`) has a red test to turn
+/// green — do not weaken the assertion to make this pass.
+#[ignore = "real bug: harness::pi::fallback_resume_command doesn't strip -p/positional prompt (same class as Claude's) — see doc comment above"]
+#[test]
+fn s16_pi_resume_falls_back_to_continue_when_cwd_intact() {
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "exit");
+    let pi = daemon.fake_pi_bin();
+    let pi_str = pi.to_string_lossy().into_owned();
+
+    let output = daemon.spawn(
+        "s16-pi-fallback",
+        &workdir,
+        &[],
+        &[&pi_str, "--no-session", "-p", "fix the bug"],
+    );
+    assert!(
+        output.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let session = daemon.wait_for("s16-pi-fallback", SHORT, |s| s.exit_code == Some(0));
+    assert_eq!(session.harness.as_deref(), Some("pi"));
+    assert_eq!(session.status, SessionStatus::Done);
+    assert!(
+        session.harness_session_id.is_none(),
+        "--no-session makes prepare_spawn a full no-op — no hook is ever wired to \
+         report an id back"
+    );
+
+    set_scenario(&workdir, "hang");
+    let _ = std::fs::remove_file(workdir.join("pulpo-fake-argv.json"));
+
+    daemon.resume("s16-pi-fallback");
+
+    daemon.wait_status("s16-pi-fallback", SessionStatus::Working, SHORT);
+    let argv = wait_for_fake_argv(&workdir, SHORT);
+    assert!(
+        argv.iter().any(|a| a == "--continue"),
+        "no pi session id was ever learned — resume must fall back to --continue, \
+         not a fresh spawn: {argv:?}"
+    );
+    assert!(
+        argv.iter().any(|a| a == "-e"),
+        "hooks must still be re-injected on the fallback resume: {argv:?}"
+    );
+    // This is the documented-correct behavior. If it fails, see this test's
+    // `#[ignore]` note for the real product bug it caught.
+    assert!(
+        !argv.iter().any(|a| a == "fix the bug"),
+        "the original prompt must be stripped on resume, not resubmitted: {argv:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // S19 — single-instance lock: a second pulpod on the same data dir refuses to start
 // ---------------------------------------------------------------------------
@@ -1239,11 +1524,20 @@ fn s19_second_daemon_on_same_data_dir_refuses_to_start() {
     );
 
     let output = daemon.try_start_second_instance(MEDIUM);
-    assert!(
-        !output.status.success(),
-        "a second pulpod on the same data dir must exit non-zero; stdout: {}\nstderr: {}",
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a second pulpod on the same data dir must exit 1 (the propagated lock-refusal \
+         error, not a coincidental failure like a port bind race); stdout: {}\nstderr: {stderr}",
         String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+    );
+    // Proves it was actually the single-instance lock that refused to start, not
+    // some other failure (e.g. a port bind race) that would also exit non-zero —
+    // see `store::lock::try_acquire`/`lib.rs::build_app`'s exact message.
+    assert!(
+        stderr.contains("another pulpod is running (pid"),
+        "expected the lock-refusal message in stderr, got: {stderr}"
     );
 
     // The first daemon's database must be untouched: still at the canonical path,

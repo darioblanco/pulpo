@@ -15,8 +15,14 @@
 //! sessionDir)`): this binary honors that by reopening the session file already on
 //! disk for the given id under this cwd if one exists, or creating a fresh one
 //! otherwise — the same fresh-spawn/resume distinction the adapter's `resume_command`
-//! relies on. `--session-id` combined with `-c`/`--continue`, `-r`/`--resume`,
-//! `--session`, or `--fork` exits 1, matching real pi's `validateSessionIdFlags`.
+//! relies on. `-c`/`--continue` without an explicit `--session-id` reopens the most
+//! recently modified session file in this cwd instead (real pi's own "most recent
+//! conversation here" semantics), falling back to minting a fresh one only when this
+//! cwd has no session yet. `--session-id` combined with `-c`/`--continue`,
+//! `-r`/`--resume`, or `--session` exits 1 unconditionally, matching real pi's
+//! `validateSessionIdFlags`; combined with `--fork` it exits 1 only when the given id
+//! already has a session on disk (`createSessionManager`'s "Session already exists
+//! with id '<id>'") — forking *into* a brand-new id is not rejected.
 //!
 //! Behavior is driven entirely by the comma-separated `FAKE_AGENT_SCENARIO` env var
 //! (or a `pulpo-fake-scenario.txt` file in the session's workdir), same vocabulary as
@@ -36,6 +42,7 @@ struct Args {
     session_id: Option<String>,
     ext_path: Option<String>,
     prompt: Option<String>,
+    print_flag: bool,
     model: Option<String>,
     continue_flag: bool,
     resume_flag: bool,
@@ -50,7 +57,12 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--session-id" => args.session_id = iter.next(),
             "-e" => args.ext_path = iter.next(),
-            "-p" | "--print" => args.prompt = iter.next(),
+            // Real pi's `-p`/`--print` is a boolean mode switch — the prompt itself
+            // is a separate positional argument, not this flag's value (see the
+            // module doc's flag table and `harness::pi`'s own `-p 'prompt'`
+            // examples). Consuming the next token here would swallow the prompt
+            // itself whenever it happens to come right after `-p`.
+            "-p" | "--print" => args.print_flag = true,
             "--model" => args.model = iter.next(),
             "-c" | "--continue" => args.continue_flag = true,
             "-r" | "--resume" => args.resume_flag = true,
@@ -167,6 +179,49 @@ fn find_or_create_session_file(dir: &Path, session_id: &str) -> (PathBuf, bool) 
     (dir.join(format!("{ts}{suffix}")), false)
 }
 
+/// Whether a session file for `session_id` already exists under `dir` — used to
+/// decide whether `--session-id <id> --fork` should be rejected (real pi's
+/// `createSessionManager` only rejects that combination when `<id>` already has a
+/// session on disk; forking *into* a brand-new id is fine).
+fn session_file_exists(dir: &Path, session_id: &str) -> bool {
+    let suffix = format!("_{session_id}.jsonl");
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
+}
+
+/// Find the most-recently-modified session file under `dir` (any id) — how real
+/// pi's `-c`/`--continue` resolves "the most recent session in this cwd" when no
+/// `--session-id` is given. Returns `(path, session_id)`, the id parsed back out of
+/// the filename's `_<id>.jsonl` suffix (same reasoning as
+/// [`find_or_create_session_file`]: the id can't be recomputed, only searched for).
+fn find_latest_session_file(dir: &Path) -> Option<(PathBuf, String)> {
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(t, _)| modified > *t) {
+                best = Some((modified, path));
+            }
+        }
+    }
+    let (_, path) = best?;
+    let id = {
+        let file_name = path.file_name()?.to_str()?;
+        let stem = file_name.strip_suffix(".jsonl")?;
+        stem.rsplit_once('_')?.1.to_owned()
+    };
+    Some((path, id))
+}
+
 /// Append one assistant message record — the shape
 /// `pulpod::usage::pi::parse_assistant_message` reads (`usage.input/output/
 /// cacheRead/cacheWrite`, `usage.cost.total`).
@@ -265,10 +320,15 @@ fn run_step(
     match step {
         "start" => {
             obj.insert("event".into(), json!("session_start"));
-            obj.insert(
-                "reason".into(),
-                json!(if resumed { "startup" } else { "new" }),
-            );
+            // Real pi's `reason` is `"startup"` on every fresh *process* start —
+            // whether that process is opening a brand-new session file or reopening
+            // one that already exists on disk — and only `"new"` for an in-session
+            // `/new` command, which this fake (a single process per scenario step
+            // run) never models. `harness::pi::parse_event` derives
+            // `resumed = reason != "new"`, so getting this wrong here would make
+            // every fresh spawn look like a resume from the daemon's point of view.
+            let _ = resumed; // tracked separately for this fake's own state.json, not this field
+            obj.insert("reason".into(), json!("startup"));
             obj.insert("previous_session_file".into(), Value::Null);
             report_event(pulpo_bin, "session_start", &payload);
         }
@@ -332,6 +392,7 @@ fn run_step(
 fn main() {
     let args = parse_args();
     let _ = args.prompt;
+    let _ = args.print_flag; // accepted, boolean-only — the prompt is the positional arg above
     let model = args
         .model
         .clone()
@@ -341,34 +402,59 @@ fn main() {
     write_env_dump(&cwd);
     write_argv_dump(&cwd);
 
-    // Mirrors pi's own `validateSessionIdFlags`/`createSessionManager` behavior
-    // (verified against 0.85.1 per `harness::pi`'s module doc): `--session-id`
-    // combined with any of these is a hard error, exit 1, nothing else runs.
-    if args.session_id.is_some()
-        && (args.continue_flag
-            || args.resume_flag
-            || args.session_flag.is_some()
-            || args.fork_flag.is_some())
-    {
-        eprintln!(
-            "[fake-pi] Error: --session-id cannot be combined with --continue/-c, --resume/-r, --session, or --fork"
-        );
-        std::process::exit(1);
-    }
-
-    let pulpo_bin = args.ext_path.as_deref().and_then(parse_pulpo_bin);
-
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     let sessions_root = Path::new(&home).join(".pi").join("agent").join("sessions");
     let cwd_str = cwd.to_string_lossy().into_owned();
     let session_dir = sessions_root.join(mangle_cwd(&cwd_str));
     let _ = std::fs::create_dir_all(&session_dir);
 
-    let session_id = args
-        .session_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let (session_file, existed) = find_or_create_session_file(&session_dir, &session_id);
+    // Mirrors pi's own `validateSessionIdFlags` (verified against 0.85.1 per
+    // `harness::pi`'s module doc): `--session-id` combined with `--session`/
+    // `--continue`/`-c`/`--resume`/`-r` is unconditionally a hard error, exit 1.
+    if args.session_id.is_some()
+        && (args.continue_flag || args.resume_flag || args.session_flag.is_some())
+    {
+        eprintln!(
+            "[fake-pi] Error: --session-id cannot be combined with --continue/-c, --resume/-r, or --session"
+        );
+        std::process::exit(1);
+    }
+    // `--fork` is different: `createSessionManager` only rejects `--session-id
+    // <id> --fork <x>` when `<id>` already has a session on disk ("Session already
+    // exists with id '<id>'") — forking *into* a brand-new id is fine.
+    if let Some(id) = &args.session_id
+        && args.fork_flag.is_some()
+        && session_file_exists(&session_dir, id)
+    {
+        eprintln!("[fake-pi] Error: Session already exists with id '{id}'");
+        std::process::exit(1);
+    }
+
+    let pulpo_bin = args.ext_path.as_deref().and_then(parse_pulpo_bin);
+
+    // `--session-id <id>` is idempotent create-or-open. `-c`/`--continue` without an
+    // explicit `--session-id` reopens the most recent session in this cwd instead of
+    // minting a fresh one (real pi's own "most recent conversation here" semantics —
+    // see `harness::pi::fallback_resume_command`'s doc comment) — falling back to a
+    // fresh session only when this cwd has never had one before. Anything else mints
+    // a brand-new id, same as a plain fresh spawn.
+    let (session_id, session_file, existed) = if let Some(id) = args.session_id.clone() {
+        let (path, existed) = find_or_create_session_file(&session_dir, &id);
+        (id, path, existed)
+    } else if args.continue_flag {
+        match find_latest_session_file(&session_dir) {
+            Some((path, id)) => (id, path, true),
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                let (path, existed) = find_or_create_session_file(&session_dir, &id);
+                (id, path, existed)
+            }
+        }
+    } else {
+        let id = uuid::Uuid::new_v4().to_string();
+        let (path, existed) = find_or_create_session_file(&session_dir, &id);
+        (id, path, existed)
+    };
     if !existed {
         let header = json!({
             "type": "session",

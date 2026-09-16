@@ -38,6 +38,7 @@ struct Args {
     settings_path: Option<String>,
     prompt: Option<String>,
     model: Option<String>,
+    continue_flag: bool,
 }
 
 fn parse_args() -> Args {
@@ -48,6 +49,7 @@ fn parse_args() -> Args {
             "--session-id" => args.session_id = iter.next(),
             "--settings" => args.settings_path = iter.next(),
             "--resume" => args.resume_id = iter.next(),
+            "-c" | "--continue" => args.continue_flag = true,
             "-p" | "--print" => args.prompt = iter.next(),
             "--model" => args.model = iter.next(),
             _ => {
@@ -368,7 +370,11 @@ fn main() {
     write_env_dump(&cwd);
     write_argv_dump(&cwd);
 
-    let resumed = args.resume_id.is_some();
+    // `--resume <id>` is the exact-id resume path; a bare `--continue`/`-c` (no id)
+    // is Claude Code's own "most recent conversation in this directory" fallback
+    // flag (`harness::claude::fallback_resume_command`) — both count as a resume for
+    // this fake's own state.json/hook `source` bookkeeping.
+    let resumed = args.resume_id.is_some() || args.continue_flag;
     let session_id = args
         .resume_id
         .or(args.session_id)
