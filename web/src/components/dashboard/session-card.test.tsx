@@ -125,6 +125,13 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-stop')).toBeDisabled();
   });
 
+  it('disables stop and resume dots for starting sessions and shows no intervention badge', () => {
+    renderCard(makeSession({ status: 'starting' }));
+    expect(screen.getByTestId('btn-stop')).toBeDisabled();
+    expect(screen.getByTestId('btn-resume')).toBeDisabled();
+    expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
+  });
+
   it('enables resume dot for lost sessions', () => {
     renderCard(makeSession({ status: 'lost' }));
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
@@ -615,9 +622,19 @@ describe('SessionCard', () => {
 
   it('truncates long commands', () => {
     renderCard(makeSession({ command: 'a'.repeat(60) }));
-    // The command text should be truncated with ...
-    const commandElements = screen.getAllByText(/a+\.\.\./);
+    // The command text should be truncated with an ellipsis marker
+    const commandElements = screen.getAllByText(/a+…/);
     expect(commandElements.length).toBeGreaterThan(0);
+  });
+
+  it('does not leave an unbalanced quote when truncating a quoted command', () => {
+    renderCard(makeSession({ command: `claude -p 'fix the very annoying bug in the parser'` }));
+    const commandElement = screen
+      .getAllByText(/…$/)
+      .find((el) => el.textContent?.includes('claude'));
+    expect(commandElement).toBeDefined();
+    const quoteCount = (commandElement!.textContent!.match(/'/g) ?? []).length;
+    expect(quoteCount % 2).toBe(0);
   });
 
   it('shows description in subtitle when available', () => {

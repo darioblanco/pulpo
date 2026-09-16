@@ -173,6 +173,7 @@ export async function downloadSessionOutput(id: string): Promise<Blob> {
  * `~/.pulpo/config.toml` and restart pulpod to change anything. */
 export async function getConfig(): Promise<ConfigResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/config`);
+  if (!res.ok) throw await apiError(res, 'Failed to load config');
   return res.json();
 }
 
