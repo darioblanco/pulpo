@@ -1728,3 +1728,238 @@ fn s18_watchdog_resolves_dead_backend_eagerly_and_preserves_final_output() {
          log fallback, got: {logs}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// S20 — dead-session detection is independent of idle-timeout detection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s20_dead_session_detected_even_with_idle_timeout_disabled() {
+    // Review-round follow-up on PR #129/#118: the eager `is_alive()`
+    // dead-backend sweep used to live entirely inside `check_idle_sessions`,
+    // itself skipped whenever `cfg.idle.enabled` is false
+    // (`idle_timeout_secs == 0`) — so an operator disabling the idle-timeout
+    // ALERT/KILL breaker silently also disabled basic dead-backend detection.
+    // `idle_timeout_secs = 0` here must still let a generic command's death
+    // be noticed and reported (a `lifecycle.done` webhook, `pulpo logs`
+    // preserving the final line) exactly like S18 already proves it does
+    // when idle detection is enabled — this is the same scenario with idle
+    // detection turned off instead.
+    let webhook = WebhookSink::start();
+    let daemon = Daemon::start(DaemonConfig {
+        idle_timeout_secs: 0,
+        webhook_url: Some(webhook.url()),
+        ..DaemonConfig::default()
+    });
+    let (_dir, workdir) = temp_workdir();
+
+    let output = daemon.spawn(
+        "s20-dead-idle-disabled",
+        &workdir,
+        &[],
+        &["sh", "-c", "sleep 1; echo s20-final-output-marker; exit 5"],
+    );
+    assert!(output.status.success());
+
+    // No `daemon.session(...)`/`wait_status`/`wait_for` above this line, same
+    // as S18 — the webhook delivery is the only thing this test waits on to
+    // learn the session finished, so the eager sweep (not the lazy
+    // get_session/list_sessions path) is what's actually being exercised.
+    let delivered = webhook.wait_for_matching(MEDIUM, |event| {
+        event["type"] == "lifecycle"
+            && event["subtype"] == "done"
+            && event["session"]["name"] == "s20-dead-idle-disabled"
+    });
+    assert_eq!(delivered["session"]["exit_code"], serde_json::json!(5));
+    assert_eq!(delivered["session"]["status"], serde_json::json!("done"));
+
+    let session = daemon
+        .session("s20-dead-idle-disabled")
+        .expect("session should exist");
+    assert_eq!(session.status, SessionStatus::Done);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    assert_eq!(session.exit_code, Some(5));
+
+    let logs_output = daemon.pulpo(&["logs", "s20-dead-idle-disabled"]);
+    assert!(logs_output.status.success());
+    let logs = String::from_utf8_lossy(&logs_output.stdout);
+    assert!(
+        logs.contains("s20-final-output-marker"),
+        "expected the session's final printed line to survive via the pipe-pane \
+         log fallback even with idle detection disabled, got: {logs}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S21 — a `lost` session's shared worktree survives a sibling's watchdog
+// intervention
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s21_lost_sessions_shared_worktree_survives_siblings_idle_timeout_intervention() {
+    // #109 follow-up: `find_live_sessions_by_worktree` used to exclude `lost`
+    // sessions from its "still referenced" check, so a lost (still-resumable)
+    // session's shared worktree could be deleted out from under it by a
+    // watchdog intervention on a `pulpo handoff` sibling — its resume would
+    // then silently fall back to the plain workdir with the branch gone.
+    //
+    // Triggered here via the idle-timeout breaker rather than the budget
+    // breaker: both share the exact same worktree-cleanup path
+    // (`watchdog::intervention::stop_and_record`), and idle-timeout doesn't
+    // depend on reading any exact-usage transcript at all. Pairing a real
+    // Claude-shaped transcript's exact-usage lookup (what the budget breaker
+    // needs) with a `--worktree` session hits a pre-existing e2e-harness
+    // limitation unrelated to the fix under test here: `Daemon`'s own
+    // `data_dir` (which worktree paths are created under) isn't canonicalized
+    // the way `temp_workdir()` is, so on macOS the worktree path stored in the
+    // DB and the real, symlink-resolved cwd a spawned process reports for
+    // itself disagree — and the fake harness's own project-directory naming
+    // for its transcript depends on that cwd matching exactly.
+    let daemon = Daemon::start(DaemonConfig {
+        idle_threshold_secs: 1,
+        idle_timeout_secs: 2,
+        idle_action: "kill",
+        check_interval_secs: 1,
+        ..DaemonConfig::default()
+    });
+    let (_repo_dir, repo_path) = temp_workdir();
+    init_git_repo(&repo_path);
+
+    // The source session gets its own worktree, then is orphaned into `lost`
+    // by killing the whole private tmux server out from under it — the only
+    // session on it at this point, so nothing else is affected.
+    let out = daemon.spawn("s21-source", &repo_path, &["--worktree"], &["sleep", "300"]);
+    assert!(
+        out.status.success(),
+        "pulpo spawn failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let source = daemon.wait_for("s21-source", SHORT, |s| s.worktree_path.is_some());
+    let worktree_path = source.worktree_path.clone().expect("worktree path");
+    assert!(std::path::Path::new(&worktree_path).exists());
+
+    daemon.kill_tmux_server();
+    daemon.wait_status("s21-source", SessionStatus::Lost, MEDIUM);
+    assert!(
+        std::path::Path::new(&worktree_path).exists(),
+        "the worktree must still exist right after the source session is lost"
+    );
+
+    // Hand off from the now-lost source to a sibling that adopts the exact
+    // same worktree (tmux auto-respawns a fresh private server for the new
+    // session's backend) — a generic command producing no output at all, so
+    // it idles (and is killed) as fast as the configured thresholds allow.
+    let handoff_out = daemon.pulpo(&[
+        "handoff",
+        "s21-source",
+        "s21-sibling",
+        "-d",
+        "--",
+        "sleep",
+        "300",
+    ]);
+    assert!(
+        handoff_out.status.success(),
+        "pulpo handoff failed: {}",
+        String::from_utf8_lossy(&handoff_out.stderr)
+    );
+
+    let sibling = daemon.wait_for("s21-sibling", SHORT, |s| s.worktree_path.is_some());
+    assert_eq!(
+        sibling.worktree_path.as_deref(),
+        Some(worktree_path.as_str()),
+        "the handoff sibling must adopt the source's exact worktree path"
+    );
+
+    // The sibling gets idle-timeout-intervened (killed) — the shared worktree
+    // must survive because the source, though lost, is still resumable and
+    // still references it.
+    let sibling_after = daemon.wait_status("s21-sibling", SessionStatus::Done, LONG);
+    assert_eq!(
+        sibling_after.intervention_code,
+        Some(InterventionCode::IdleTimeout)
+    );
+    assert_eq!(sibling_after.status_reason.as_deref(), Some("idle_timeout"));
+    assert!(
+        std::path::Path::new(&worktree_path).exists(),
+        "a lost sibling's shared worktree must survive an idle-timeout \
+         intervention on the other session sharing it"
+    );
+
+    // The lost source session's own record is unaffected by its sibling's
+    // intervention.
+    let source_after = daemon
+        .session("s21-source")
+        .expect("source session should still exist");
+    assert_eq!(source_after.status, SessionStatus::Lost);
+    assert_eq!(
+        source_after.worktree_path.as_deref(),
+        Some(worktree_path.as_str())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// S22 — resume of a `done` fake-claude session truncates the stale
+// pipe-pane log before the new run
+// ---------------------------------------------------------------------------
+
+#[test]
+fn s22_resume_truncates_stale_pipe_pane_log_before_the_new_run() {
+    // #129 follow-up: `recreate_backend_session` used to skip `setup_logging`
+    // on resume entirely, and never truncated the stale `logs/<id>.log` left
+    // over from the session's previous run — `tmux pipe-pane -o 'cat >>
+    // path'` appends, so a resumed session's next exit would report a mix of
+    // this run's output and whatever the previous run left behind.
+    let daemon = Daemon::start(DaemonConfig::default());
+    let (_dir, workdir) = temp_workdir();
+    set_scenario(&workdir, "start,prompt,exit");
+    let claude = daemon.fake_claude_bin();
+    let claude_str = claude.to_string_lossy().into_owned();
+
+    let output = daemon.spawn("s22-resume-log", &workdir, &[], &[&claude_str, "-p", "hi"]);
+    assert!(output.status.success());
+
+    let session = daemon.wait_status("s22-resume-log", SessionStatus::Done, SHORT);
+    assert_eq!(session.status_reason.as_deref(), Some("exited"));
+    let harness_session_id = session
+        .harness_session_id
+        .clone()
+        .expect("harness session id should be known");
+
+    // fake-claude never prints anything to its own stdout, so the pipe-pane
+    // log this first run actually left behind is empty — seed a distinctive
+    // marker directly, standing in for whatever a real Claude Code process's
+    // own terminal chatter would have left there, to make the truncation
+    // observable.
+    let log_path = daemon
+        .data_dir
+        .join("logs")
+        .join(format!("{}.log", session.id));
+    std::fs::write(&log_path, "STALE_FIRST_RUN_OUTPUT\n").expect("seed stale log");
+    assert!(
+        std::fs::read_to_string(&log_path)
+            .unwrap()
+            .contains("STALE_FIRST_RUN_OUTPUT")
+    );
+
+    set_scenario(&workdir, "start,hang");
+    daemon.resume("s22-resume-log");
+
+    // `recreate_backend_session` truncates the stale log synchronously as
+    // part of `resume_session`'s own execution, before the CLI call above
+    // even returns — no polling needed for this part.
+    let contents_immediately_after_resume = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(
+        !contents_immediately_after_resume.contains("STALE_FIRST_RUN_OUTPUT"),
+        "the previous run's tail must not survive a resume, before the new \
+         run's own pipe-pane ever attaches: {contents_immediately_after_resume:?}"
+    );
+
+    let resumed = daemon.wait_status("s22-resume-log", SessionStatus::Working, SHORT);
+    assert_eq!(
+        resumed.harness_session_id.as_deref(),
+        Some(harness_session_id.as_str()),
+        "resume must reach the fake as `claude --resume <id>`, continuing the \
+         same conversation"
+    );
+}
