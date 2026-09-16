@@ -113,6 +113,9 @@ export interface WatchdogConfigResponse {
 
 export interface WebhookEndpointConfigResponse {
   name: string;
+  /** Masked server-side: scheme + host + first path segment only (e.g.
+   * `https://hooks.slack.com/services/***`) — the delivery secret Slack/Discord/etc.
+   * embed in the rest of the URL is never sent to this endpoint. */
   url: string;
   events: string[];
   min_severity?: string | null;
