@@ -55,6 +55,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Config
 toml = "0.8"
+# Format-preserving TOML edits (splicing a single key into an existing config
+# file without dropping comments/unknown keys/formatting — see
+# `pulpod::config::bootstrap_token`).
+toml_edit = "0.22"
 
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }

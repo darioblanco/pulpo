@@ -389,6 +389,63 @@ pub fn save(config: &Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Persist a freshly auto-generated auth token into the config file at `path`,
+/// preserving the file's existing text — comments, unknown keys, formatting —
+/// exactly except for the spliced-in `auth.token` value.
+///
+/// When `path` doesn't exist yet (a brand-new install with no config file at
+/// all), there is no existing text to preserve, so this falls back to the
+/// ordinary full-struct [`save`] — it still needs to create *some* file.
+/// Otherwise the existing file's raw text is parsed with `toml_edit` (a
+/// format-preserving TOML editor, unlike `toml`'s round-trip through a
+/// `Config` struct — which drops comments, unknown keys, and any
+/// non-canonical formatting, contradicting the documented "unknown keys stay
+/// in the file" contract) and only `auth.token` is set/spliced in; the result
+/// is written to a temp file in the same directory and renamed over the
+/// original, so a crash mid-write never leaves a corrupt config file.
+pub fn bootstrap_token(config: &Config, path: &Path) -> Result<()> {
+    if !path.exists() {
+        return save(config, path);
+    }
+
+    let existing = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config from {}", path.display()))?;
+    let mut doc = existing
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("Failed to parse config at {} for token bootstrap", path.display()))?;
+
+    let root = doc.as_table_mut();
+    if !root.contains_key("auth") {
+        root.insert("auth", toml_edit::table());
+    }
+    let auth_table = root
+        .get_mut("auth")
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "config's [auth] entry in {} is not a table — refusing to overwrite it",
+                path.display()
+            )
+        })?;
+    auth_table.insert("token", toml_edit::value(config.auth.token.as_str()));
+
+    let parent = path
+        .parent()
+        .with_context(|| format!("No parent directory for {}", path.display()))?;
+    let tmp_name = format!(
+        ".{}.tmp",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config.toml")
+    );
+    let tmp_path = parent.join(tmp_name);
+    std::fs::write(&tmp_path, doc.to_string())
+        .with_context(|| format!("Failed to write config to {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path)
+        .with_context(|| format!("Failed to persist config to {}", path.display()))?;
+    Ok(())
+}
+
 /// Table paths (dot-joined from the config root) whose *keys* are user-defined
 /// names rather than a fixed struct's field set — currently only the
 /// `[rates.<model>]` map. Every entry under such a path is accepted by name
@@ -469,10 +526,19 @@ fn strip_unknown_keys(
             let freeform_schema = schema_table.values().next();
             let mut cleaned = toml::Table::new();
             for (key, value) in actual_table {
-                let child_path = if path.is_empty() {
-                    key.clone()
+                // A free-form key (a `[rates.<model>]` model id) can itself
+                // contain a `.` (e.g. `claude-3.5`) — quote it so the dotted
+                // warning path stays unambiguous about which `.` separates
+                // path segments versus which is part of the key itself.
+                let key_segment = if key.contains('.') {
+                    format!("\"{key}\"")
                 } else {
-                    format!("{path}.{key}")
+                    key.clone()
+                };
+                let child_path = if path.is_empty() {
+                    key_segment
+                } else {
+                    format!("{path}.{key_segment}")
                 };
                 let sub_schema = if freeform {
                     freeform_schema
@@ -523,7 +589,7 @@ fn strip_unknown_keys(
 fn parse_config(content: &str) -> Result<(Config, Vec<String>)> {
     let parsed: toml::Value = toml::from_str(content).context("Failed to parse config")?;
     let schema = toml::Value::try_from(schema_config())
-        .expect("a fully-populated Config always serializes to a toml::Value");
+        .context("failed to build the config schema shape from a fully-populated Config")?;
     let mut warnings = Vec::new();
     let cleaned = strip_unknown_keys(&parsed, &schema, "", &mut warnings);
     warnings.sort();
@@ -531,7 +597,20 @@ fn parse_config(content: &str) -> Result<(Config, Vec<String>)> {
     Ok((config, warnings))
 }
 
-pub fn load(path: &str) -> Result<Config> {
+/// Load the config at `path`, returning the dropped-unknown-keys warning list
+/// alongside it instead of logging it internally.
+///
+/// `load()` (below) logs these itself via `warn!` for every caller that
+/// doesn't care about the list directly — but `main.rs` calls `load()` once,
+/// *before* `init_tracing` runs, just to read `data_dir` for the tracing
+/// setup; any `warn!` from that first call is silently dropped (no subscriber
+/// is installed yet). `build_app`'s own subsequent `config::load` call used to
+/// be the only thing that made the warning visible at all — entirely by
+/// accident of call order, not because anything guaranteed a warning-capable
+/// load always happens after tracing starts. `build_app` now calls this
+/// function directly and logs the returned warnings itself, right after
+/// tracing is confirmed to be up, rather than depending on that coincidence.
+pub fn load_with_warnings(path: &str) -> Result<(Config, Vec<String>)> {
     let expanded = shellexpand::tilde(path);
     let path = std::path::Path::new(expanded.as_ref());
 
@@ -539,15 +618,20 @@ pub fn load(path: &str) -> Result<Config> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
         let (config, warnings) = parse_config(&content)?;
-        for unknown_key in &warnings {
-            warn!("config: unknown key '{unknown_key}' ignored");
-        }
         config.watchdog.validate()?;
-        Ok(config)
+        Ok((config, warnings))
     } else {
         // Return defaults if no config file exists
-        Ok(Config::default())
+        Ok((Config::default(), Vec::new()))
     }
+}
+
+pub fn load(path: &str) -> Result<Config> {
+    let (config, warnings) = load_with_warnings(path)?;
+    for unknown_key in &warnings {
+        warn!("config: unknown key '{unknown_key}' ignored");
+    }
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -1030,6 +1114,186 @@ token = "my-secret-token"
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.auth.token, "roundtrip-token");
         assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Public);
+    }
+
+    // --- bootstrap_token: format-preserving auth.token splice ---
+
+    #[test]
+    fn test_bootstrap_token_creates_file_when_missing() {
+        // No existing file — nothing to preserve, falls back to the ordinary
+        // full-struct `save`.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "fresh".into(),
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig {
+                token: "brand-new-token".into(),
+            },
+            ..Default::default()
+        };
+
+        bootstrap_token(&config, &path).unwrap();
+
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.auth.token, "brand-new-token");
+    }
+
+    #[test]
+    fn test_bootstrap_token_preserves_comment_and_unknown_key() {
+        // The core contract this exists for: a hand-edited file with a
+        // comment and a (retired/typo'd) unknown key must keep BOTH after the
+        // token is spliced in — the old `save()`-based bootstrap re-serialized
+        // the whole struct and silently dropped both.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"# my hand-written pulpo config
+[node]
+name = "my-server"
+port = 7433
+
+[unknown_section]
+some_field = "value"
+"#,
+        )
+        .unwrap();
+
+        let config = Config {
+            node: NodeConfig {
+                name: "my-server".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig {
+                token: "spliced-token".into(),
+            },
+            ..Default::default()
+        };
+
+        bootstrap_token(&config, &path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("# my hand-written pulpo config"),
+            "comment must survive: {content}"
+        );
+        assert!(
+            content.contains("[unknown_section]") && content.contains("some_field"),
+            "unknown section must survive: {content}"
+        );
+        assert!(
+            content.contains("spliced-token"),
+            "token must be spliced in: {content}"
+        );
+
+        // And it's still valid, loadable config with the token in place.
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.auth.token, "spliced-token");
+        assert_eq!(loaded.node.name, "my-server");
+    }
+
+    #[test]
+    fn test_bootstrap_token_creates_auth_table_when_absent() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "no-auth-yet"
+"#,
+        )
+        .unwrap();
+
+        let config = Config {
+            node: NodeConfig {
+                name: "no-auth-yet".into(),
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig {
+                token: "first-token".into(),
+            },
+            ..Default::default()
+        };
+
+        bootstrap_token(&config, &path).unwrap();
+
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.auth.token, "first-token");
+    }
+
+    #[test]
+    fn test_bootstrap_token_overwrites_existing_token() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "has-old-token"
+
+[auth]
+token = "old-token"
+"#,
+        )
+        .unwrap();
+
+        let config = Config {
+            node: NodeConfig {
+                name: "has-old-token".into(),
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig {
+                token: "new-token".into(),
+            },
+            ..Default::default()
+        };
+
+        bootstrap_token(&config, &path).unwrap();
+
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.auth.token, "new-token");
+    }
+
+    #[test]
+    fn test_bootstrap_token_rejects_non_table_auth_value() {
+        // A pathological hand-edited file where `auth` is some other TOML
+        // type entirely — must refuse rather than silently clobber it.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+auth = "not a table"
+
+[node]
+name = "weird"
+"#,
+        )
+        .unwrap();
+
+        let config = Config {
+            node: NodeConfig {
+                name: "weird".into(),
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig {
+                token: "irrelevant".into(),
+            },
+            ..Default::default()
+        };
+
+        let err = bootstrap_token(&config, &path).unwrap_err();
+        assert!(err.to_string().contains("not a table"), "{err}");
     }
 
     #[test]
@@ -1960,6 +2224,108 @@ url = "https://example.com/legacy"
         assert_eq!(config.webhooks.len(), 1);
         assert_eq!(config.notifications.webhooks.len(), 1);
         assert_eq!(config.rates["claude-opus-4-9"].output, 25.0);
+    }
+
+    #[test]
+    fn test_parse_config_quotes_dotted_key_in_warning_path() {
+        // A free-form `[rates.<model>]` key can itself contain a `.` (a real
+        // model id, e.g. "claude-3.5") — the reported warning path must quote
+        // it so it's unambiguous which `.` separates path segments.
+        let (_config, warnings) = parse_config(
+            r#"
+[node]
+name = "test"
+
+[rates."claude-3.5"]
+input = 5.0
+output = 25.0
+markup_percent = 10
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            warnings,
+            vec![r#"rates."claude-3.5".markup_percent"#.to_string()]
+        );
+    }
+
+    #[test]
+    fn test_load_with_warnings_returns_them_instead_of_logging() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+adopt_tmux = true
+"#
+        )
+        .unwrap();
+
+        let (config, warnings) = load_with_warnings(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.node.name, "test-node");
+        assert_eq!(warnings, vec!["watchdog.adopt_tmux".to_string()]);
+    }
+
+    #[test]
+    fn test_load_with_warnings_missing_file_returns_defaults_and_no_warnings() {
+        let (config, warnings) = load_with_warnings("/nonexistent/path/config.toml").unwrap();
+        assert_eq!(config.node.port, 7433);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_load_still_warns_via_load_with_warnings() {
+        // `load()` itself must still surface the same warnings (via `warn!`)
+        // for every existing caller that doesn't care about the list directly
+        // — this doesn't assert on log output, just that `load` and
+        // `load_with_warnings` agree on the resulting `Config`.
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+adopt_tmux = true
+"#
+        )
+        .unwrap();
+
+        let via_load = load(tmpfile.path().to_str().unwrap()).unwrap();
+        let (via_load_with_warnings, _) =
+            load_with_warnings(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(via_load.node.name, via_load_with_warnings.node.name);
+    }
+
+    /// Every `Option<T>` field inside [`schema_config`]'s tree must be
+    /// populated with `Some(..)`, never left `None` — the `toml` crate's
+    /// serializer treats `None` as "omit this key entirely" (rather than a
+    /// TOML null, which doesn't exist), so a `None` here would silently
+    /// remove that key from the unknown-key schema tree: any real config file
+    /// setting it would then be flagged and stripped as "unknown" and quietly
+    /// replaced with its default, rather than validated. Whenever a new
+    /// `Option<T>` field is added to `Config` (or anything nested inside it),
+    /// `schema_config` must populate it with `Some(..)` too, and this test
+    /// updated to check it.
+    #[test]
+    fn test_schema_config_has_no_none_option_fields() {
+        let schema = schema_config();
+        assert!(
+            schema.node.default_command.is_some(),
+            "node.default_command must be Some(..) in schema_config()"
+        );
+        assert!(
+            schema.webhooks[0].min_severity.is_some(),
+            "webhooks[].min_severity must be Some(..) in schema_config()"
+        );
+        assert!(
+            schema.notifications.webhooks[0].min_severity.is_some(),
+            "notifications.webhooks[].min_severity must be Some(..) in schema_config()"
+        );
     }
 
     #[test]
