@@ -397,11 +397,20 @@ mod tests {
     #[test]
     fn test_candidate_log_paths_uses_real_brew_log_path() {
         let home = tempfile::tempdir().unwrap();
-        // Just exercises the real (non-parameterized) entrypoint — its result
-        // depends on the machine running the test, so only check it doesn't
-        // panic and behaves consistently with the parameterized version.
+        // `candidate_log_paths` is documented as exactly
+        // `candidate_log_paths_with_brew_log` pinned to the real, fixed Homebrew
+        // service log path (`/opt/homebrew/var/log/pulpo.log`) — assert that
+        // delegation directly, rather than a `len() <= 2` bound every possible
+        // result (0, 1, or 2 candidates) trivially satisfies regardless of whether
+        // the real entrypoint is wired to the right path at all. Both calls read
+        // the same fixed path at effectively the same instant, so this stays exact
+        // regardless of whether the test machine actually has that Homebrew log.
         let candidates = candidate_log_paths(home.path());
-        assert!(candidates.len() <= 2);
+        let expected = candidate_log_paths_with_brew_log(
+            home.path(),
+            Path::new("/opt/homebrew/var/log/pulpo.log"),
+        );
+        assert_eq!(candidates, expected);
     }
 
     #[test]
