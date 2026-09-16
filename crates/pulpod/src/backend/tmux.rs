@@ -826,18 +826,34 @@ mod tests {
     // PATH inheritance, tmux server crashes). Excluded from coverage
     // because they require a real tmux installation.
 
-    /// Helper: create a tmux session, wait for the command to produce output,
-    /// capture it, and kill the session. Returns the captured output.
+    /// A throwaway `-L pulpo-test-<uuid>` socket name, unique per call — isolates
+    /// a real-tmux test from the developer's own default tmux server (and from
+    /// every other test using this helper) instead of creating fixed-name
+    /// sessions there. Mirrors `test_tmux_session_wrapped_command_writes_exit_code_marker`'s
+    /// own isolated-socket pattern.
+    #[cfg(not(coverage))]
+    fn throwaway_socket() -> String {
+        format!("pulpo-test-{}", &uuid::Uuid::new_v4().to_string()[..8])
+    }
+
+    /// Helper: create a tmux session on an isolated throwaway socket, wait for
+    /// the command to produce output, capture it, and tear the whole throwaway
+    /// server down. Returns the captured output.
     #[cfg(not(coverage))]
     fn tmux_run_and_capture(session_name: &str, command: &str, user_path: Option<&str>) -> String {
         let tmux = resolve_tmux_path();
-
-        // Kill any leftover session with this name (best-effort)
-        let _ = run_tmux(build_kill_command(&tmux, None, session_name), "cleanup");
+        let socket = throwaway_socket();
 
         // Create the session
         run_tmux(
-            build_create_command(&tmux, None, session_name, "/tmp", command, user_path),
+            build_create_command(
+                &tmux,
+                Some(&socket),
+                session_name,
+                "/tmp",
+                command,
+                user_path,
+            ),
             "create test session",
         )
         .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
@@ -847,7 +863,7 @@ mod tests {
         for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             if let Ok(o) = run_tmux(
-                build_capture_command(&tmux, None, session_name, 50),
+                build_capture_command(&tmux, Some(&socket), session_name, 50),
                 "capture output",
             ) {
                 output = String::from_utf8_lossy(&o.stdout).trim().to_owned();
@@ -857,8 +873,11 @@ mod tests {
             }
         }
 
-        // Kill the session
-        let _ = run_tmux(build_kill_command(&tmux, None, session_name), "cleanup");
+        // Tear down the whole throwaway server (there's only ever this one
+        // session on it) rather than just killing the session.
+        let _ = std::process::Command::new(&tmux)
+            .args(["-L", &socket, "kill-server"])
+            .output();
 
         output
     }

@@ -267,6 +267,31 @@ pub trait HarnessAdapter: Send + Sync {
         true
     }
 
+    /// Whether this adapter's own exact
+    /// [`resume_command`](HarnessAdapter::resume_command) — resuming a
+    /// previously-learned `harness_session_id`, not the fallback — is itself
+    /// scoped to the *directory it runs from*, the same shape
+    /// [`fallback_resume_is_cwd_scoped`](HarnessAdapter::fallback_resume_is_cwd_scoped)
+    /// describes for the fallback path.
+    ///
+    /// `false` for every adapter by default: Claude's `--resume <id>` and Codex's
+    /// `resume <id>` are both keyed globally by id regardless of the current
+    /// working directory, so an exact resume is safe to run from a substituted
+    /// workdir even when the session's original worktree is gone. pi overrides
+    /// this to `true` — pi's own `--session-id <id>` is documented (see `pi.rs`'s
+    /// module doc) as idempotent create-or-open *scoped to `(cwd, sessionDir)`*:
+    /// running it from a different directory than the harness's original
+    /// conversation silently opens (or creates) a *different*, unrelated session
+    /// at that id instead of erroring.
+    ///
+    /// `session::manager::resolve_resume_command` applies the same worktree-gone
+    /// refusal to the exact-resume path this describes as
+    /// [`fallback_resume_is_cwd_scoped`](HarnessAdapter::fallback_resume_is_cwd_scoped)
+    /// already applies to the fallback path.
+    fn resume_is_cwd_scoped(&self) -> bool {
+        false
+    }
+
     /// Translate a raw hook payload (as posted by `pulpo hook <harness>`) into a
     /// normalized event. Returns `Ok(None)` for events pulpo does not care about.
     fn parse_event(&self, raw: &serde_json::Value) -> Result<Option<HarnessEvent>>;
@@ -486,6 +511,18 @@ mod tests {
         assert!(generic::GenericAdapter.fallback_resume_is_cwd_scoped());
         assert!(claude::ClaudeAdapter.fallback_resume_is_cwd_scoped());
         assert!(pi::PiAdapter.fallback_resume_is_cwd_scoped());
+    }
+
+    #[test]
+    fn test_resume_is_cwd_scoped_false_by_default_except_pi() {
+        // Claude's `--resume <id>` and Codex's `resume <id>` are both keyed
+        // globally by id, so the conservative "assume cwd-scoped" stance that
+        // fallback resume takes does NOT apply here — only pi's exact
+        // `--session-id <id>` is itself scoped to `(cwd, sessionDir)`.
+        assert!(!generic::GenericAdapter.resume_is_cwd_scoped());
+        assert!(!claude::ClaudeAdapter.resume_is_cwd_scoped());
+        assert!(!codex::CodexAdapter.resume_is_cwd_scoped());
+        assert!(pi::PiAdapter.resume_is_cwd_scoped());
     }
 
     #[test]

@@ -9,7 +9,16 @@ async fn main() -> anyhow::Result<()> {
     let config = pulpod::config::load(&cli.config)?;
     let data_dir = std::path::PathBuf::from(config.data_dir());
     let _log_guard = pulpod::init_tracing(Some(&data_dir), config.node.log_retain_days)?;
-    let (app, addr, shutdown_handle) = pulpod::build_app(&cli).await?;
+    let (app, addr, mut shutdown_handle) = pulpod::build_app(&cli).await?;
+    // Held here, in `main`'s own scope, for the rest of this function — NOT
+    // inside `shutdown_handle`, which moves into `shutdown_signal` below and
+    // returns (dropping whatever it owns) as soon as the shutdown signal
+    // fires, well before the `tokio::select!` below finishes giving in-flight
+    // streaming connections their grace period. Releasing the single-instance
+    // lock that early would let a second `pulpod` start against the same data
+    // directory while this one is still shutting down. See `ShutdownHandle`'s
+    // own doc comment on `pulpod_lock`.
+    let _pulpod_lock = shutdown_handle.take_lock();
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
     // After the shutdown signal fires, give in-flight streaming

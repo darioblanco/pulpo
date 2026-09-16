@@ -1763,6 +1763,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
  "toml",
+ "toml_edit",
  "tower",
  "tower-http",
  "tracing",

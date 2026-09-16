@@ -121,17 +121,17 @@ async fn test_migrate_uses_sqlx_migrations_table() {
 /// directory with `0008_drop_secrets.sql` excluded. Same migration file
 /// content as the embedded `MIGRATOR`, so checksums line up when `migrate()`
 /// (which uses the real, full `MIGRATOR`) is run afterwards.
-async fn store_at_migration_0007() -> Store {
+async fn store_missing_migration_0008() -> Store {
     let tmpdir = tempfile::tempdir().unwrap();
     let tmpdir = Box::leak(Box::new(tmpdir));
-    store_at_migration_0007_in(tmpdir.path().to_str().unwrap()).await
+    store_missing_migration_0008_in(tmpdir.path().to_str().unwrap()).await
 }
 
-/// Like [`store_at_migration_0007`], but against a caller-owned `dir` (the
+/// Like [`store_missing_migration_0008`], but against a caller-owned `dir` (the
 /// canonical `state.db` path) instead of a freshly leaked tempdir — for tests
 /// that need to inspect or manipulate the directory afterward (e.g. forcing
 /// the pre-migration backup copy to fail).
-async fn store_at_migration_0007_in(dir: &str) -> Store {
+async fn store_missing_migration_0008_in(dir: &str) -> Store {
     let store = Store::new(dir).await.unwrap();
 
     let migrations_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
@@ -156,7 +156,7 @@ async fn store_at_migration_0007_in(dir: &str) -> Store {
 
 #[tokio::test]
 async fn test_migrate_warns_before_dropping_secrets() {
-    let store = store_at_migration_0007().await;
+    let store = store_missing_migration_0008().await;
 
     sqlx::query("INSERT INTO secrets (name, value, created_at) VALUES (?, ?, ?)")
         .bind("token-a")
@@ -190,13 +190,40 @@ async fn test_migrate_warns_before_dropping_secrets() {
     .await
     .unwrap();
     assert_eq!(has_secrets_table, 0);
+
+    // The warning points the operator at a pre-migration backup that still has
+    // the secrets intact (`state.db.pre-m<highest-applied>`) — assert that
+    // exact path actually exists, so the warning's claim is true.
+    // `store_missing_migration_0008_in` skips *only* migration 0008 (applying
+    // 1-7, 9, and 10) — so the highest applied version at warning time is 10,
+    // not 7.
+    let backup_path = format!("{}/state.db.pre-m10", store.data_dir());
+    assert!(
+        std::path::Path::new(&backup_path).exists(),
+        "expected the warning's claimed backup path to exist: {backup_path}"
+    );
+    let backup_secret_count: i64 = {
+        let mut conn = SqliteConnectOptions::new()
+            .filename(&backup_path)
+            .connect()
+            .await
+            .unwrap();
+        sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        backup_secret_count, 2,
+        "the pre-migration backup must still have the secrets the live database just dropped"
+    );
 }
 
 #[tokio::test]
 async fn test_migrate_warns_before_dropping_secrets_noop_when_empty() {
     // No rows in `secrets` (or no table at all, on a fresh DB) — migrate() must
     // still succeed with no warning path exercised beyond the early return.
-    let store = store_at_migration_0007().await;
+    let store = store_missing_migration_0008().await;
 
     let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
         .fetch_one(store.pool())
@@ -209,7 +236,7 @@ async fn test_migrate_warns_before_dropping_secrets_noop_when_empty() {
 
 /// Build a database at the pre-0009 schema (migrations 1-8 applied,
 /// `push_subscriptions`/`webhook_outbox` intact) the same way
-/// [`store_at_migration_0007`] builds a pre-0008 one.
+/// [`store_missing_migration_0008`] builds a pre-0008 one.
 async fn store_at_migration_0008() -> Store {
     let tmpdir = tempfile::tempdir().unwrap();
     let tmpdir = Box::leak(Box::new(tmpdir));
@@ -522,7 +549,7 @@ async fn test_migrate_is_idempotent() {
 async fn test_migrate_backs_up_before_running_pending_migrations() {
     // Named after the highest migration already applied rather than
     // `CARGO_PKG_VERSION` — see `Store::backup_before_migrating`'s doc comment for
-    // why. `store_at_migration_0009` (unlike `store_at_migration_0007`, which
+    // why. `store_at_migration_0009` (unlike `store_missing_migration_0008`, which
     // skips only the single `0008` file and so still applies every migration
     // *after* it, landing on whatever the newest migration happens to be) excludes
     // `0010` and everything would-be-after it, so it reliably leaves the highest
@@ -637,7 +664,7 @@ async fn test_open_and_migrate_refuses_without_quarantine_when_backup_fails() {
     let dir = tmpdir.path().to_str().unwrap();
     // A database with at least one pending migration (the fixture applies every
     // migration except 0008) so `migrate()` attempts a pre-migration backup.
-    let fixture = store_at_migration_0007_in(dir).await;
+    let fixture = store_missing_migration_0008_in(dir).await;
 
     // Backups are named after the highest *applied* migration
     // (`backup_before_migrating`). Read that version from the fixture rather than
@@ -948,6 +975,30 @@ async fn test_find_live_sessions_by_worktree_excludes_dead_sessions() {
         others.is_empty(),
         "a stopped session must not count as in-use"
     );
+}
+
+#[tokio::test]
+async fn test_find_live_sessions_by_worktree_includes_lost_sessions() {
+    // A `lost` session is still resumable (`pulpo resume`) — its shared
+    // worktree must survive an intervention/purge on a sibling exactly as if
+    // it were still `starting`/`working`/`waiting`, or resuming it later
+    // silently falls back to the plain `workdir` with its branch gone.
+    let store = test_store().await;
+    let mut source = make_session("plan-auth");
+    source.worktree_path = Some("/tmp/wt/plan-auth".into());
+    store.insert_session(&source).await.unwrap();
+
+    let mut lost = make_session("plan-auth-2");
+    lost.worktree_path = Some("/tmp/wt/plan-auth".into());
+    lost.status = SessionStatus::Lost;
+    store.insert_session(&lost).await.unwrap();
+
+    let others = store
+        .find_live_sessions_by_worktree("/tmp/wt/plan-auth", &source.id.to_string())
+        .await
+        .unwrap();
+    assert_eq!(others.len(), 1);
+    assert_eq!(others[0].name, "plan-auth-2");
 }
 
 #[tokio::test]

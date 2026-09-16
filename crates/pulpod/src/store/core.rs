@@ -150,12 +150,7 @@ impl Store {
     /// down to the [`MAX_PRE_MIGRATION_BACKUPS`] most recent backups afterward.
     async fn backup_before_migrating(&self, conn: &mut SqliteConnection) -> Result<()> {
         let db_path = format!("{}/state.db", self.data_dir);
-        let highest_applied: i64 =
-            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
-                .fetch_one(&mut *conn)
-                .await
-                .unwrap_or(0);
-        let backup_path = format!("{db_path}.pre-m{highest_applied}");
+        let backup_path = self.predicted_backup_path(conn).await;
         std::fs::copy(&db_path, &backup_path)
             .with_context(|| format!("failed to back up {db_path} to {backup_path}"))?;
         info!(backup = %backup_path, "store: backed up database before running pending migrations");
@@ -163,21 +158,42 @@ impl Store {
         Ok(())
     }
 
+    /// The path [`Self::backup_before_migrating`] will copy `state.db` to, computed
+    /// from the highest migration version already applied — shared with
+    /// [`Self::warn_before_dropping_secrets`], which runs *before* the backup is
+    /// actually written but still wants to point the operator at where it will
+    /// land.
+    async fn predicted_backup_path(&self, conn: &mut SqliteConnection) -> String {
+        let db_path = format!("{}/state.db", self.data_dir);
+        let highest_applied: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap_or(0);
+        format!("{db_path}.pre-m{highest_applied}")
+    }
+
     /// Keep only the [`MAX_PRE_MIGRATION_BACKUPS`] most recently modified
-    /// `state.db.pre-*` files in the data dir, removing older ones.
+    /// `state.db.pre-*` files in the data dir, removing older ones. Ties on
+    /// `mtime` (a filesystem with coarse mtime resolution, or two migrations
+    /// landing in the same instant) break on the file name — `state.db.pre-m<N>`
+    /// sorts numerically-as-string in practice for the migration counts this
+    /// project will realistically ever reach, so the higher migration version
+    /// still wins deterministically instead of an arbitrary directory-read order.
     fn prune_old_backups(&self) -> Result<()> {
         let prefix = "state.db.pre-";
-        let mut backups: Vec<(std::time::SystemTime, std::path::PathBuf)> =
+        let mut backups: Vec<(std::time::SystemTime, String, std::path::PathBuf)> =
             std::fs::read_dir(&self.data_dir)?
                 .filter_map(std::result::Result::ok)
                 .filter(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
                 .filter_map(|entry| {
                     let modified = entry.metadata().ok()?.modified().ok()?;
-                    Some((modified, entry.path()))
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    Some((modified, name, entry.path()))
                 })
                 .collect();
-        backups.sort_by(|a, b| b.0.cmp(&a.0));
-        for (_, path) in backups.into_iter().skip(MAX_PRE_MIGRATION_BACKUPS) {
+        backups.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        for (_, _, path) in backups.into_iter().skip(MAX_PRE_MIGRATION_BACKUPS) {
             let _ = std::fs::remove_file(path);
         }
         Ok(())
@@ -189,7 +205,10 @@ impl Store {
     /// is no `pulpo-secrets-backup` export tool — so warn loudly here, before it
     /// runs, if a pre-0008 database still has rows in `secrets`. This never blocks
     /// startup; it only gives the operator a chance to notice before the data is
-    /// gone (downgrading to pulpo 0.1.1 is the only way to read it back out).
+    /// gone. A pre-migration backup (`state.db.pre-m<N>`, see
+    /// [`Self::backup_before_migrating`]) still has the pre-0008 schema/data
+    /// intact, so the warning points at that path — pulpo 0.1.1's own database
+    /// format can read it directly, no downgrade of the running binary needed.
     async fn warn_before_dropping_secrets(&self, conn: &mut SqliteConnection) -> Result<()> {
         let has_secrets_table: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secrets'",
@@ -204,12 +223,15 @@ impl Store {
             .fetch_one(&mut *conn)
             .await?;
         if secret_count > 0 {
+            let backup_path = self.predicted_backup_path(conn).await;
             warn!(
                 secret_count,
+                backup = %backup_path,
                 "store: the secrets table is about to be dropped irreversibly by migration \
-                 0008 — {secret_count} stored secret(s) will be lost. There is no export \
-                 tool; downgrade to pulpo 0.1.1 first if you need to read them out before \
-                 upgrading."
+                 0008 — {secret_count} stored secret(s) will be lost from the live database. \
+                 There is no export tool; a pre-migration backup with the data still intact \
+                 will be written to {backup_path} — read it with pulpo 0.1.1 if you need the \
+                 secrets back out."
             );
         }
 
@@ -383,37 +405,74 @@ async fn try_open_and_migrate(data_dir: &str) -> Result<Store> {
 /// integrity, so quarantining on them risks renaming a perfectly healthy
 /// database out from under a process that still holds a valid handle to it.
 fn is_quarantine_worthy(err: &anyhow::Error) -> bool {
-    // sqlx's migrator returns its own error type directly (`MIGRATOR.run(..).await?`
+    // sqlx's migrator returns its own error type directly (`MIGRATOR.run_direct(..).await?`
     // in `Store::migrate`, with no added `.context()`), so it survives as the exact
     // root of the anyhow chain here — downcast rather than string-match so a
-    // `Dirty`/`VersionTooOld`/`Execute(..)` (e.g. wrapping a "database is locked"
-    // error) variant is correctly treated as NOT quarantine-worthy.
+    // `Dirty`/`VersionTooOld` variant is correctly treated as NOT quarantine-worthy.
     if let Some(migrate_err) = err.downcast_ref::<sqlx::migrate::MigrateError>() {
-        return matches!(
-            migrate_err,
+        return match migrate_err {
             sqlx::migrate::MigrateError::VersionMissing(_)
-                | sqlx::migrate::MigrateError::VersionMismatch(_)
-        );
+            | sqlx::migrate::MigrateError::VersionMismatch(_) => true,
+            // `Execute`/`ExecuteMigration` wrap the underlying `sqlx::Error` a
+            // migration statement itself failed with — most of the time that's
+            // something ordinary (a lock, a transient I/O error), but corruption
+            // can surface here too (a migration statement running against a
+            // damaged file). Inspect the wrapped error's own message the same
+            // way the generic string-match below does for every other error
+            // path, rather than treating every `Execute` as automatically safe.
+            sqlx::migrate::MigrateError::Execute(source) => {
+                is_corruption_message(&source.to_string())
+            }
+            sqlx::migrate::MigrateError::ExecuteMigration(source, _) => {
+                is_corruption_message(&source.to_string())
+            }
+            _ => false,
+        };
     }
 
-    let rendered = format!("{err:#}").to_lowercase();
+    is_corruption_message(&format!("{err:#}"))
+}
+
+/// Whether a rendered error message matches one of the known
+/// corruption/incompatible-schema phrases — shared by [`is_quarantine_worthy`]'s
+/// top-level check and its `MigrateError::Execute`/`ExecuteMigration` inner-error
+/// check.
+fn is_corruption_message(rendered: &str) -> bool {
+    let rendered = rendered.to_lowercase();
     rendered.contains("unsupported legacy database schema")
         || rendered.contains("file is not a database")
         || rendered.contains("malformed")
 }
 
-/// Rename `{data_dir}/state.db` (and any `-wal`/`-shm` siblings) out of the
-/// way so a fresh database can be opened at the canonical path. Returns the
-/// new path of the primary file.
+/// Rename `{data_dir}/state.db` (and any `-wal`/`-shm`/`-journal` siblings) out
+/// of the way so a fresh database can be opened at the canonical path. Returns
+/// the new path of the primary file.
+///
+/// The quarantine name includes millisecond precision (`state.db.unusable-<UTC
+/// timestamp>`, e.g. two quarantines within the same wall-clock second — a
+/// pathological crash-loop against an unusable file — must not collide and
+/// silently overwrite each other's snapshot); bails outright in the
+/// astronomically unlikely case that the resulting path still already exists,
+/// rather than risk overwriting a prior quarantine.
 fn quarantine_unusable_db(data_dir: &str) -> Result<String> {
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+    quarantine_unusable_db_at(data_dir, &timestamp)
+}
+
+/// The testable core of [`quarantine_unusable_db`], parameterized by the
+/// timestamp string so tests can force a collision deterministically instead
+/// of racing the real clock.
+fn quarantine_unusable_db_at(data_dir: &str, timestamp: &str) -> Result<String> {
     let db_path = format!("{data_dir}/state.db");
     if !Path::new(&db_path).exists() {
         anyhow::bail!("no {db_path} to quarantine");
     }
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     let quarantined = format!("{db_path}.unusable-{timestamp}");
+    if Path::new(&quarantined).exists() {
+        anyhow::bail!("quarantine target {quarantined} already exists, refusing to overwrite it");
+    }
     std::fs::rename(&db_path, &quarantined)?;
-    for suffix in ["-wal", "-shm"] {
+    for suffix in ["-wal", "-shm", "-journal"] {
         let sidecar = format!("{db_path}{suffix}");
         if Path::new(&sidecar).exists() {
             let _ = std::fs::rename(&sidecar, format!("{quarantined}{suffix}"));
@@ -457,16 +516,21 @@ mod tests {
         std::fs::write(tmpdir.path().join("state.db"), b"garbage").unwrap();
         std::fs::write(tmpdir.path().join("state.db-wal"), b"wal").unwrap();
         std::fs::write(tmpdir.path().join("state.db-shm"), b"shm").unwrap();
+        // The database runs in rollback-journal mode, not WAL — `-journal` is
+        // the sidecar that actually appears in practice.
+        std::fs::write(tmpdir.path().join("state.db-journal"), b"journal").unwrap();
 
         let quarantined = quarantine_unusable_db(dir).unwrap();
 
         assert!(!tmpdir.path().join("state.db").exists());
         assert!(!tmpdir.path().join("state.db-wal").exists());
         assert!(!tmpdir.path().join("state.db-shm").exists());
+        assert!(!tmpdir.path().join("state.db-journal").exists());
         assert!(Path::new(&quarantined).exists());
         assert!(quarantined.contains("state.db.unusable-"));
         assert!(Path::new(&format!("{quarantined}-wal")).exists());
         assert!(Path::new(&format!("{quarantined}-shm")).exists());
+        assert!(Path::new(&format!("{quarantined}-journal")).exists());
         assert_eq!(std::fs::read(&quarantined).unwrap(), b"garbage");
     }
 
@@ -481,6 +545,50 @@ mod tests {
         assert!(Path::new(&quarantined).exists());
         assert!(!Path::new(&format!("{quarantined}-wal")).exists());
         assert!(!Path::new(&format!("{quarantined}-shm")).exists());
+        assert!(!Path::new(&format!("{quarantined}-journal")).exists());
+    }
+
+    #[test]
+    fn test_quarantine_unusable_db_name_has_millisecond_precision() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        std::fs::write(tmpdir.path().join("state.db"), b"garbage").unwrap();
+
+        let quarantined = quarantine_unusable_db(dir).unwrap();
+
+        // "state.db.unusable-YYYYMMDDTHHMMSSmmmZ" — 8 (date) + "T" (1) + 6
+        // (time) + 3 (millis) = 18 chars between the "unusable-" marker and
+        // the trailing "Z" (the old, second-precision-only format was 15).
+        let suffix = quarantined
+            .rsplit("unusable-")
+            .next()
+            .expect("quarantined path must contain the unusable- marker");
+        let suffix = suffix.strip_suffix('Z').expect("must end with Z");
+        assert_eq!(
+            suffix.len(),
+            18,
+            "expected a millisecond-precision timestamp, got {suffix:?} (path: {quarantined})"
+        );
+    }
+
+    #[test]
+    fn test_quarantine_unusable_db_bails_if_target_already_exists() {
+        // Deterministic collision, via the timestamp-injectable core — no
+        // clock racing needed.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path().to_str().unwrap();
+        std::fs::write(tmpdir.path().join("state.db"), b"garbage").unwrap();
+        let target = format!("{dir}/state.db.unusable-fixed-ts");
+        std::fs::write(&target, b"already here").unwrap();
+
+        let err = quarantine_unusable_db_at(dir, "fixed-ts").unwrap_err();
+
+        assert!(err.to_string().contains("already exists"), "{err}");
+        // The pre-existing quarantine file must survive untouched.
+        assert_eq!(std::fs::read(&target).unwrap(), b"already here");
+        // And state.db itself must not have been renamed away either — the
+        // bail happens before the rename.
+        assert!(tmpdir.path().join("state.db").exists());
     }
 
     #[tokio::test]
@@ -519,6 +627,46 @@ mod tests {
         store.prune_old_backups().unwrap();
 
         assert!(Path::new(&format!("{}/state.db.pre-m1", store.data_dir)).exists());
+    }
+
+    #[tokio::test]
+    async fn test_prune_old_backups_ties_on_mtime_break_by_name() {
+        // On a filesystem with coarse mtime resolution (or two migrations
+        // landing in the same instant), pruning purely by mtime is
+        // non-deterministic among the tied files. Break ties by name instead
+        // — verified here by giving every file the exact same mtime.
+        let store = test_store().await;
+        for i in 0..5 {
+            std::fs::write(
+                format!("{}/state.db.pre-m{i}", store.data_dir),
+                format!("backup-{i}"),
+            )
+            .unwrap();
+        }
+        // Force identical mtimes so the tie-break is exercised deterministically.
+        let now = std::time::SystemTime::now();
+        for i in 0..5 {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(format!("{}/state.db.pre-m{i}", store.data_dir))
+                .unwrap()
+                .set_modified(now)
+                .unwrap();
+        }
+
+        store.prune_old_backups().unwrap();
+
+        let remaining: Vec<String> = std::fs::read_dir(&store.data_dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("state.db.pre-"))
+            .collect();
+        assert_eq!(remaining.len(), MAX_PRE_MIGRATION_BACKUPS);
+        // Name-descending tie-break keeps the highest migration numbers.
+        for kept in ["state.db.pre-m2", "state.db.pre-m3", "state.db.pre-m4"] {
+            assert!(remaining.contains(&kept.to_owned()), "{remaining:?}");
+        }
     }
 
     #[tokio::test]
@@ -658,7 +806,10 @@ mod tests {
 
     #[test]
     fn test_is_quarantine_worthy_false_for_failed_backup() {
-        let err = anyhow::anyhow!("failed to back up /data/state.db to /data/state.db.pre-0.3.1");
+        // Backup names are migration-number-based (`state.db.pre-m<N>`, see
+        // `Store::backup_before_migrating`), not version-based — this used to
+        // read the stale pre-`release-please`-naming example `pre-0.3.1`.
+        let err = anyhow::anyhow!("failed to back up /data/state.db to /data/state.db.pre-m10");
         assert!(!is_quarantine_worthy(&err));
     }
 
@@ -672,5 +823,44 @@ mod tests {
 
         let too_old: anyhow::Error = sqlx::migrate::MigrateError::VersionTooOld(1, 2).into();
         assert!(!is_quarantine_worthy(&too_old));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_false_for_execute_wrapping_ordinary_error() {
+        // `Execute`/`ExecuteMigration` wrapping something ordinary (a lock, a
+        // transient I/O error) must NOT be treated as corruption just because
+        // it's an `Execute` variant.
+        let locked: anyhow::Error = sqlx::migrate::MigrateError::Execute(sqlx::Error::Protocol(
+            "database is locked".into(),
+        ))
+        .into();
+        assert!(!is_quarantine_worthy(&locked));
+
+        let locked_migration: anyhow::Error = sqlx::migrate::MigrateError::ExecuteMigration(
+            sqlx::Error::Protocol("database is locked".into()),
+            7,
+        )
+        .into();
+        assert!(!is_quarantine_worthy(&locked_migration));
+    }
+
+    #[test]
+    fn test_is_quarantine_worthy_true_for_execute_wrapping_corruption() {
+        // Corruption can surface as a migration statement itself failing
+        // (`MigrateError::Execute`/`ExecuteMigration` wrapping the underlying
+        // `sqlx::Error`), not only from `Store::migrate`'s own pre-migration
+        // checks — the wrapped error's own message must still be inspected.
+        let corrupt: anyhow::Error = sqlx::migrate::MigrateError::Execute(sqlx::Error::Protocol(
+            "file is not a database".into(),
+        ))
+        .into();
+        assert!(is_quarantine_worthy(&corrupt));
+
+        let corrupt_migration: anyhow::Error = sqlx::migrate::MigrateError::ExecuteMigration(
+            sqlx::Error::Protocol("database disk image is malformed".into()),
+            3,
+        )
+        .into();
+        assert!(is_quarantine_worthy(&corrupt_migration));
     }
 }

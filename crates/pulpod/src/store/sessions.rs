@@ -319,6 +319,15 @@ impl Store {
     /// `exclude_id`. Used to guard worktree reclamation: `pulpo handoff` can make two
     /// sessions share a worktree, and it must survive until every referencing session
     /// has stopped.
+    ///
+    /// Includes `lost` alongside `starting`/`working`/`waiting`: a `lost` session is
+    /// still resumable (`pulpo resume`), so its shared worktree must survive an
+    /// intervention/purge on a sibling exactly as if it were still live — otherwise
+    /// resuming it later silently falls back to the plain `workdir` with its branch
+    /// gone (see `watchdog::intervention::stop_and_record` and
+    /// `session::manager::purge_session`/`cleanup_dead_sessions`, all of which call
+    /// this transitively via [`Self::worktree_in_use_elsewhere`]). Only `done` is
+    /// excluded — a session that exited cleanly has no more use for its worktree.
     pub async fn find_live_sessions_by_worktree(
         &self,
         worktree_path: &str,
@@ -326,7 +335,7 @@ impl Store {
     ) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             "SELECT * FROM sessions WHERE worktree_path = ? AND id != ? \
-             AND status IN ('starting', 'working', 'waiting')",
+             AND status IN ('starting', 'working', 'waiting', 'lost')",
         )
         .bind(worktree_path)
         .bind(exclude_id)
