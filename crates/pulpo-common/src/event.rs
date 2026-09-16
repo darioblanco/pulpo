@@ -167,7 +167,8 @@ pub struct Event {
     pub schema_version: u32,
     /// Unique id for this event; stable across delivery retries (idempotency key).
     pub event_id: String,
-    /// `lifecycle` | `intervention` | `usage_alert` | `fleet`.
+    /// `lifecycle` | `intervention` | `usage_alert` | `daemon` (`fleet` is
+    /// reserved from an earlier multi-node design; nothing emits it today).
     #[serde(rename = "type")]
     pub event_type: String,
     /// The specific event within the type, e.g. `idle`, `budget_threshold`.
