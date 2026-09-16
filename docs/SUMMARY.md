@@ -42,7 +42,6 @@
 # Architecture Decision Records
 
 - [ADR Index](adr/README.md)
-- [0000 - Template](adr/0000-template.md)
 - [0001 - Hook-Driven Agent State](adr/0001-hook-driven-agent-state.md)
 - [0002 - Meter-And-Breaker-Box Positioning](adr/0002-meter-and-breaker-box-positioning.md)
 - [0003 - Scenario Tests As Behavior Gate](adr/0003-scenario-tests-as-behavior-gate.md)
@@ -52,3 +51,7 @@
 - [0007 - Rust Stays, Go Decision Deferred](adr/0007-rust-stays-go-decision-deferred.md)
 - [0008 - Unknown Config Keys Warn And Are Ignored](adr/0008-unknown-config-keys-warn-and-are-ignored.md)
 - [0009 - Five-State Session Model](adr/0009-five-state-session-model.md)
+
+# Template
+
+- [ADR Template](adr/0000-template.md)

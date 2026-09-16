@@ -112,11 +112,16 @@ Core infrastructure:
   detection
 - Homebrew tap distribution, CLI auto-start daemon, Tailscale transport
   (`bind = "tailscale"`) for private remote access
-- Database resilience: `pulpod` never crash-loops on a database it can't use — an
-  unusable `state.db` is quarantined as `state.db.unusable-<UTC timestamp>` and a
-  fresh one takes its place automatically, and every startup against an existing
-  database backs it up to `state.db.pre-<version>` before migrating (#126, scenario
-  S13) — see
+- Database resilience: `pulpod` never crash-loops on a database it can't use — but
+  only a database that's actually corrupt, on an unsupported legacy schema, or ahead
+  of this binary's own migrator gets quarantined (renamed to
+  `state.db.unusable-<UTC timestamp>`, millisecond precision, moving its `-wal`/
+  `-shm`/`-journal` siblings with it) with a fresh database taking its place
+  automatically; anything else (a lock held by another process, a transient I/O
+  error, a failed pre-migration backup) refuses to start instead of touching the
+  file — quarantining is only safe when the file itself is the problem (#126, #130,
+  scenario S13). Every startup against an existing database also backs it up to
+  `state.db.pre-m<migration>` before migrating. See
   [docs/operations/release-and-distribution.md](docs/operations/release-and-distribution.md)
   "Upgrading `pulpod`"
 - Usage/session cleanup: usage is reconciled a final time when a session ends so
@@ -129,10 +134,29 @@ Core infrastructure:
   (`claude --continue`, `codex resume --last`, `pi -c`) instead of silently starting
   a fresh conversation (#128) — see
   [docs/architecture/harness-adapters.md](docs/architecture/harness-adapters.md)
+- Startup/resume hardening (#130): the resume fallback (above) refuses outright,
+  rather than silently continuing in the wrong directory, when a cwd-scoped
+  harness's (Claude Code, pi) worktree is gone; a single-instance advisory lock on
+  `{data_dir}/pulpod.lock`, held for the daemon's whole lifetime, stops a second
+  `pulpod` from racing the first to open (or quarantine) the same data directory
+  (scenario S19); and the database quarantine scope above was narrowed from "any
+  unusable-database error" to just the three failure modes that actually mean the
+  file is the problem.
+- Review-round hardening (fix/review-daemon; scenario coverage in fix/review-e2e;
+  related CLI/web polish in fix/review-web-cli): the first-run auth-token bootstrap
+  now splices `token = "..."` into an existing `config.toml` with `toml_edit`
+  instead of re-serializing it — the one automatic edit, preserving every comment
+  and unknown key untouched; a `lost` session now counts as "in use" for
+  shared-worktree checks and gets its usage reconciled exactly, like any other
+  terminal session; the watchdog's dead-session sweep runs even when
+  `idle_timeout_secs = 0` disables the idle breaker; `GET /api/v1/notifications`
+  masks webhook URLs in its response, matching what's already redacted from logs;
+  and `pulpo rm`/`DELETE /api/v1/sessions/:id` refuses `starting`/`working`/
+  `waiting` sessions, allowing `starting` only once its backend is confirmed dead.
 
 Track R (removals, all shipped as their own PRs): Docker session runtime, worktrees
 web-UI page, Tauri mobile builds, MCP server, Discord bot, voice experiments — see
-"Removed" below for these and every later removal.
+"Removed" below for each of these.
 
 ## Parked
 
@@ -224,6 +248,26 @@ metering/enforcement simplification.
   session/schedule, and the recurring cost budget moved onto the schedule itself
   (`pulpo schedule add --budget-cost <USD>`). `Session.ink`/`Schedule.ink` remain on
   the wire for historical rows only.
+- ~~Discord webhook notifier~~ (v0.1.0, PR #56) — superseded by the universal
+  `[[webhooks]]` plain-POST channel (see ADR
+  [0004](docs/adr/0004-one-plain-webhook-channel.md)).
+- ~~Docker session runtime (`--runtime docker`, `backend/docker.rs`)~~ (v0.1.0, PR
+  #53) — sessions run in `tmux` only; historical `runtime = "docker"` rows remain
+  readable, but spawning/resuming/scheduling with it is rejected server-side (see
+  `AGENTS.md` "Adding a new backend feature"). Distinct from the later removal of
+  *containerized `pulpod` deployment* itself (September 2026, PR #101, above).
+- ~~MCP server~~ (v0.1.0, PR #52) — agents already speak their own tool-use
+  protocols natively; a Pulpo-specific MCP surface duplicated that (see AGENTS.md
+  "Do NOT build").
+- ~~Worktrees web-UI page~~ (v0.1.0, PR #51) — worktree management stayed a
+  CLI/API concern (`pulpo worktree list`, `--worktree`/`--worktree-base`); the web
+  UI never grew a dedicated page back.
+- ~~Discord bot (`contrib/discord-bot`)~~ (v0.1.0, PR #50) — superseded by
+  `[[webhooks]]`; distinct from the *Discord webhook notifier* above (PR #56).
+- ~~Tauri native mobile builds (iOS/Android) and Siri/Assistant voice
+  experiments~~ (v0.1.0, PR #49) — no code for either ever lived in this repo; the
+  installable web app (PWA) was always the mobile surface. Retired from the spec to
+  align it with reality.
 - ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers covered real
   usage at the time; manual peers were themselves removed later (see above).
 - ~~Provider-specific features, guard rails, culture system~~ — agents handle these

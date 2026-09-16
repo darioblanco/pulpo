@@ -5,7 +5,7 @@
 
 ## Context
 
-The current `SessionStatus` enum has six states — `creating`, `active`, `idle`,
+The `SessionStatus` enum had six states — `creating`, `active`, `idle`,
 `ready`, `stopped`, `lost` (see `docs/operations/session-lifecycle.md`) — split across
 two axes that don't map cleanly onto how an operator actually reasons about a session
 day to day: is it running, is it doing something or stuck, did it finish, is it gone.

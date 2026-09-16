@@ -32,7 +32,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | **Starting** | Spawn requested — the backend (tmux session) hasn't been confirmed yet | No |
 | **Working** | The agent process is running and busy — terminal output is changing | No |
 | **Waiting** | The agent is at its prompt. `status_reason` says why: `needs_input:<reason>` when it's blocked on the user (a permission prompt, a question, an idle-prompt, or another harness-specific reason — from a hook or a scrollback waiting-pattern match), or plain `idle` when the turn simply finished (or there's no new output) with nothing specifically blocking on you | No |
-| **Done** | The agent process has exited **and** the backend (tmux session) is gone. `exit_code` is recorded when known; `status_reason` says how: `exited` (clean end), `stopped` (explicit `pulpo stop`), or an intervention code (`idle_timeout`, `budget_exceeded`, rarely `memory_pressure`). Replaces the old `ready` **and** `stopped` — both always meant "not running, and resumable"; the *how* moved from a distinguishable top-level status into `status_reason` | Yes (resumable) |
+| **Done** | The agent process has exited **and** the backend (tmux session) is gone. `exit_code` is recorded when known; `status_reason` says how: `exited` (clean end), `stopped` (explicit `pulpo stop`), or an intervention code (`idle_timeout`, `budget_exceeded`, or `memory_pressure` — historical only, the memory-pressure intervention was removed in September 2026, see [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) "Removed"). Replaces the old `ready` **and** `stopped` — both always meant "not running, and resumable"; the *how* moved from a distinguishable top-level status into `status_reason` | Yes (resumable) |
 | **Lost** | The backend died with no evidence of a clean end — crash, reboot, or external kill mid-run | Yes (resumable) |
 
 ## Transitions
@@ -64,9 +64,9 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Detection**: The same `is_alive()` check described above (the watchdog's own tick, `get_session`/`list_sessions`, or `resume_lost_sessions` at startup) finds the backend gone and consults the markers; with none present the session is marked `lost`. A 5-second grace period protects freshly spawned sessions from false positives.
 
 Sessions stay listed once they reach `done` — there is no TTL-based auto-purge. The
-session record is only reclaimed by an explicit `pulpo stop [--purge]` or `pulpo
-cleanup`. (There is no more lingering fallback tmux shell to separately reclaim — see
-[Exit Markers](#exit-markers).)
+session record is only reclaimed by an explicit `pulpo stop [--purge]`, `pulpo rm`/
+`DELETE /api/v1/sessions/:id`, or `pulpo cleanup`. (There is no more lingering fallback
+tmux shell to separately reclaim — see [Exit Markers](#exit-markers).)
 
 ## Resume Semantics
 
@@ -242,8 +242,9 @@ first) and orphaned markers (no matching session row) are swept by `pulpo cleanu
 
 - **Done sessions never auto-purge**: A `done` session stays listed indefinitely — there
   is no TTL that removes it automatically. It only leaves `done` via an explicit
-  `pulpo stop [--purge]`/`pulpo cleanup`. Since a `done` session's backend is already
-  gone the moment it becomes `done` (no more lingering fallback shell that could itself
+  `pulpo stop [--purge]`, `pulpo rm`/`DELETE /api/v1/sessions/:id`, or `pulpo cleanup`.
+  Since a `done` session's backend is already gone the moment it becomes `done` (no more
+  lingering fallback shell that could itself
   later die and need re-classifying), there's nothing further for it to transition to on
   its own — unlike the old `ready` state, it can't quietly become `lost` out from under
   you while it sits there.

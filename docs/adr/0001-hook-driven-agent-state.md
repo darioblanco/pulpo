@@ -25,6 +25,9 @@ At spawn/resume time, `session/manager.rs` resolves the adapter for the command 
 rewrites it so the harness reports back to `pulpo hook <harness>` →
 `POST /api/v1/sessions/{id}/harness-events`, which drives the same
 `Active`/`Idle`/`Ready`/`Stopped` states directly instead of guessing from scrollback.
+(These four state names were later renamed/collapsed into the five-state model — see
+ADR [0009](0009-five-state-session-model.md) — but the hook-driven mechanism this ADR
+describes is unchanged by that rename.)
 
 Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi
 (implemented from their docs, unverified in the field at ship time). A command with no

@@ -15,8 +15,10 @@ pulpo attach <NAME>                       Attach to a session terminal (alias: a
                                           session — there's no live backend left to attach to)
 pulpo input <NAME> [TEXT]                 Send text input to a session (alias: i, send)
 pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, kill; -p/--purge also removes from history)
-pulpo rm <NAME>                           Remove a single session outright (alias: remove; must not
-                                          be working or waiting — stop it first)
+pulpo rm <NAME>                           Remove a single session outright (alias: remove; refuses
+                                          starting, working, or waiting — stop it first; a
+                                          `starting` session is only removable once its backend
+                                          is confirmed dead)
 pulpo cleanup                             Remove all done and lost sessions
 pulpo resume <NAME>                       Resume a done or lost session (alias: r; auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions (alias: iv)
@@ -40,10 +42,11 @@ pulpo <PATH>                              Quick spawn: spawns a session in that 
 
 ## Spawn Options
 
-The first positional argument is the session **name** (optional). Everything after `--` is the **command** to run in the session.
+The first positional argument is the session **name** (optional). Everything after `--` is the **command** to run in the session, passed through as argv — each shell-quoted word becomes its own argument, with no further shell interpretation (no `|`, `&&`, `$VAR` expansion, etc.). To run an actual shell string (a pipeline, a variable expansion, several commands), wrap it explicitly: `-- sh -c '...'`. This is a CLI-only distinction — the `command` field in the REST API and the web UI's "new session" dialog is always a single shell string, parsed the same way a shell would, since there's no `--` there to separate argv words.
 
 ```bash
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
+pulpo spawn my-report --workdir ~/repos/my-api -- sh -c 'claude -p "review" > report.txt'
 ```
 
 By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip attachment (useful in scripts and the web UI).
@@ -258,12 +261,18 @@ The `--worktree` flag gives the agent an isolated git worktree on its own branch
 
 ```bash
 tmux new-session -d -s monitor
-for name in $(pulpo list | awk 'NR>1 {print $2}'); do
+for name in $(pulpo list --all | awk 'NR>1 && $3!="done" {print $2}'); do
   tmux split-window -t monitor "pulpo logs ${name} --follow"
   tmux select-layout -t monitor tiled
 done
 tmux attach -t monitor
 ```
+
+(`pulpo list`'s default output hides `done` sessions but still appends a one-line hint
+reporting how many were hidden — feeding that straight into `awk 'NR>1 {print $2}'` would
+try to follow a session named off that hint line instead. `--all` shows every session and
+drops the hint line, and `$3!="done"` filters back down to the ones actually worth
+following.)
 
 For full options on any command:
 

@@ -97,8 +97,9 @@ Per-session reclamation (purge) does three things:
 `pulpo cleanup` additionally runs a **safe orphan sweep**: it removes worktree directories
 under `~/.pulpo/worktrees/` that are no longer referenced by *any* session (left behind by
 sessions deleted long ago) and deletes leftover per-session output logs. It never touches a
-directory still owned by a live session — to reclaim a session that is still
-`working`/`waiting`, stop it first. `pulpo cleanup` reports how
+directory still owned by a session that's `working`/`waiting`, or `lost` (a `lost`
+session is still resumable, so its worktree is treated as in-use, not orphaned) — to
+reclaim one of those, stop or resume-then-purge it first. `pulpo cleanup` reports how
 many sessions, worktrees, and log files it removed.
 
 If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
