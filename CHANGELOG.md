@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/darioblanco/pulpo/compare/v0.4.0...v0.4.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* **daemon:** review round — CAS-correct terminal transitions, dead-session sweep independent of idle, lost-session usage, lock lifetime, db_unusable delivery, config bootstrap preserves the file ([#135](https://github.com/darioblanco/pulpo/issues/135)) ([d70ee03](https://github.com/darioblanco/pulpo/commit/d70ee03f95f53ac108b4a049240f4230b8a7f0b0))
+* **web,cli:** stale service-worker kill switch, config error state, recent-only daemon errors, masked webhook URLs ([#132](https://github.com/darioblanco/pulpo/issues/132)) ([056af9e](https://github.com/darioblanco/pulpo/commit/056af9e8ed56ae6ba688a01bc93e08e51ec04c96))
+
 ## [0.4.0](https://github.com/darioblanco/pulpo/compare/v0.3.1...v0.4.0) (2026-09-14)
 
 
